@@ -52,6 +52,7 @@ describe('weekly Token Envy recap', () => {
     const caption = weeklyRecapCaption(recap, 'https://www.npmjs.com/package/tokenenvy');
     expect(caption).toContain('How did your week compare with your own baseline?');
     expect(caption).toContain('#TokenEnvy');
+    expect(caption).toContain('Built by Security Blueprints, LLC: securityblueprints.io');
     expect(caption).not.toContain('93');
   });
 
@@ -73,6 +74,7 @@ describe('weekly Token Envy recap', () => {
     expect(normalized).toContain('91 effective tok/s');
     expect(normalized).toContain('54 effective tok/s');
     expect(normalized).toContain('Run your week · npx tokenenvy');
+    expect(normalized).toContain('A Security Blueprints, LLC project · securityblueprints.io');
     expect(normalized).toContain('Each Speed Index compares one person with their own local history.');
     expect(normalized).toContain('Prompts stayed local');
   });

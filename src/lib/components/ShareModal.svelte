@@ -2,6 +2,7 @@
   import { env } from '$env/dynamic/public';
   import { onMount } from 'svelte';
   import type { DayDetailResponse } from '$lib/types';
+  import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { dayLabel } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
   import HistogramBackdrop from './HistogramBackdrop.svelte';
@@ -71,7 +72,7 @@
   let moodLine = $derived(getShareMoodLine(card));
   let refusalLine = $derived(getShareRefusalLine(card));
   let previewLabel = $derived(
-    `Token Envy share card for ${dayLabel(card.date)}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}. ${refusalLine}. ${SHARE_INSTALL_CTA}.`,
+    `Token Envy share card for ${dayLabel(card.date)}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}. ${refusalLine}. ${SHARE_INSTALL_CTA}.`,
   );
   let previewStyle = $derived(
     `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar}`,
@@ -227,6 +228,10 @@
     context.fillStyle = currentTheme.accent;
     context.font = '700 25px ui-monospace, SFMono-Regular, Menlo, monospace';
     context.fillText('TOKEN ENVY', 70, 68);
+
+    context.fillStyle = currentTheme.mutedText;
+    context.font = '500 15px ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.fillText(SECURITY_BLUEPRINTS_CARD_LINE, 70, 94);
 
     context.textAlign = 'right';
     context.fillStyle = currentTheme.mutedText;
@@ -601,7 +606,10 @@
           {/if}
         </svg>
         <div class="share-preview-header">
-          <strong>Token Envy</strong>
+          <div class="share-brand-lockup">
+            <strong>Token Envy</strong>
+            <small>{SECURITY_BLUEPRINTS_CARD_LINE}</small>
+          </div>
           <span>{formatShareDate(card.date)}</span>
         </div>
         <div class="share-preview-center">

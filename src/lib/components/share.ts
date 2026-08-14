@@ -1,4 +1,5 @@
 import type { HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
+import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
 
 export type ShareTone = 'friendly' | 'spicy';
 export type ShareSentiment = -2 | -1 | 0 | 1 | 2;
@@ -379,7 +380,7 @@ export function getShareCaption(
 	platform: SharePlatform,
 	productLink: string | null,
 ): string {
-	const base = `${getShareTagline(tone, sentiment, data)}: ${Math.round(data.median)} effective output tokens/s — ${getShareMoodLine(data)}. #TokenEnvy`;
+	const base = `${getShareTagline(tone, sentiment, data)}: ${Math.round(data.median)} effective output tokens/s. ${getShareMoodLine(data)}. #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}`;
 	if ((platform === 'bluesky' || platform === 'generic') && productLink) {
 		return `${base} ${productLink}`;
 	}

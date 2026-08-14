@@ -1,4 +1,5 @@
 import type { WeeklyModelMix, WeeklyRecap } from '$lib/types';
+import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
 
 export type WeeklyRecapData = WeeklyRecap;
 
@@ -74,7 +75,7 @@ export function weeklyRecapCaption(
     ? weeklyRecapIndexLine(recap)
     : `${Math.round(recap.median ?? 0)} median effective output tokens/s across ${recap.requestCount.toLocaleString('en-US')} requests`;
   const link = productUrl ? ` ${productUrl}` : '';
-  return `${headline}. ${result}. How did your week compare with your own baseline? #TokenEnvy${link}`;
+  return `${headline}. ${result}. How did your week compare with your own baseline? #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
 }
 
 export function safeWeeklyRecapProductLink(

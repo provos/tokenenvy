@@ -3,7 +3,8 @@
   "version": "0.1.4",
   "description": "Token Envy is a private, local-first performance dashboard for Claude Code session logs.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "author": "Niels Provos",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/provos/tokenenvy.git"
@@ -27,7 +28,8 @@
     "bin",
     "build",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=22.13"

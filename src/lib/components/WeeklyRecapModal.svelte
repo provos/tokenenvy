@@ -1,6 +1,7 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
   import { onMount } from 'svelte';
+  import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { compactNumber, FAMILY_COLORS } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
   import {
@@ -45,7 +46,7 @@
   let ready = $derived(weeklyRecapReady(recap));
   let caption = $derived(weeklyRecapCaption(recap, productLink?.href ?? null));
   let previewLabel = $derived(
-    `Token Envy weekly recap for ${period}. ${headline}. ${Math.round(recap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${recap.requestCount} measured requests across ${recap.sessions} sessions. Personal baseline only.`
+    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${headline}. ${Math.round(recap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${recap.requestCount} measured requests across ${recap.sessions} sessions. Personal baseline only.`
   );
   let canExport = $derived(preparedFile !== null && ready && !preparing);
 
@@ -140,6 +141,10 @@
     context.fillStyle = '#ff795f';
     context.font = '700 25px ui-monospace, SFMono-Regular, Menlo, monospace';
     context.fillText('TOKEN ENVY · WEEK SO FAR', 70, 65);
+
+    context.fillStyle = 'rgba(242, 238, 230, 0.7)';
+    context.font = '500 15px ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.fillText(SECURITY_BLUEPRINTS_CARD_LINE, 70, 91);
 
     context.textAlign = 'right';
     context.fillStyle = 'rgba(242, 238, 230, 0.7)';
@@ -369,7 +374,10 @@
           {/each}
         </div>
         <div class="weekly-recap-header">
-          <strong>Token Envy · Week so far</strong>
+          <div class="share-brand-lockup">
+            <strong>Token Envy · Week so far</strong>
+            <small>{SECURITY_BLUEPRINTS_CARD_LINE}</small>
+          </div>
           <span>{period}</span>
         </div>
         <div class="weekly-recap-center">

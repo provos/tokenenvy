@@ -225,6 +225,9 @@ describe('privacy-safe share-card data', () => {
     expect(getShareCaption('friendly', 0, card, 'bluesky', 'https://tokenenvy.example/')).toContain(
       'https://tokenenvy.example/'
     );
+    expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
+      'Built by Security Blueprints, LLC: securityblueprints.io'
+    );
     expect(getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/')).not.toContain(
       'https://tokenenvy.example/'
     );

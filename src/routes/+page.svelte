@@ -100,6 +100,10 @@
   import ScanProgress from '$lib/components/ScanProgress.svelte';
   import ShareModal from '$lib/components/ShareModal.svelte';
   import WeeklyRecapModal from '$lib/components/WeeklyRecapModal.svelte';
+  import {
+    SECURITY_BLUEPRINTS_LEGAL_NAME,
+    SECURITY_BLUEPRINTS_URL
+  } from '$lib/components/brand';
   import { compactNumber, dayLabel, FAMILY_COLORS } from '$lib/components/chart';
   import { DASHBOARD_SHARE_CTA, weeklyRecapReady } from '$lib/components/weekly-recap';
   import type {
@@ -754,7 +758,12 @@
 
   <footer class="site-footer">
     <span>Token Envy</span>
-    <span>Private by default · Open source · Local-first</span>
+    <span>
+      Private by default · Open source · Local-first ·
+      <a href={SECURITY_BLUEPRINTS_URL} target="_blank" rel="noopener noreferrer">
+        A {SECURITY_BLUEPRINTS_LEGAL_NAME} project · securityblueprints.io
+      </a>
+    </span>
   </footer>
 </div>
 

@@ -114,6 +114,7 @@ try {
     'package.json',
     'README.md',
     'LICENSE',
+    'NOTICE',
     'bin/launch.js',
     'bin/node-version.js',
     'bin/tokenenvy.js',
@@ -128,6 +129,20 @@ try {
   const tarball = join(work, packed.filename);
   run('npm', ['init', '--yes'], { cwd: packageDirectory });
   run('npm', ['install', tarball, '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: packageDirectory });
+
+  const installedRoot = join(packageDirectory, 'node_modules', 'tokenenvy');
+  const manifest = JSON.parse(readFileSync(join(installedRoot, 'package.json'), 'utf8'));
+  if (manifest.license !== 'Apache-2.0' || manifest.author !== 'Niels Provos') {
+    throw new Error('Packed package metadata does not identify the Apache license and copyright owner');
+  }
+  const license = readFileSync(join(installedRoot, 'LICENSE'), 'utf8');
+  if (!license.includes('Grant of Patent License') || license.includes('% Total') || license.includes('\r')) {
+    throw new Error('Packed Apache license is incomplete or contains transfer output');
+  }
+  const notice = readFileSync(join(installedRoot, 'NOTICE'), 'utf8');
+  if (!notice.includes('Copyright 2026 Niels Provos') || !notice.includes('Security Blueprints, LLC')) {
+    throw new Error('Packed NOTICE is missing the copyright or project attribution');
+  }
 
   const executable = join(packageDirectory, 'node_modules', '.bin', 'tokenenvy');
   const installedLauncher = join(packageDirectory, 'node_modules', 'tokenenvy', 'bin', 'launch.js');

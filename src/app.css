@@ -1173,6 +1173,16 @@ td .model-dot {
   font-size: 11px;
 }
 
+.site-footer a {
+  color: var(--text-muted);
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.site-footer a:hover {
+  color: var(--accent);
+}
+
 .loading-state,
 .error-state,
 .empty-state {
@@ -1899,6 +1909,21 @@ td .model-dot {
   text-transform: uppercase;
 }
 
+.share-brand-lockup {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.share-brand-lockup small {
+  overflow: hidden;
+  color: inherit;
+  font: 500 clamp(6px, 1vw, 8px)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .share-preview-center {
   min-height: 0;
   position: relative;
@@ -2085,6 +2110,10 @@ td .model-dot {
 
 .weekly-recap-header span {
   white-space: nowrap;
+}
+
+.weekly-recap-header .share-brand-lockup small {
+  color: rgba(242, 238, 230, 0.68);
 }
 
 .weekly-recap-center {
@@ -2448,6 +2477,8 @@ td .model-dot {
   .weekly-recap-footer > span { display: none; }
   .weekly-recap-footer { grid-template-columns: 1fr; justify-items: center; }
   .weekly-recap-footer > strong { grid-row: 1; }
+  .weekly-recap-header { grid-template-columns: 1fr; gap: 3px; }
+  .weekly-recap-header > span { justify-self: start; }
   .weekly-recap-center > p { font-size: 16px; }
   .weekly-recap-center > strong { font-size: 58px; }
   .envy-callout-actions { flex-direction: column; }

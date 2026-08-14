@@ -2,6 +2,8 @@
 
 Token Envy is a private, local-first performance dashboard for Claude Code. It continuously indexes performance metadata from Claude Code JSONL transcripts and turns it into model-by-model throughput trends, daily distributions, refusal outcomes, observed usage, and privacy-safe share cards.
 
+Token Envy is a [Security Blueprints](https://securityblueprints.io/) project created by Niels Provos.
+
 It does not need an LLM, an Anthropic API key, telemetry, or an internet connection. The web server listens only on the loopback interface and the transcript directory is always read-only.
 
 ## What it shows
@@ -105,9 +107,9 @@ Anyone able to read your local user account may be able to access the derived in
 
 ## Social sharing
 
-Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, explicit refusal lower-bound counts, Token Envy attribution, and a **Run it yourself · npx tokenenvy** call-to-action; it contains no session IDs, project paths, prompts, refusal explanations, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
+Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, explicit refusal lower-bound counts, Token Envy attribution, Security Blueprints attribution, and a **Run it yourself · npx tokenenvy** call-to-action; it contains no session IDs, project paths, prompts, refusal explanations, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
 
-Choose **Recap my week** for a separate **Week so far** image. It compares the current calendar week with your prior 28 days through a mix-adjusted personal Speed Index. It also shows the fastest and slowest measured days, aggregate request and session activity, output tokens, and the leading model family. The recap contains aggregate statistics only and ends with **Run your week · npx tokenenvy**.
+Choose **Recap my week** for a separate **Week so far** image. It compares the current calendar week with your prior 28 days through a mix-adjusted personal Speed Index. It also shows the fastest and slowest measured days, aggregate request and session activity, output tokens, and the leading model family. The recap contains aggregate statistics only and carries Security Blueprints attribution alongside **Run your week · npx tokenenvy**.
 
 Share actions use the public npm package page as their canonical product link. Release builders can override it at build time:
 
@@ -137,4 +139,4 @@ npm run test:package
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE). Copyright 2026 Niels Provos. See [NOTICE](NOTICE) for project attribution.
