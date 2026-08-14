@@ -366,6 +366,27 @@ main {
 
 .hero-more { margin-top: 22px; }
 
+.hero-refresh-status {
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  right: 20px;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-solid) 86%, transparent);
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(12px);
+}
+
+.hero-refresh-error {
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .hero-loading {
   z-index: 1;
   grid-column: 1 / -1;

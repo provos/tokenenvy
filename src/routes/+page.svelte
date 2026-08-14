@@ -133,8 +133,8 @@
     selectedDate ? (selectedDate === overview?.today ? 'Today' : dayLabel(selectedDate)) : 'Selected day'
   );
   let selectedAnnouncement = $derived(
-    dayDetail && !dayLoading
-      ? `${selectedDayLabel} selected. Median ${Math.round(dayDetail.summary.median)} effective output tokens per second across ${dayDetail.summary.count} measured requests.`
+    dayDetail
+      ? `${selectedDayLabel} selected. Median ${Math.round(dayDetail.summary.median)} effective output tokens per second across ${dayDetail.summary.count} measured requests.${dayLoading ? ' Updating in the background.' : ''}`
       : dayLoading && selectedDate
         ? `Loading ${selectedDayLabel.toLowerCase()}.`
         : dayError && selectedDate
@@ -344,8 +344,10 @@
       dayDetailRevision = revision;
     } catch (cause) {
       if (sequence !== dayLoadSequence || selectedDate !== date) return;
-      dayDetail = null;
-      dayDetailRevision = null;
+      if (dayDetail?.date !== date) {
+        dayDetail = null;
+        dayDetailRevision = null;
+      }
       dayError = cause instanceof Error ? cause.message : 'Could not load the selected day.';
     } finally {
       if (sequence === dayLoadSequence && selectedDate === date) {
