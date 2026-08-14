@@ -6,3 +6,9 @@ coverage/
 *.tgz
 .DS_Store
 .env
+
+# Local analysis artifacts; never publish project-specific derived data.
+/REPORT.md
+/analyze-claude-logs.mjs
+/throughput-histogram.csv
+/docs/TPS-THRESHOLD-FINDINGS.md
