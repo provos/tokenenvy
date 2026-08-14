@@ -41,6 +41,7 @@ describe('share-card customization', () => {
       props: {
         open: true,
         detail,
+        refusals: { recorded: true, attempted: 2, recovered: 1, userVisible: 1 },
         isToday: true,
         refreshing: false,
         onclose: () => undefined
@@ -53,6 +54,7 @@ describe('share-card customization', () => {
     expect(body).toContain('max="2"');
     expect(body).toContain('aria-valuetext="Neutral"');
     expect(body).toContain('share-sentiment-face');
+    expect(body).toContain('Refusals (explicit lower bound): 2 · 1 recovered · 1 user-visible');
     expect(body).toContain('Changes the attitude, expression, and palette—not your stats.');
   });
 });

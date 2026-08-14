@@ -9,6 +9,7 @@
     buildShareCardData,
     getShareCaption,
     getShareMoodLine,
+    getShareRefusalLine,
     getShareSentimentTheme,
     getShareTagline,
     normalizeHistogram,
@@ -19,18 +20,20 @@
     type SharePlatform,
     type ShareSentiment,
     type ShareSentimentTheme,
+    type ShareRefusalCounts,
     type ShareTone,
   } from './share';
 
   interface Props {
     open: boolean;
     detail: DayDetailResponse;
+    refusals: ShareRefusalCounts;
     isToday: boolean;
     refreshing: boolean;
     onclose: () => void;
   }
 
-  let { open, detail, isToday, refreshing, onclose }: Props = $props();
+  let { open, detail, refusals, isToday, refreshing, onclose }: Props = $props();
   let tone = $state<ShareTone>('friendly');
   let sentiment = $state<ShareSentiment>(0);
   let status = $state<string | null>(null);
@@ -53,6 +56,7 @@
       outputTokens: detail.summary.outputTokens,
       isToday,
       speedIndex: detail.speedIndex,
+      refusals,
       models: detail.models,
       histogram: detail.histogram,
     }),
@@ -60,8 +64,9 @@
   let sentimentTheme = $derived(getShareSentimentTheme(sentiment));
   let tagline = $derived(getShareTagline(tone, sentiment, card));
   let moodLine = $derived(getShareMoodLine(card));
+  let refusalLine = $derived(getShareRefusalLine(card));
   let previewLabel = $derived(
-    `Token Envy share card for ${dayLabel(card.date)}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}`,
+    `Token Envy share card for ${dayLabel(card.date)}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}. ${refusalLine}`,
   );
   let previewStyle = $derived(
     `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar}`,
@@ -99,6 +104,7 @@
     const currentTagline = tagline;
     const currentMood = moodLine;
     const currentAttribution = productAttribution;
+    const currentRefusals = refusalLine;
     const currentSentiment = sentiment;
     const currentTheme = sentimentTheme;
     if (!open) {
@@ -113,6 +119,7 @@
       currentTagline,
       currentMood,
       currentAttribution,
+      currentRefusals,
       currentSentiment,
       currentTheme,
     );
@@ -143,6 +150,7 @@
     currentTagline: string,
     currentMood: string,
     currentAttribution: string,
+    currentRefusals: string,
     currentSentiment: ShareSentiment,
     currentTheme: ShareSentimentTheme,
   ) {
@@ -156,6 +164,7 @@
         currentTagline,
         currentMood,
         currentAttribution,
+        currentRefusals,
         currentSentiment,
         currentTheme,
       );
@@ -178,6 +187,7 @@
     currentTagline: string,
     currentMood: string,
     currentAttribution: string,
+    currentRefusals: string,
     currentSentiment: ShareSentiment,
     currentTheme: ShareSentimentTheme,
   ): Promise<Blob> {
@@ -278,6 +288,11 @@
     context.fillStyle = currentTheme.accent;
     context.font = '650 20px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(currentAttribution, 1130, 582);
+
+    context.textAlign = 'center';
+    context.fillStyle = currentTheme.accent;
+    context.font = '600 17px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText(currentRefusals, 600, 610);
 
     return new Promise((resolve, reject) => {
       canvas.toBlob(
@@ -582,8 +597,11 @@
           <em>{moodLine}</em>
         </div>
         <div class="share-preview-footer">
-          <span>{card.count.toLocaleString('en-US')} measured requests · {card.sessions.toLocaleString('en-US')} sessions</span>
-          <strong>{productAttribution}</strong>
+          <div class="share-preview-footer-row">
+            <span>{card.count.toLocaleString('en-US')} measured requests · {card.sessions.toLocaleString('en-US')} sessions</span>
+            <strong>{productAttribution}</strong>
+          </div>
+          <span class="share-preview-refusals">{refusalLine}</span>
         </div>
       </div>
 

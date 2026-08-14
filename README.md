@@ -102,7 +102,7 @@ Anyone able to read your local user account may be able to access the derived in
 
 ## Social sharing
 
-Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, and Token Envy attribution; it contains no session IDs, project paths, prompts, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
+Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, explicit refusal lower-bound counts, and Token Envy attribution; it contains no session IDs, project paths, prompts, refusal explanations, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
 
 Release builders can add a canonical product link to share cards and social composers at build time:
 

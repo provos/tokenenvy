@@ -124,8 +124,16 @@ export interface ShareCardData {
 	indexLabel: string;
 	indexEligible: boolean;
 	percentile: number | null;
+	refusals: ShareRefusalCounts;
 	models: Array<{ family: string; median: number; count: number }>;
 	histogram: Array<{ lower: number; upper: number; count: number }>;
+}
+
+export interface ShareRefusalCounts {
+	recorded: boolean;
+	attempted: number;
+	recovered: number;
+	userVisible: number;
 }
 
 export interface ShareCardInput {
@@ -136,6 +144,7 @@ export interface ShareCardInput {
 	outputTokens: number;
 	isToday: boolean;
 	speedIndex: SpeedIndex;
+	refusals?: ShareRefusalCounts;
 	models: ModelSummary[];
 	histogram: HistogramBin[];
 }
@@ -233,6 +242,12 @@ export function normalizeHistogram(
 }
 
 export function buildShareCardData(input: ShareCardInput): ShareCardData {
+	const attempted = input.refusals?.recorded ? nonNegativeInteger(input.refusals.attempted) : 0;
+	const recovered = Math.min(attempted, nonNegativeInteger(input.refusals?.recovered));
+	const userVisible = Math.min(
+		attempted - recovered,
+		nonNegativeInteger(input.refusals?.userVisible),
+	);
 	return {
 		date: input.date,
 		median: input.median,
@@ -243,6 +258,12 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
 		indexLabel: speedIndexLabel(input.speedIndex),
 		indexEligible: input.speedIndex.eligible,
 		percentile: input.speedIndex.percentile,
+		refusals: {
+			recorded: input.refusals?.recorded === true,
+			attempted,
+			recovered,
+			userVisible,
+		},
 		models: [...input.models].sort((left, right) => right.share - left.share).slice(0, 8).map((model) => ({
 			family: model.family,
 			median: model.median,
@@ -250,6 +271,10 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
 		})),
 		histogram: sanitizeHistogram(input.histogram),
 	};
+}
+
+function nonNegativeInteger(value: number | undefined): number {
+	return Number.isFinite(value) ? Math.max(0, Math.round(value as number)) : 0;
 }
 
 function ordinal(value: number): string {
@@ -274,6 +299,18 @@ export function getShareMoodLine(data: ShareCardData): string {
 	}
 
 	return `${ordinal(data.percentile)} percentile in my comparable days`;
+}
+
+export function getShareRefusalLine(data: ShareCardData): string {
+	if (!data.refusals.recorded) return 'Refusals: explicit signals unavailable';
+	const { attempted, recovered, userVisible } = data.refusals;
+	const unknown = Math.max(0, attempted - recovered - userVisible);
+	const outcomes = [
+		recovered > 0 ? `${recovered} recovered` : null,
+		userVisible > 0 ? `${userVisible} user-visible` : null,
+		unknown > 0 ? `${unknown} unresolved` : null,
+	].filter((value): value is string => value !== null);
+	return `Refusals (explicit lower bound): ${attempted}${outcomes.length > 0 ? ` · ${outcomes.join(' · ')}` : ''}`;
 }
 
 export function getShareTagline(

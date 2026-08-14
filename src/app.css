@@ -1889,14 +1889,32 @@ td .model-dot {
 }
 
 .share-preview-footer {
+  display: grid;
+  align-items: initial;
+  justify-content: stretch;
+  gap: 5px;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, .12);
 }
 
-.share-preview-footer strong {
+.share-preview-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.share-preview-footer-row strong {
   color: var(--share-accent);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
+}
+
+.share-preview-refusals {
+  color: var(--share-accent);
+  font-size: clamp(7px, 1.3vw, 10px);
+  font-weight: 620;
+  text-align: center;
 }
 
 .privacy-note,
@@ -2141,7 +2159,7 @@ td .model-dot {
   .share-preview-center > p { font-size: 16px; }
   .share-preview-center > strong { font-size: 58px; }
   .share-preview-footer { margin-top: auto; }
-  .share-preview-footer > span { display: none; }
+  .share-preview-footer-row > span { display: none; }
   .composer-buttons { flex-direction: column; }
   .linkedin-guide { align-items: stretch; flex-direction: column; }
   .linkedin-guide strong { margin-right: 0; }

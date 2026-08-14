@@ -45,7 +45,9 @@ directory, and makes no automatic network requests.
 - No prompts, response text, tool inputs or outputs, commands, project names,
   raw paths, refusal categories or explanations, or raw identifiers are persisted or returned.
 - Share cards are built from an allowlisted aggregate object and contain no
-  local identifiers. Social navigation is user-triggered.
+  local identifiers. They may show the selected day's aggregate explicit
+  refusal counts, labeled as a lower bound, but never refusal categories or
+  explanations. Social navigation is user-triggered.
 
 ## Scanner correctness
 

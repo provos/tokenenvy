@@ -151,6 +151,15 @@
     quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false
   );
   let displayedScanStatus = $derived(latestScanStatus ?? overview?.scan ?? null);
+  let selectedDayRefusals = $derived.by(() => {
+    const selected = overview?.refusals.byDay.find((item) => item.date === dayDetail?.date);
+    return {
+      recorded: overview?.refusals.recorded === true,
+      attempted: selected?.attempted ?? 0,
+      recovered: selected?.recovered ?? 0,
+      userVisible: selected?.userVisible ?? 0
+    };
+  });
 
   $effect(() => {
     const window = quota?.sevenDay;
@@ -705,6 +714,7 @@
   <ShareModal
     open={shareOpen}
     detail={dayDetail}
+    refusals={selectedDayRefusals}
     isToday={dayDetail.date === overview.today}
     refreshing={dayLoading}
     onclose={() => (shareOpen = false)}

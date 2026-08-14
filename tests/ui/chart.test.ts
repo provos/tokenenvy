@@ -5,6 +5,7 @@ import {
   buildShareCardData,
   getShareCaption,
   getShareMoodLine,
+  getShareRefusalLine,
   getShareSentimentTheme,
   getShareTagline,
   normalizeHistogram,
@@ -96,6 +97,13 @@ describe('privacy-safe share-card data', () => {
         reason: null,
         privateMarker
       } as never,
+      refusals: {
+        recorded: true,
+        attempted: 3,
+        recovered: 1,
+        userVisible: 1,
+        privateMarker
+      } as never,
       models: [
         { ...points[0], outputTokens: 1_000, share: 0.3, privateMarker },
         { ...points[0], family: 'opus', outputTokens: 2_000, share: 0.7, privateMarker }
@@ -115,6 +123,9 @@ describe('privacy-safe share-card data', () => {
     expect(suggestedShareSentiment(card)).toBe(1);
     expect(getShareTagline('spicy', 2, card)).toBe('Anthropic loves me today');
     expect(getShareMoodLine(card)).toContain('88th percentile');
+    expect(getShareRefusalLine(card)).toBe(
+      'Refusals (explicit lower bound): 3 · 1 recovered · 1 user-visible · 1 unresolved'
+    );
     expect(normalizeHistogram(card.histogram, card.median).some((bar) => bar.containsMedian)).toBe(true);
   });
 
@@ -157,5 +168,30 @@ describe('privacy-safe share-card data', () => {
     expect(getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/')).not.toContain(
       'https://tokenenvy.example/'
     );
+    expect(getShareRefusalLine(card)).toBe('Refusals: explicit signals unavailable');
+  });
+
+  it('shows a recorded zero rather than implying that classifier coverage is complete', () => {
+    const card = buildShareCardData({
+      date: '2026-08-14',
+      median: 50,
+      count: 4,
+      sessions: 2,
+      outputTokens: 400,
+      isToday: true,
+      speedIndex: {
+        value: null,
+        ciLow: null,
+        ciHigh: null,
+        percentile: null,
+        eligible: false,
+        reason: 'Baseline warming up'
+      },
+      refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      models: [],
+      histogram: []
+    });
+
+    expect(getShareRefusalLine(card)).toBe('Refusals (explicit lower bound): 0');
   });
 });
