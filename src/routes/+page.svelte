@@ -1,0 +1,637 @@
+<script module lang="ts">
+  import type { QuotaWindow, ScanStatus } from '$lib/types';
+
+  const scanStates = new Set<ScanStatus['state']>(['idle', 'discovering', 'scanning', 'error']);
+  const quotaFreshnessMs = 15 * 60_000;
+
+  function isNonNegativeInteger(value: unknown): value is number {
+    return Number.isSafeInteger(value) && (value as number) >= 0;
+  }
+
+  /** Parse the untrusted EventSource payload before it can update dashboard state. */
+  export function parseScanStatus(data: string): ScanStatus | null {
+    try {
+      const value = JSON.parse(data) as Record<string, unknown>;
+      if (
+        !value ||
+        typeof value !== 'object' ||
+        !scanStates.has(value.state as ScanStatus['state']) ||
+        !isNonNegativeInteger(value.filesDiscovered) ||
+        !isNonNegativeInteger(value.filesScanned) ||
+        !isNonNegativeInteger(value.bytesRead) ||
+        !isNonNegativeInteger(value.rowsRead) ||
+        !isNonNegativeInteger(value.invalidRows) ||
+        !isNonNegativeInteger(value.revision) ||
+        (value.updatedAt !== null && typeof value.updatedAt !== 'string') ||
+        (value.lastError !== null && typeof value.lastError !== 'string')
+      ) {
+        return null;
+      }
+      return value as unknown as ScanStatus;
+    } catch {
+      return null;
+    }
+  }
+
+  export function scanRefreshTarget(
+    analyticsRevision: number | null,
+    statusRevision: number
+  ): 'none' | 'quota' | 'dashboard' {
+    if (analyticsRevision === null || statusRevision < analyticsRevision) return 'none';
+    return statusRevision === analyticsRevision ? 'quota' : 'dashboard';
+  }
+
+  export function quotaWindowIsStale(window: QuotaWindow, now: number): boolean {
+    const observedAt = Date.parse(window.observedAt);
+    const resetsAt = Date.parse(window.resetsAt);
+    return (
+      window.stale ||
+      !Number.isFinite(observedAt) ||
+      !Number.isFinite(resetsAt) ||
+      now - observedAt > quotaFreshnessMs ||
+      now >= resetsAt
+    );
+  }
+
+  function quotaWindowExpiresAt(window: QuotaWindow): number | null {
+    const observedAt = Date.parse(window.observedAt);
+    const resetsAt = Date.parse(window.resetsAt);
+    if (!Number.isFinite(observedAt) || !Number.isFinite(resetsAt)) return null;
+    return Math.min(observedAt + quotaFreshnessMs + 1, resetsAt);
+  }
+</script>
+
+<script lang="ts">
+  import { browser } from '$app/environment';
+  import { onDestroy, onMount } from 'svelte';
+  import DailyChart from '$lib/components/DailyChart.svelte';
+  import HistogramDrawer from '$lib/components/HistogramDrawer.svelte';
+  import ShareModal from '$lib/components/ShareModal.svelte';
+  import { compactNumber, FAMILY_COLORS } from '$lib/components/chart';
+  import { speedIndexDelta } from '$lib/components/share';
+  import type {
+    DayDetailResponse,
+    ModelFamily,
+    OverviewResponse,
+    QuotaResponse,
+    SeriesResponse
+  } from '$lib/types';
+
+  const ranges = [28, 90, 365] as const;
+  const allFamilies: ModelFamily[] = ['opus', 'sonnet', 'fable', 'haiku', 'other'];
+
+  interface DataQualityResponse {
+    rows: number;
+    invalidRows: number;
+  }
+
+  let overview = $state<OverviewResponse | null>(null);
+  let series = $state<SeriesResponse | null>(null);
+  let quota = $state<QuotaResponse | null>(null);
+  let quotaClock = $state(Date.now());
+  let dataQuality = $state<DataQualityResponse | null>(null);
+  let loading = $state(true);
+  let error = $state<string | null>(null);
+  let refreshError = $state<{ message: string; requestedDays: (typeof ranges)[number] } | null>(null);
+  let rangeDays = $state<(typeof ranges)[number]>(28);
+  let pendingRangeDays = $state<(typeof ranges)[number] | null>(null);
+  let visibleFamilies = $state<ModelFamily[]>([...allFamilies]);
+  let theme = $state<'dark' | 'light'>('dark');
+  let selectedDate = $state<string | null>(null);
+  let dayDetail = $state<DayDetailResponse | null>(null);
+  let dayLoading = $state(false);
+  let dayError = $state<string | null>(null);
+  let shareOpen = $state(false);
+  let eventSource: EventSource | null = null;
+  let dashboardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let quotaRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadSequence = 0;
+  let quotaLoadSequence = 0;
+  let dayLoadSequence = 0;
+  let analyticsRevision: number | null = null;
+  let latestScanStatus: ScanStatus | null = null;
+
+  let hasData = $derived(Boolean(overview?.headline.count || series?.points.length));
+  let hasTodayData = $derived(Boolean(overview?.headline.count));
+  let latestUpdate = $derived(formatUpdate(overview?.generatedAt));
+  let baselineCopy = $derived(getBaselineCopy(overview));
+  let qualityRatio = $derived(
+    dataQuality && dataQuality.rows > 0
+      ? Math.max(0, 1 - dataQuality.invalidRows / dataQuality.rows)
+      : null
+  );
+  let sevenDayQuotaStale = $derived(
+    quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false
+  );
+
+  $effect(() => {
+    const window = quota?.sevenDay;
+    if (!window || quotaWindowIsStale(window, quotaClock)) return;
+    const expiresAt = quotaWindowExpiresAt(window);
+    if (expiresAt === null) return;
+    const timer = setTimeout(() => {
+      quotaClock = Date.now();
+    }, Math.max(0, expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  });
+
+  function formatUpdate(value?: string): string {
+    if (!value) return 'Waiting for first scan';
+    const timestamp = new Date(value).getTime();
+    if (!Number.isFinite(timestamp)) return 'Updated recently';
+    const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+    if (seconds < 10) return 'Updated just now';
+    if (seconds < 60) return `Updated ${seconds}s ago`;
+    return `Updated ${Math.floor(seconds / 60)}m ago`;
+  }
+
+  function formatQuotaObservation(value: string): string {
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return 'an earlier run';
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(timestamp);
+  }
+
+  function getBaselineCopy(data: OverviewResponse | null): { value: string; label: string; positive: boolean | null } {
+    const index = data?.speedIndex;
+    if (!index?.eligible || index.value === null) {
+      return {
+        value: 'Building baseline',
+        label: index?.reason ?? 'Needs 20 requests, five sessions, and seven prior days',
+        positive: null
+      };
+    }
+    const percentValue = speedIndexDelta(index);
+    if (percentValue === null) {
+      return { value: 'Building baseline', label: index.reason ?? 'Not enough comparable data', positive: null };
+    }
+    const rounded = Math.abs(percentValue).toFixed(0);
+    return {
+      value: `${percentValue >= 0 ? '+' : '−'}${rounded}%`,
+      label: `${percentValue >= 0 ? 'faster' : 'slower'} than your mix-adjusted 28-day baseline`,
+      positive: percentValue >= 0
+    };
+  }
+
+  async function getJson<T>(url: string, optional = false): Promise<T | null> {
+    const response = await fetch(url, { headers: { accept: 'application/json' } });
+    if (optional && response.status === 404) return null;
+    if (!response.ok) throw new Error(`The local service returned ${response.status}`);
+    return (await response.json()) as T;
+  }
+
+  async function loadDashboard(showLoading = false, requestedDays = rangeDays) {
+    if (dashboardRefreshTimer) {
+      clearTimeout(dashboardRefreshTimer);
+      dashboardRefreshTimer = null;
+    }
+    if (quotaRefreshTimer) {
+      clearTimeout(quotaRefreshTimer);
+      quotaRefreshTimer = null;
+    }
+    const sequence = ++loadSequence;
+    const quotaSequence = ++quotaLoadSequence;
+    const rangeChange = requestedDays !== rangeDays;
+    if (showLoading) loading = true;
+    if (rangeChange) pendingRangeDays = requestedDays;
+    if (!overview) error = null;
+    try {
+      const [nextOverview, nextSeries, nextQuota, nextDataQuality] = await Promise.all([
+        getJson<OverviewResponse>('/api/v1/overview'),
+        getJson<SeriesResponse>(`/api/v1/series?days=${requestedDays}`),
+        getJson<QuotaResponse>('/api/v1/quota', true).catch(() => null),
+        getJson<DataQualityResponse>('/api/v1/data-quality')
+      ]);
+      if (sequence !== loadSequence) return;
+      analyticsRevision = nextOverview?.scan.revision ?? null;
+      overview = nextOverview && latestScanStatus && latestScanStatus.revision >= nextOverview.scan.revision
+        ? { ...nextOverview, scan: latestScanStatus }
+        : nextOverview;
+      series = nextSeries;
+      if (quotaSequence === quotaLoadSequence) {
+        quota = nextQuota;
+        quotaClock = Date.now();
+      }
+      dataQuality = nextDataQuality;
+      rangeDays = requestedDays;
+      if (rangeChange || !refreshError || refreshError.requestedDays === requestedDays) refreshError = null;
+      if (latestScanStatus && analyticsRevision !== null && latestScanStatus.revision > analyticsRevision) {
+        scheduleDashboardRefresh();
+      }
+    } catch (cause) {
+      if (sequence !== loadSequence) return;
+      const message = cause instanceof Error ? cause.message : 'Could not reach the local scanner.';
+      if (overview && series) refreshError = { message, requestedDays };
+      else error = message;
+    } finally {
+      if (sequence === loadSequence) {
+        loading = false;
+        pendingRangeDays = null;
+      }
+    }
+  }
+
+  async function refreshQuota() {
+    const sequence = ++quotaLoadSequence;
+    try {
+      const nextQuota = await getJson<QuotaResponse>('/api/v1/quota', true);
+      if (sequence === quotaLoadSequence) {
+        quota = nextQuota;
+        quotaClock = Date.now();
+      }
+    } catch {
+      // Keep the last known quota; overview and trends remain valid.
+    }
+  }
+
+  function scheduleDashboardRefresh() {
+    if (quotaRefreshTimer) {
+      clearTimeout(quotaRefreshTimer);
+      quotaRefreshTimer = null;
+    }
+    if (dashboardRefreshTimer) clearTimeout(dashboardRefreshTimer);
+    dashboardRefreshTimer = setTimeout(() => {
+      dashboardRefreshTimer = null;
+      void loadDashboard(false, pendingRangeDays ?? rangeDays);
+    }, 350);
+  }
+
+  function scheduleQuotaRefresh() {
+    if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
+    quotaRefreshTimer = setTimeout(() => {
+      quotaRefreshTimer = null;
+      void refreshQuota();
+    }, 350);
+  }
+
+  function handleScanEvent(event: MessageEvent<string>) {
+    const status = parseScanStatus(event.data);
+    if (!status) return;
+    latestScanStatus = status;
+
+    if (overview && status.revision >= overview.scan.revision) {
+      overview = { ...overview, scan: status };
+    }
+    const target = scanRefreshTarget(analyticsRevision, status.revision);
+    if (target === 'dashboard') scheduleDashboardRefresh();
+    else if (target === 'quota') scheduleQuotaRefresh();
+  }
+
+  function connectEvents() {
+    eventSource?.close();
+    eventSource = new EventSource('/api/v1/events');
+    eventSource.addEventListener('scan', handleScanEvent);
+    eventSource.onerror = () => {
+      // EventSource reconnects automatically. The dashboard remains usable meanwhile.
+    };
+  }
+
+  async function openDay(date: string) {
+    const sequence = ++dayLoadSequence;
+    selectedDate = date;
+    dayDetail = null;
+    dayError = null;
+    dayLoading = true;
+    try {
+      const detail = await getJson<DayDetailResponse>(`/api/v1/days/${encodeURIComponent(date)}`);
+      if (sequence !== dayLoadSequence || selectedDate !== date) return;
+      dayDetail = detail;
+    } catch (cause) {
+      if (sequence !== dayLoadSequence || selectedDate !== date) return;
+      dayError = cause instanceof Error ? cause.message : 'Could not load the selected day.';
+    } finally {
+      if (sequence === dayLoadSequence && selectedDate === date) dayLoading = false;
+    }
+  }
+
+  function closeDay() {
+    dayLoadSequence += 1;
+    selectedDate = null;
+    dayDetail = null;
+    dayError = null;
+  }
+
+  function toggleFamily(family: ModelFamily) {
+    if (visibleFamilies.includes(family)) {
+      if (visibleFamilies.length > 1) visibleFamilies = visibleFamilies.filter((item) => item !== family);
+    } else {
+      visibleFamilies = [...visibleFamilies, family];
+    }
+  }
+
+  function applyTheme(next: 'dark' | 'light') {
+    theme = next;
+    if (browser) {
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem('claude-speedometer-theme', next);
+    }
+  }
+
+  onMount(() => {
+    const saved = localStorage.getItem('claude-speedometer-theme');
+    applyTheme(saved === 'light' ? 'light' : 'dark');
+    connectEvents();
+    void loadDashboard(true);
+  });
+
+  onDestroy(() => {
+    eventSource?.close();
+    if (dashboardRefreshTimer) clearTimeout(dashboardRefreshTimer);
+    if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
+  });
+</script>
+
+<svelte:head>
+  <title>Claude Speedometer · Local performance</title>
+</svelte:head>
+
+<div class="app-shell">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Claude Speedometer home">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span>Claude Speedometer</span>
+    </a>
+
+    <div class="topbar-meta">
+      {#if overview}
+        <span class:scanning={overview.scan.state === 'scanning' || overview.scan.state === 'discovering'} class="live-status">
+          <i></i>{overview.scan.state === 'idle' ? 'Live' : overview.scan.state}
+        </span>
+        <span class="privacy-pill" title="No prompt or response content leaves this device">Private · local only</span>
+      {/if}
+      <div class="range-control" aria-label="Chart range">
+        {#each ranges as days}
+          <button
+            class:active={rangeDays === days}
+            aria-pressed={rangeDays === days}
+            aria-busy={pendingRangeDays === days}
+            onclick={() => loadDashboard(false, days)}
+          >
+            {days === 365 ? '1y' : `${days}d`}
+          </button>
+        {/each}
+      </div>
+      <button
+        class="icon-button theme-toggle"
+        aria-label={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        onclick={() => applyTheme(theme === 'dark' ? 'light' : 'dark')}
+      >{theme === 'dark' ? '☼' : '◐'}</button>
+      <button
+        class="share-button"
+        disabled={!hasTodayData}
+        title={hasTodayData ? 'Create a privacy-safe share card' : 'Sharing unlocks after today has a measured request'}
+        onclick={() => (shareOpen = true)}
+      >
+        <span aria-hidden="true">↗</span> Share
+      </button>
+    </div>
+  </header>
+
+  <main>
+    {#if loading && !overview}
+      <section class="loading-state" aria-live="polite">
+        <div class="loading-orbit"><span></span></div>
+        <p class="eyebrow">Reading private metadata</p>
+        <h1>Warming up your speedometer</h1>
+        <p>The first scan may take a moment. The dashboard is already listening for new sessions.</p>
+        <div class="skeleton-grid" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </div>
+      </section>
+    {:else if error && !overview}
+      <section class="error-state" role="alert">
+        <span class="error-glyph">!</span>
+        <p class="eyebrow">Dashboard offline</p>
+        <h1>We lost the local signal</h1>
+        <p>{error}</p>
+        <button class="primary-button" onclick={() => loadDashboard(true)}>Try again</button>
+      </section>
+    {:else if overview && !hasData}
+      <section class="empty-state">
+        <div class="empty-gauge" aria-hidden="true"><span></span></div>
+        <p class="eyebrow">Live scanner ready</p>
+        <h1>Your first reading will appear here</h1>
+        <p>Use Claude Code as usual. Eligible requests are summarized locally as soon as a session log is completed.</p>
+        <div class="empty-details">
+          <span><b>{overview.scan.filesDiscovered}</b> log files found</span>
+          <span><b>{overview.scan.rowsRead.toLocaleString()}</b> events inspected</span>
+          <span><b>0</b> prompts retained</span>
+        </div>
+      </section>
+    {:else if overview && series}
+      <section class="dashboard-grid">
+        <div class="dashboard-main">
+          <section class="hero-card">
+            {#if hasTodayData}
+              <div class="hero-copy">
+                <div class="hero-kicker">
+                  <span>Today · {overview.today}</span>
+                  {#if overview.headline.provisional}<span class="provisional">Live estimate</span>{/if}
+                </div>
+                <div class="hero-number">
+                  <strong>{overview.headline.median.toFixed(1)}</strong>
+                  <span>effective output<br /> tokens / second</span>
+                </div>
+                <div class="baseline-line" class:positive={baselineCopy.positive === true} class:negative={baselineCopy.positive === false}>
+                  <strong>{baselineCopy.value}</strong>
+                  <span>{baselineCopy.label}</span>
+                </div>
+              </div>
+              <div class="hero-stats">
+                <div>
+                  <span>Middle 50%</span>
+                  <strong>{overview.headline.q1.toFixed(1)}–{overview.headline.q3.toFixed(1)}</strong>
+                  <small>effective tok/s</small>
+                </div>
+                <div>
+                  <span>Measured requests</span>
+                  <strong>{overview.headline.count.toLocaleString()}</strong>
+                  <small>across {overview.headline.sessions.toLocaleString()} sessions</small>
+                </div>
+                <div>
+                  <span>Output observed</span>
+                  <strong>{compactNumber(overview.headline.outputTokens)}</strong>
+                  <small>tokens today</small>
+                </div>
+              </div>
+            {:else}
+              <div class="hero-copy hero-empty-today">
+                <div class="hero-kicker"><span>Today · {overview.today}</span></div>
+                <p class="eyebrow">Historical dashboard ready</p>
+                <h1>No eligible readings yet today</h1>
+                <p>Your prior trends remain below. Today’s speed and sharing will unlock after the first measured request.</p>
+              </div>
+            {/if}
+            <div class="hero-glow" aria-hidden="true"></div>
+          </section>
+
+          <section class="panel trend-panel">
+            <div class="section-heading chart-heading">
+              <div>
+                <p class="eyebrow">Longitudinal view</p>
+                <h2>How fast has Claude felt?</h2>
+                <p>Daily median with the middle 50% shaded. Whiskers show the clustered 95% confidence interval when eligible.</p>
+              </div>
+              <span class="freshness">{latestUpdate}</span>
+            </div>
+
+            <div class="family-filters" aria-label="Visible model families">
+              {#each allFamilies as family}
+                {@const model = overview.models.find((item) => item.family === family)}
+                {#if model || series.points.some((point) => point.family === family)}
+                  <button
+                    class:inactive={!visibleFamilies.includes(family)}
+                    aria-pressed={visibleFamilies.includes(family)}
+                    onclick={() => toggleFamily(family)}
+                  >
+                    <i style={`--model-color:${FAMILY_COLORS[family]}`}></i>{family}
+                  </button>
+                {/if}
+              {/each}
+            </div>
+
+            {#if refreshError}
+              <div class="refresh-error" role="alert">
+                <span>{refreshError.message} Showing the last successful {rangeDays}-day view.</span>
+                <button onclick={() => loadDashboard(false, refreshError?.requestedDays ?? rangeDays)}>Retry</button>
+              </div>
+            {/if}
+
+            {#if series.points.length}
+              <DailyChart
+                points={series.points}
+                timezone={series.timezone}
+                {visibleFamilies}
+                {selectedDate}
+                onselect={openDay}
+              />
+              <p class="chart-hint">Select any day to open its histogram and hourly rhythm.</p>
+            {:else}
+              <div class="subtle-empty">No eligible daily measurements in this range yet.</div>
+            {/if}
+          </section>
+        </div>
+
+        <aside class="dashboard-rail" aria-label="Usage and performance at a glance">
+          <section class="panel rail-panel">
+            <div class="section-heading compact-heading">
+              <div><p class="eyebrow">Model families</p><h2>Today’s mix</h2></div>
+            </div>
+            <div class="model-list">
+              {#if overview.models.length}
+                {#each overview.models as model}
+                  <div class="rail-model">
+                    <div class="rail-model-name">
+                      <i style={`--model-color:${FAMILY_COLORS[model.family]}`}></i>
+                      <span><strong>{model.family}</strong><small>{model.count.toLocaleString()} requests</small></span>
+                    </div>
+                    <div class="rail-model-value"><strong>{model.median.toFixed(1)}</strong><small>tok/s</small></div>
+                    <span class="mix-track"><i style={`--model-color:${FAMILY_COLORS[model.family]};--model-share:${model.share * 100}%`}></i></span>
+                  </div>
+                {/each}
+              {:else}
+                <p class="subtle-empty rail-empty">No model readings yet today.</p>
+              {/if}
+            </div>
+          </section>
+
+          <section class="panel rail-panel weekly-panel">
+            <div class="section-heading compact-heading">
+              <div><p class="eyebrow">This calendar week</p><h2>Observed usage</h2></div>
+            </div>
+            <strong class="large-rail-number">{compactNumber(overview.weekly.outputTokens)}</strong>
+            <span class="large-rail-label">output tokens recorded</span>
+            <div class="week-progress"><i style={`--week-progress:${Math.min(100, overview.weekly.elapsedFraction * 100)}%`}></i></div>
+            <div class="weekly-grid">
+              <span><small>Projected</small><strong>{overview.weekly.projectedOutputTokens === null ? '—' : compactNumber(overview.weekly.projectedOutputTokens)}</strong></span>
+              <span><small>4-week median</small><strong>{overview.weekly.previousFourWeekMedian === null ? '—' : compactNumber(overview.weekly.previousFourWeekMedian)}</strong></span>
+            </div>
+            <p>This is locally observed usage, not an account quota.</p>
+            {#if quota?.available && quota.sevenDay}
+              <div class="quota-reading" class:stale={sevenDayQuotaStale}>
+                {#if sevenDayQuotaStale}
+                  <span><strong>Stale</strong> status-line sample from {formatQuotaObservation(quota.sevenDay.observedAt)}</span>
+                {:else}
+                  <span><strong>{quota.sevenDay.usedPercentage.toFixed(0)}%</strong> of reported 7-day window</span>
+                  <div><i style={`--quota-progress:${quota.sevenDay.usedPercentage}%`}></i></div>
+                {/if}
+              </div>
+            {/if}
+          </section>
+
+          <section class="panel rail-panel refusal-panel">
+            <div class="section-heading compact-heading">
+              <div><p class="eyebrow">All recorded history</p><h2>Classifier refusals</h2></div>
+              {#if overview.refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
+            </div>
+            {#if overview.refusals.recorded}
+              <div class="refusal-total"><strong>{overview.refusals.attempted}</strong><span>attempted</span></div>
+              <div class="refusal-grid">
+                <span><i class="recovered"></i><strong>{overview.refusals.recovered}</strong><small>recovered by fallback</small></span>
+                <span><i class="visible"></i><strong>{overview.refusals.userVisible}</strong><small>user-visible</small></span>
+                <span><i class="unknown"></i><strong>{overview.refusals.unknown}</strong><small>unknown outcome</small></span>
+              </div>
+              <p>{overview.refusals.perThousand === null ? 'Rate unavailable' : `${overview.refusals.perThousand.toFixed(2)} attempts per 1,000 measured requests`}.</p>
+            {:else}
+              <p class="subtle-empty rail-empty">This log format does not expose explicit classifier outcomes.</p>
+            {/if}
+          </section>
+        </aside>
+      </section>
+
+      <section class="trust-grid">
+        <article class="trust-card">
+          <span class="trust-index">01</span>
+          <p class="eyebrow">Reliability</p>
+          <h2>Built for messy, living logs</h2>
+          <p>Copied history is deduplicated. Partial lines wait. Late events reopen provisional requests. Truncated files are reconciled.</p>
+          <div class="trust-stat">
+            <strong>{qualityRatio === null ? '—' : `${(qualityRatio * 100).toFixed(2)}%`}</strong>
+            <span>rows parsed cleanly</span>
+          </div>
+        </article>
+        <article class="trust-card">
+          <span class="trust-index">02</span>
+          <p class="eyebrow">Privacy</p>
+          <h2>Your work stays yours</h2>
+          <p>The scanner stores aggregate timing metadata—not prompts, responses, commands, project names, paths, or refusal explanations.</p>
+          <div class="trust-stat"><strong>0</strong><span>automatic network requests</span></div>
+        </article>
+        <article class="trust-card methodology-card">
+          <span class="trust-index">03</span>
+          <p class="eyebrow">Methodology</p>
+          <h2>An honest measure of felt speed</h2>
+          <p>Effective output tokens/s divides output tokens by inferred end-to-end wall time. It includes queueing, prompt processing, hidden reasoning, and first-token latency—not just decoder speed.</p>
+          <details>
+            <summary>What gets excluded?</summary>
+            <p>Synthetic events, non-positive token counts, missing parents, invalid timestamps, sub-100ms intervals, and hour-scale gaps. Confidence intervals require 20 requests across five sessions.</p>
+          </details>
+        </article>
+      </section>
+    {/if}
+  </main>
+
+  <footer class="site-footer">
+    <span>Claude Speedometer</span>
+    <span>Private by default · Open source · Local-first</span>
+  </footer>
+</div>
+
+<HistogramDrawer open={selectedDate !== null} loading={dayLoading} detail={dayDetail} error={dayError} onclose={closeDay} />
+
+{#if overview}
+  <ShareModal
+    open={shareOpen}
+    date={overview.today}
+    median={overview.headline.median}
+    count={overview.headline.count}
+    speedIndex={overview.speedIndex}
+    models={overview.models}
+    points={series?.points ?? []}
+    onclose={() => (shareOpen = false)}
+  />
+{/if}
