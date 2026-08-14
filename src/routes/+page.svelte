@@ -75,6 +75,14 @@
     };
   }
 
+  export function modelFamilyRailState(
+    modelCount: number,
+    loading: boolean
+  ): 'models' | 'loading' | 'empty' {
+    if (modelCount > 0) return 'models';
+    return loading ? 'loading' : 'empty';
+  }
+
   function quotaWindowExpiresAt(window: QuotaWindow): number | null {
     const observedAt = Date.parse(window.observedAt);
     const resetsAt = Date.parse(window.resetsAt);
@@ -144,6 +152,9 @@
   let latestUpdate = $derived(formatUpdate(overview?.generatedAt));
   let shareReady = $derived(Boolean(dayDetail && !dayLoading && !dayError));
   let recapReady = $derived(overview ? weeklyRecapReady(overview.weekly.recap) : false);
+  let modelRailState = $derived(
+    modelFamilyRailState(dayDetail?.models.length ?? 0, dayLoading)
+  );
   let selectedDayLabel = $derived(
     selectedDate ? (selectedDate === overview?.today ? 'Today' : dayLabel(selectedDate)) : 'Selected day'
   );
@@ -631,14 +642,15 @@
         </div>
 
         <aside class="dashboard-rail" aria-label="Usage and performance at a glance">
-          <section class="panel rail-panel">
+          <section class="panel rail-panel" aria-busy={dayLoading}>
             <div class="section-heading compact-heading">
               <div><p class="eyebrow">Model families</p><h2>{selectedDayLabel} mix</h2></div>
             </div>
             <div class="model-list">
-              {#if dayLoading}
-                <p class="subtle-empty rail-empty">Refreshing the selected day…</p>
-              {:else if dayDetail?.models.length}
+              {#if modelRailState === 'models' && dayDetail}
+                {#if dayLoading}
+                  <span class="sr-only" role="status">Updating the model mix in the background.</span>
+                {/if}
                 {#each dayDetail.models as model}
                   <div class="rail-model">
                     <div class="rail-model-name">
@@ -649,6 +661,8 @@
                     <span class="mix-track"><i style={`--model-color:${FAMILY_COLORS[model.family]};--model-share:${model.share * 100}%`}></i></span>
                   </div>
                 {/each}
+              {:else if modelRailState === 'loading'}
+                <p class="subtle-empty rail-empty">Loading the selected day…</p>
               {:else}
                 <p class="subtle-empty rail-empty">No model readings for the selected day.</p>
               {/if}

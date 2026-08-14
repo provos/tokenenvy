@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseScanStatus,
+  modelFamilyRailState,
   quotaWindowIsStale,
   rangeButtonState,
   scanRefreshTarget,
@@ -64,5 +65,12 @@ describe('dashboard event parsing', () => {
     expect(rangeButtonState(90, 28)).toEqual({ disabled: true, busy: false });
     expect(rangeButtonState(90, 90)).toEqual({ disabled: true, busy: true });
     expect(rangeButtonState(90, 365)).toEqual({ disabled: true, busy: false });
+  });
+
+  it('keeps the model-family values painted during a background refresh', () => {
+    expect(modelFamilyRailState(3, true)).toBe('models');
+    expect(modelFamilyRailState(3, false)).toBe('models');
+    expect(modelFamilyRailState(0, true)).toBe('loading');
+    expect(modelFamilyRailState(0, false)).toBe('empty');
   });
 });
