@@ -200,6 +200,15 @@ export function getShareSentimentTheme(value: number): ShareSentimentTheme {
 	return SENTIMENT_THEMES[normalizeShareSentiment(value)];
 }
 
+export function sentimentAfterCardChange(
+	previousDate: string | null,
+	nextDate: string,
+	current: ShareSentiment,
+	suggested: ShareSentiment,
+): ShareSentiment {
+	return previousDate === nextDate ? current : suggested;
+}
+
 export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
 	const { indexValue, indexCiLow, indexCiHigh, percentile } = data;
 	if (!data.indexEligible || indexValue === null || percentile === null) return 0;
@@ -212,7 +221,7 @@ export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
 	) {
 		return -2;
 	}
-	if (percentile <= 35 && indexValue < 100) return -1;
+	if (percentile <= 45 && indexValue < 100) return -1;
 
 	if (
 		percentile >= 90 &&
@@ -222,7 +231,7 @@ export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
 	) {
 		return 2;
 	}
-	if (percentile >= 65 && indexValue > 100) return 1;
+	if (percentile >= 55 && indexValue > 100) return 1;
 	return 0;
 }
 

@@ -16,6 +16,7 @@
     normalizeHistogram,
     normalizeShareSentiment,
     safeShareProductLink,
+    sentimentAfterCardChange,
     SHARE_INSTALL_CTA,
     suggestedShareSentiment,
     type ShareCardData,
@@ -41,6 +42,7 @@
   let status = $state<string | null>(null);
   let modal = $state<HTMLElement>();
   let previousOpen = false;
+  let sentimentCardDate: string | null = null;
   let preparedFile = $state<File | null>(null);
   let preparing = $state(false);
   let nativeFileShareAvailable = $state(false);
@@ -82,9 +84,21 @@
   });
 
   $effect(() => {
+    const nextCardDate = card.date;
+    const suggestedSentiment = suggestedShareSentiment(card);
     if (open && !previousOpen) {
       tone = 'friendly';
-      sentiment = suggestedShareSentiment(card);
+      sentiment = suggestedSentiment;
+      sentimentCardDate = nextCardDate;
+      status = null;
+    } else if (open && sentimentCardDate !== nextCardDate) {
+      sentiment = sentimentAfterCardChange(
+        sentimentCardDate,
+        nextCardDate,
+        sentiment,
+        suggestedSentiment,
+      );
+      sentimentCardDate = nextCardDate;
       status = null;
     }
     previousOpen = open;

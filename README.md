@@ -21,7 +21,7 @@ The spicy share voice is an explicit choice in the share dialog. Each dialog ope
 
 Token Envy requires Node.js 22.13 or newer.
 
-After an npm release is published, it can be run with:
+Run it directly from npm with:
 
 ```bash
 npx tokenenvy

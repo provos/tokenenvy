@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseScanStatus,
   quotaWindowIsStale,
+  rangeButtonState,
   scanRefreshTarget,
   selectActiveDate
 } from '../../src/routes/+page.svelte';
@@ -56,5 +57,12 @@ describe('dashboard event parsing', () => {
     expect(selectActiveDate('2026-07-01', '2026-08-14', 0, dates)).toBe('2026-08-13');
     expect(selectActiveDate(null, '2026-08-14', 4, dates)).toBe('2026-08-14');
     expect(selectActiveDate(null, '2026-08-14', 0, [])).toBeNull();
+  });
+
+  it('locks the range group while identifying only the requested range as busy', () => {
+    expect(rangeButtonState(null, 28)).toEqual({ disabled: false, busy: false });
+    expect(rangeButtonState(90, 28)).toEqual({ disabled: true, busy: false });
+    expect(rangeButtonState(90, 90)).toEqual({ disabled: true, busy: true });
+    expect(rangeButtonState(90, 365)).toEqual({ disabled: true, busy: false });
   });
 });

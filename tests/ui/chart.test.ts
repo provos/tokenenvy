@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DailyPoint } from '../../src/lib/types';
-import { areaPath, chartMaximum, dayLabel, linePath } from '../../src/lib/components/chart';
+import { areaPath, chartMaximum, chartTickIndices, chartTickLabel, dayLabel, linePath } from '../../src/lib/components/chart';
 import {
   buildShareCardData,
   DEFAULT_SHARE_PRODUCT_URL,
@@ -11,6 +11,7 @@ import {
   getShareTagline,
   normalizeHistogram,
   safeShareProductLink,
+  sentimentAfterCardChange,
   suggestedShareSentiment,
 } from '../../src/lib/components/share';
 
@@ -65,6 +66,19 @@ describe('dashboard chart helpers', () => {
   it('formats a calendar day without shifting it across timezones', () => {
     expect(dayLabel('2026-08-14', 'America/Los_Angeles')).toMatch(/Aug 14/);
     expect(dayLabel('2026-08-14', 'Pacific/Kiritimati')).toMatch(/Aug 14/);
+  });
+
+  it('uses one final tick slot for the stacked Today and calendar labels', () => {
+    expect(chartTickIndices(1)).toEqual([0]);
+    expect(chartTickIndices(2)).toEqual([0, 1]);
+    expect(chartTickIndices(64)).toEqual([0, 11, 21, 32, 42, 53, 63]);
+    expect(chartTickIndices(90)).toEqual([0, 15, 30, 45, 59, 74, 89]);
+    expect(chartTickIndices(365)).toEqual([0, 61, 121, 182, 243, 303, 364]);
+    expect(chartTickLabel('2026-08-14', '2026-08-14')).toEqual({
+      primary: 'Today',
+      secondary: expect.stringMatching(/Aug 14/),
+      accessible: expect.stringMatching(/Today, Aug 14/)
+    });
   });
 });
 
@@ -168,11 +182,21 @@ describe('privacy-safe share-card data', () => {
     expect(sentimentFor(90, 10, 82, 100)).toBe(-1);
     expect(sentimentFor(91, 10, 82, 99)).toBe(-1);
     expect(sentimentFor(99, 35, 90, 108)).toBe(-1);
+    expect(sentimentFor(99, 45, 90, 108)).toBe(-1);
+    expect(sentimentFor(99, 46, 90, 108)).toBe(0);
     expect(sentimentFor(100, 10, 90, 110)).toBe(0);
-    expect(sentimentFor(101, 65, 92, 112)).toBe(1);
+    expect(sentimentFor(101, 54, 92, 112)).toBe(0);
+    expect(sentimentFor(101, 55, 92, 112)).toBe(1);
     expect(sentimentFor(110, 90, 101, 118)).toBe(2);
     expect(sentimentFor(110, 90, 100, 118)).toBe(1);
     expect(sentimentFor(109, 90, 101, 118)).toBe(1);
+    expect(sentimentFor(101, 45, 92, 112)).toBe(0);
+    expect(sentimentFor(99, 55, 90, 108)).toBe(0);
+  });
+
+  it('resets a suggested sentiment for a new day but preserves a same-day override', () => {
+    expect(sentimentAfterCardChange('2026-08-14', '2026-08-14', -2, 1)).toBe(-2);
+    expect(sentimentAfterCardChange('2026-08-14', '2026-08-15', -2, 1)).toBe(1);
   });
 
   it('uses historical tense and only adds the configured link where the flow supports it', () => {

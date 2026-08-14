@@ -689,6 +689,52 @@ main {
   font-size: 10px;
 }
 
+.axis-label-today {
+  fill: var(--text);
+  font-weight: 720;
+}
+
+.today-tick {
+  fill: var(--accent);
+}
+
+.range-loading {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 3px;
+  padding: 10px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.range-loading > span:last-child {
+  min-width: 0;
+  display: grid;
+}
+
+.range-loading strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.range-loading small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.range-loading-spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: rotate 700ms linear infinite;
+}
+
 .axis-title {
   font-size: 9px;
   letter-spacing: 0.04em;

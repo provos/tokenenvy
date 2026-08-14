@@ -18,6 +18,28 @@ export function dayLabel(value: string, _timezone = 'UTC'): string {
   }).format(new Date(`${value}T12:00:00Z`));
 }
 
+export function chartTickIndices(dateCount: number, maximumLabels = 7): number[] {
+  if (dateCount <= 0 || maximumLabels <= 0) return [];
+  if (dateCount === 1 || maximumLabels === 1) return [dateCount - 1];
+  const labelCount = Math.min(dateCount, maximumLabels);
+  const last = dateCount - 1;
+  return Array.from(
+    { length: labelCount },
+    (_, index) => Math.round((index * last) / (labelCount - 1))
+  );
+}
+
+export function chartTickLabel(
+  date: string,
+  today: string,
+  timezone = 'UTC'
+): { primary: string; secondary: string | null; accessible: string } {
+  const calendarLabel = dayLabel(date, timezone);
+  return date === today
+    ? { primary: 'Today', secondary: calendarLabel, accessible: `Today, ${calendarLabel}` }
+    : { primary: calendarLabel, secondary: null, accessible: calendarLabel };
+}
+
 export function compactNumber(value: number): string {
   return new Intl.NumberFormat(undefined, {
     notation: value >= 10_000 ? 'compact' : 'standard',

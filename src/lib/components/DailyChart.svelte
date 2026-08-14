@@ -1,19 +1,20 @@
 <script lang="ts">
   import type { DailyPoint, ModelFamily } from '$lib/types';
-  import { areaPath, chartMaximum, dayLabel, FAMILY_COLORS, linePath } from './chart';
+  import { areaPath, chartMaximum, chartTickIndices, chartTickLabel, dayLabel, FAMILY_COLORS, linePath } from './chart';
 
   interface Props {
     points: DailyPoint[];
     timezone: string;
+    today: string;
     visibleFamilies: ModelFamily[];
     selectedDate: string | null;
     onselect: (date: string) => void;
   }
 
-  let { points, timezone, visibleFamilies, selectedDate, onselect }: Props = $props();
+  let { points, timezone, today, visibleFamilies, selectedDate, onselect }: Props = $props();
   const width = 820;
   const height = 286;
-  const pad = { top: 24, right: 18, bottom: 42, left: 52 };
+  const pad = { top: 24, right: 18, bottom: 54, left: 52 };
   let chart = $state<SVGSVGElement>();
   let keyboardDate = $state<string | null>(null);
   let dates = $derived([...new Set(points.map((point) => point.date))].sort());
@@ -26,7 +27,7 @@
     }))
   );
   let gridValues = $derived([0, 0.25, 0.5, 0.75, 1].map((part) => max * part));
-  let labelStep = $derived(Math.max(1, Math.ceil(dates.length / 7)));
+  let tickIndices = $derived(chartTickIndices(dates.length));
 
   $effect(() => {
     if (dates.length === 0) {
@@ -137,6 +138,7 @@
 
       {#each dates as date, index}
         {@const x = xFor(date)}
+        {@const tickLabel = chartTickLabel(date, today, timezone)}
         <rect
           class="day-target"
           class:selected={selectedDate === date}
@@ -148,15 +150,29 @@
           tabindex={keyboardDate === date ? 0 : -1}
           role="button"
           aria-pressed={selectedDate === date}
-          aria-label={`Select ${dayLabel(date, timezone)} for the daily summary`}
+          aria-label={`Select ${tickLabel.accessible} for the daily summary`}
           onclick={() => {
             keyboardDate = date;
             onselect(date);
           }}
           onkeydown={(event) => selectFromKey(event, date)}
         />
-        {#if index % labelStep === 0 || index === dates.length - 1}
-          <text class="axis-label" x={x} y={height + 27} text-anchor="middle">{dayLabel(date, timezone)}</text>
+        {#if tickIndices.includes(index)}
+          <text
+            class="axis-label"
+            class:axis-label-today={date === today}
+            x={x}
+            y={height + 27}
+            text-anchor={index === 0 ? 'start' : index === dates.length - 1 ? 'end' : 'middle'}
+            aria-hidden="true"
+          >
+            {#if tickLabel.secondary}
+              <tspan class="today-tick" x={x}>{tickLabel.primary}</tspan>
+              <tspan x={x} dy="12">{tickLabel.secondary}</tspan>
+            {:else}
+              {tickLabel.primary}
+            {/if}
+          </text>
         {/if}
       {/each}
       <text class="axis-title" transform={`translate(-40 ${height / 2}) rotate(-90)`} text-anchor="middle">

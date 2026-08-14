@@ -65,6 +65,16 @@
     return availableDates.at(-1) ?? null;
   }
 
+  export function rangeButtonState(
+    pendingRangeDays: number | null,
+    days: number
+  ): { disabled: boolean; busy: boolean } {
+    return {
+      disabled: pendingRangeDays !== null,
+      busy: pendingRangeDays === days
+    };
+  }
+
   function quotaWindowExpiresAt(window: QuotaWindow): number | null {
     const observedAt = Date.parse(window.observedAt);
     const resetsAt = Date.parse(window.resetsAt);
@@ -453,10 +463,12 @@
       {/if}
       <div class="range-control" aria-label="Chart range">
         {#each ranges as days}
+          {@const rangeState = rangeButtonState(pendingRangeDays, days)}
           <button
             class:active={rangeDays === days}
             aria-pressed={rangeDays === days}
-            aria-busy={pendingRangeDays === days}
+            aria-busy={rangeState.busy}
+            disabled={rangeState.disabled}
             onclick={() => loadDashboard(false, days)}
           >
             {days === 365 ? '1y' : `${days}d`}
@@ -580,10 +592,21 @@
               </div>
             {/if}
 
+            {#if pendingRangeDays !== null}
+              <div class="range-loading" role="status" aria-live="polite">
+                <span class="range-loading-spinner" aria-hidden="true"></span>
+                <span>
+                  <strong>Loading {pendingRangeDays === 365 ? 'the 1-year' : `the ${pendingRangeDays}-day`} view…</strong>
+                  <small>Keeping the current {rangeDays === 365 ? '1-year' : `${rangeDays}-day`} chart visible until it is ready.</small>
+                </span>
+              </div>
+            {/if}
+
             {#if series.points.length}
               <DailyChart
                 points={series.points}
                 timezone={series.timezone}
+                today={overview.today}
                 {visibleFamilies}
                 {selectedDate}
                 onselect={selectDay}
