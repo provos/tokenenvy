@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const projectRoot = resolve(import.meta.dirname, '..', '..');
 const work = mkdtempSync(join(tmpdir(), 'tokenenvy-pack-'));
@@ -109,7 +110,15 @@ try {
   const packResult = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', work]));
   const packed = packResult[0];
   const names = packed.files.map(({ path }) => path);
-  for (const required of ['package.json', 'README.md', 'LICENSE', 'bin/tokenenvy.js', 'build/index.js']) {
+  for (const required of [
+    'package.json',
+    'README.md',
+    'LICENSE',
+    'bin/launch.js',
+    'bin/node-version.js',
+    'bin/tokenenvy.js',
+    'build/index.js'
+  ]) {
     if (!names.includes(required)) throw new Error(`Packed package is missing ${required}`);
   }
   for (const privateOrLegacy of ['REPORT.md', 'analyze-claude-logs.mjs', 'throughput-histogram.csv']) {
@@ -121,6 +130,26 @@ try {
   run('npm', ['install', tarball, '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: packageDirectory });
 
   const executable = join(packageDirectory, 'node_modules', '.bin', 'tokenenvy');
+  const installedLauncher = join(packageDirectory, 'node_modules', 'tokenenvy', 'bin', 'launch.js');
+  const unsupportedScript = [
+    "Object.defineProperty(process.versions, 'node', { value: '20.19.0' });",
+    `process.argv = [process.execPath, ${JSON.stringify(executable)}, '--help'];`,
+    `await import(${JSON.stringify(pathToFileURL(installedLauncher).href)});`
+  ].join('\n');
+  const unsupported = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', unsupportedScript],
+    { cwd: packageDirectory, encoding: 'utf8' }
+  );
+  if (
+    unsupported.status !== 1 ||
+    unsupported.stdout !== '' ||
+    !unsupported.stderr.includes('requires Node.js 22.13 or newer') ||
+    unsupported.stderr.includes('Token Envy is running')
+  ) {
+    throw new Error(`Installed CLI did not reject Node.js 20 before startup:\n${unsupported.stderr}`);
+  }
+
   const help = run(executable, ['--help'], { cwd: packageDirectory });
   if (!help.includes('--logs PATH') || !help.includes('statusline')) throw new Error('Installed CLI help is incomplete');
 

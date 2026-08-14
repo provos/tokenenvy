@@ -7,6 +7,7 @@ import { homedir, platform } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
+import { unsupportedNodeMessage } from './node-version.js';
 
 const DEFAULT_PORT = 4173;
 const MAX_STDIN_BYTES = 1024 * 1024;
@@ -42,7 +43,7 @@ export function normalizeLogRoots(values) {
 }
 
 function usage() {
-  return `Token Envy — a private, local Claude Code performance dashboard
+  return `Token Envy: a private, local Claude Code performance dashboard
 
 Usage:
   tokenenvy [--logs PATH]... [--port PORT] [--timezone ZONE] [--no-open] [--rescan]
@@ -335,8 +336,14 @@ try {
 }
 
 if (invokedAsEntrypoint) {
-  main().catch((error) => {
-    process.stderr.write(`tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`);
+  const versionError = unsupportedNodeMessage(process.versions.node);
+  if (versionError) {
+    process.stderr.write(versionError);
     process.exitCode = 1;
-  });
+  } else {
+    main().catch((error) => {
+      process.stderr.write(`tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

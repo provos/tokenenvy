@@ -446,6 +446,16 @@ main {
   flex: 0 0 auto;
 }
 
+.envy-callout-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 9px;
+}
+
+.envy-callout-actions button {
+  min-width: 144px;
+}
+
 .hero-empty-today {
   grid-column: 1 / -1;
   align-self: center;
@@ -1006,6 +1016,11 @@ td .model-dot {
 
 .weekly-grid strong {
   font: 620 14px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.weekly-recap-button {
+  width: 100%;
+  margin-top: 14px;
 }
 
 .quota-reading {
@@ -1980,6 +1995,205 @@ td .model-dot {
   text-align: center;
 }
 
+.weekly-recap-preview {
+  aspect-ratio: 1200 / 630;
+  min-height: 360px;
+  display: grid;
+  grid-template-rows: auto minmax(155px, 1fr) auto auto;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(20px, 4vw, 36px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 19px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(95, 214, 189, 0.17), transparent 46%),
+    linear-gradient(125deg, #07151c, #102a31 55%, #302a29);
+  color: #f2eee6;
+}
+
+.weekly-recap-preview::after {
+  content: '';
+  width: 220px;
+  height: 220px;
+  position: absolute;
+  z-index: -1;
+  right: -80px;
+  bottom: -150px;
+  border-radius: 50%;
+  background: rgba(255, 121, 95, 0.17);
+  filter: blur(26px);
+}
+
+.weekly-recap-signal {
+  position: absolute;
+  z-index: -1;
+  inset: 44% 19% auto;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  align-items: center;
+  opacity: 0.13;
+}
+
+.weekly-recap-signal::before {
+  content: '';
+  height: 6px;
+  position: absolute;
+  inset: 50% 4% auto;
+  transform: translateY(-50%);
+  background: #ff795f;
+}
+
+.weekly-recap-signal i {
+  width: 10px;
+  height: 10px;
+  position: relative;
+  justify-self: center;
+  border-radius: 50%;
+  background: #f2eee6;
+}
+
+.weekly-recap-signal i.observed {
+  width: 20px;
+  height: 20px;
+  background: #5fd6bd;
+}
+
+.weekly-recap-header,
+.weekly-recap-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  color: rgba(242, 238, 230, 0.68);
+  font-size: clamp(8px, 1.5vw, 12px);
+}
+
+.weekly-recap-header strong,
+.weekly-recap-footer > strong {
+  color: #ff795f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 680;
+}
+
+.weekly-recap-header strong {
+  min-width: 0;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.weekly-recap-header span {
+  white-space: nowrap;
+}
+
+.weekly-recap-center {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 0 16px;
+  text-align: center;
+}
+
+.weekly-recap-center > p {
+  margin: 0 0 2px;
+  font-size: clamp(14px, 3vw, 27px);
+  font-weight: 680;
+  letter-spacing: -0.03em;
+}
+
+.weekly-recap-center > strong {
+  font: 750 clamp(52px, 10vw, 88px)/0.94 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.08em;
+}
+
+.weekly-recap-center > span {
+  color: rgba(242, 238, 230, 0.65);
+  font-size: clamp(7px, 1.25vw, 10px);
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.weekly-recap-center > em {
+  margin-top: clamp(5px, 1.2vw, 10px);
+  color: #5fd6bd;
+  font-size: clamp(8px, 1.4vw, 12px);
+  font-style: normal;
+  font-weight: 650;
+}
+
+.weekly-recap-standouts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(7px, 1.8vw, 15px);
+  margin: 8px 0 clamp(8px, 1.7vw, 14px);
+}
+
+.weekly-recap-standouts > span {
+  min-width: 0;
+  display: grid;
+  padding: clamp(7px, 1.7vw, 13px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.weekly-recap-standouts > span:only-child {
+  grid-column: 1 / -1;
+}
+
+.weekly-recap-standouts small {
+  color: rgba(242, 238, 230, 0.55);
+  font-size: clamp(6px, 1.05vw, 8px);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.weekly-recap-standouts strong {
+  font-size: clamp(10px, 1.7vw, 14px);
+}
+
+.weekly-recap-standouts em {
+  color: rgba(242, 238, 230, 0.68);
+  font-size: clamp(7px, 1.2vw, 9px);
+  font-style: normal;
+}
+
+.weekly-recap-footer {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 12px;
+  padding-top: clamp(7px, 1.6vw, 12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.weekly-recap-footer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weekly-recap-footer > small {
+  grid-column: 1 / -1;
+  color: #5fd6bd;
+  text-align: center;
+}
+
+.weekly-context-note {
+  margin: 13px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  text-align: center;
+}
+
+.weekly-recap-modal {
+  width: min(790px, calc(100vw - 32px));
+}
+
 .privacy-note,
 .share-status {
   margin: 13px 0 0;
@@ -2164,6 +2378,7 @@ td .model-dot {
   .hero-number-row { align-items: flex-start; flex-direction: column; gap: 11px; }
   .hero-number-row > strong { font-size: clamp(4rem, 22vw, 6.5rem); }
   .envy-callout { align-items: stretch; flex-direction: column; gap: 18px; }
+  .envy-callout-actions { width: 100%; }
   .envy-callout button { width: 100%; }
   .hero-number { align-items: flex-start; flex-direction: column; gap: 11px; }
   .hero-number > strong { font-size: clamp(4rem, 22vw, 6.5rem); }
@@ -2193,6 +2408,11 @@ td .model-dot {
   .share-controls { grid-template-columns: 1fr; gap: 15px; }
   .tone-control { margin-right: 0; }
   .share-preview { min-height: 230px; }
+  .weekly-recap-preview {
+    min-height: 350px;
+    aspect-ratio: auto;
+    grid-template-rows: auto minmax(150px, 1fr) auto auto;
+  }
   .share-sentiment-face { width: 78%; }
   .share-preview-center > p { max-width: 92%; }
   .composer-guide { grid-template-columns: 1fr; }
@@ -2219,6 +2439,18 @@ td .model-dot {
   .share-actions { flex-direction: column; }
   .share-actions > button { width: 100%; flex-basis: auto; }
   .share-preview { min-height: 190px; aspect-ratio: auto; padding: 16px; }
+  .weekly-recap-preview {
+    min-height: 340px;
+    aspect-ratio: auto;
+    grid-template-rows: auto minmax(145px, 1fr) auto auto;
+    padding: 16px;
+  }
+  .weekly-recap-footer > span { display: none; }
+  .weekly-recap-footer { grid-template-columns: 1fr; justify-items: center; }
+  .weekly-recap-footer > strong { grid-row: 1; }
+  .weekly-recap-center > p { font-size: 16px; }
+  .weekly-recap-center > strong { font-size: 58px; }
+  .envy-callout-actions { flex-direction: column; }
   .share-preview-center > p { font-size: 16px; }
   .share-preview-center > strong { font-size: 58px; }
   .share-preview-footer { margin-top: auto; }

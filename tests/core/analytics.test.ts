@@ -250,6 +250,74 @@ describe('analytics', () => {
     database.close();
   });
 
+  it('builds a deterministic calendar-week recap from completed measurements', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'weekly-recap-key' });
+    for (let index = 0; index < 100; index += 1) {
+      insertRequest(database, {
+        id: `weekly-baseline-${index}`,
+        sessionId: `weekly-baseline-session-${index % 8}`,
+        date: `2026-08-${String(1 + (index % 7)).padStart(2, '0')}`,
+        outputTokens: 32,
+        family: 'sonnet',
+        stratum: 0,
+        tokensPerSecond: 10
+      });
+    }
+    const days = [
+      { date: '2026-08-10', tokensPerSecond: 20 },
+      { date: '2026-08-11', tokensPerSecond: 25 },
+      { date: '2026-08-12', tokensPerSecond: 30 },
+      { date: '2026-08-13', tokensPerSecond: 15 },
+      { date: '2026-08-14', tokensPerSecond: 35 }
+    ];
+    for (const [dayIndex, day] of days.entries()) {
+      for (let index = 0; index < 5; index += 1) {
+        insertRequest(database, {
+          id: `weekly-current-${dayIndex}-${index}`,
+          sessionId: `weekly-current-session-${index}`,
+          date: day.date,
+          outputTokens: 32,
+          family: 'sonnet',
+          stratum: 0,
+          tokensPerSecond: day.tokensPerSecond
+        });
+      }
+    }
+
+    const recap = new Analytics(database).overview(
+      'UTC',
+      new Date('2026-08-14T18:00:00Z')
+    ).weekly.recap;
+    expect(recap).toMatchObject({
+      weekStart: '2026-08-10',
+      throughDate: '2026-08-14',
+      daysObserved: 5,
+      observedDates: [
+        '2026-08-10',
+        '2026-08-11',
+        '2026-08-12',
+        '2026-08-13',
+        '2026-08-14'
+      ],
+      requestCount: 25,
+      sessions: 5,
+      median: 25,
+      speedIndex: {
+        eligible: true,
+        value: 250,
+        ciLow: null,
+        ciHigh: null,
+        percentile: null
+      },
+      fastestDay: { date: '2026-08-14', median: 35 },
+      slowestDay: { date: '2026-08-13', median: 15 }
+    });
+    expect(recap.models).toMatchObject([
+      { family: 'sonnet', requestCount: 25, outputTokens: 800, share: 1 }
+    ]);
+    database.close();
+  });
+
   it('compares a selected historical day with its own preceding 28-day baseline', () => {
     const database = new Database({ path: ':memory:', hmacKey: 'historical-index-key' });
     for (let index = 0; index < 100; index += 1) {

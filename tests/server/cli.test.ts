@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { isSupportedNodeVersion } from '../../bin/node-version.js';
 import { extractRateLimits, parseArgs, stateDirectory } from '../../bin/tokenenvy.js';
 
 describe('CLI arguments', () => {
@@ -10,11 +12,70 @@ describe('CLI arguments', () => {
     const directory = mkdtempSync(join(tmpdir(), 'tokenenvy-bin-'));
     const executable = join(directory, 'tokenenvy');
     try {
-      symlinkSync(resolve('bin/tokenenvy.js'), executable);
+      symlinkSync(resolve('bin/launch.js'), executable);
       const result = spawnSync(process.execPath, [executable, '--help'], { encoding: 'utf8' });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('Token Envy');
       expect(result.stdout).toContain('--no-open');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('stops unsupported Node versions before loading the CLI', () => {
+    const launcher = pathToFileURL(resolve('bin/launch.js')).href;
+    const script = [
+      "Object.defineProperty(process.versions, 'node', { value: '20.19.0' });",
+      `process.argv = [process.execPath, ${JSON.stringify(resolve('bin/launch.js'))}, '--help'];`,
+      `await import(${JSON.stringify(launcher)});`
+    ].join('\n');
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      encoding: 'utf8'
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe(
+      'Token Envy requires Node.js 22.13 or newer.\n' +
+        'Detected Node.js 20.19.0.\n' +
+        'Upgrade Node.js, then run `npx tokenenvy` again.\n'
+    );
+  });
+
+  it.each([
+    ['20.19.0', false],
+    ['22.12.9', false],
+    ['22.13.0', true],
+    ['22.99.0', true],
+    ['23.0.0', true],
+    ['', false],
+    ['22.13', false],
+    ['22.13.x', false],
+    ['not-a-version', false],
+    [undefined, false]
+  ])('classifies Node version %s as supported: %s', (version, supported) => {
+    expect(isSupportedNodeVersion(version)).toBe(supported);
+  });
+
+  it('guards direct CLI execution before server startup side effects', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tokenenvy-node-guard-'));
+    const state = join(directory, 'state');
+    const implementation = resolve('bin/tokenenvy.js');
+    const script = [
+      "Object.defineProperty(process.versions, 'node', { value: '20.19.0' });",
+      `process.argv = [process.execPath, ${JSON.stringify(implementation)}, '--no-open'];`,
+      `await import(${JSON.stringify(pathToFileURL(implementation).href)});`
+    ].join('\n');
+
+    try {
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+        encoding: 'utf8',
+        env: { ...process.env, TOKENENVY_DATA_DIR: state }
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('requires Node.js 22.13 or newer');
+      expect(existsSync(state)).toBe(false);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

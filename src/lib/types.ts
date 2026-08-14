@@ -48,9 +48,31 @@ export interface OverviewResponse {
     projectedOutputTokens: number | null;
     elapsedFraction: number;
     previousFourWeekMedian: number | null;
+    recap: WeeklyRecap;
   };
   refusals: RefusalSummary;
   scan: ScanStatus;
+}
+
+export interface WeeklyRecap {
+  weekStart: string;
+  throughDate: string;
+  daysObserved: number;
+  observedDates: string[];
+  requestCount: number;
+  sessions: number;
+  median: number | null;
+  speedIndex: SpeedIndex;
+  models: WeeklyModelMix[];
+  fastestDay: { date: string; median: number } | null;
+  slowestDay: { date: string; median: number } | null;
+}
+
+export interface WeeklyModelMix {
+  family: ModelFamily;
+  requestCount: number;
+  outputTokens: number;
+  share: number;
 }
 
 export interface SeriesResponse {

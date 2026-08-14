@@ -59,11 +59,37 @@ function modelSummaries(requests: readonly StoredRequest[]): ModelSummary[] {
   });
 }
 
+function weeklyModelMix(requests: readonly StoredRequest[]): OverviewResponse['weekly']['recap']['models'] {
+  const byFamily = new Map<ModelFamily, { requestCount: number; outputTokens: number }>();
+  let totalOutput = 0;
+  for (const request of requests) {
+    totalOutput += request.outputTokens;
+    const current = byFamily.get(request.family) ?? { requestCount: 0, outputTokens: 0 };
+    current.requestCount += 1;
+    current.outputTokens += request.outputTokens;
+    byFamily.set(request.family, current);
+  }
+  return MODEL_FAMILIES.flatMap((family) => {
+    const summary = byFamily.get(family);
+    return summary
+      ? [{
+          family,
+          ...summary,
+          share: totalOutput > 0 ? summary.outputTokens / totalOutput : 0
+        }]
+      : [];
+  });
+}
+
 function median(values: readonly number[]): number | null {
   return values.length > 0 ? quantile(values, 0.5) : null;
 }
 
-function speedIndex(current: readonly DatedRequest[], baseline: readonly DatedRequest[]): SpeedIndex {
+function speedIndex(
+  current: readonly DatedRequest[],
+  baseline: readonly DatedRequest[],
+  options: { confidence?: boolean; percentile?: boolean } = {}
+): SpeedIndex {
   const key = (request: StoredRequest): string => `${request.family}:${request.stratum}`;
   const baselineByStratum = new Map<string, DatedRequest[]>();
   const currentByStratum = new Map<string, DatedRequest[]>();
@@ -124,7 +150,7 @@ function speedIndex(current: readonly DatedRequest[], baseline: readonly DatedRe
 
   let ciLow: number | null = null;
   let ciHigh: number | null = null;
-  if (!reason) {
+  if (!reason && options.confidence !== false) {
     const groups = new Map<string, DatedRequest[]>();
     for (const request of current) {
       const group = groups.get(request.sessionId) ?? [];
@@ -154,19 +180,22 @@ function speedIndex(current: readonly DatedRequest[], baseline: readonly DatedRe
     }
   }
 
-  const baselineByDate = new Map<string, DatedRequest[]>();
-  for (const request of baseline) {
-    const group = baselineByDate.get(request.date) ?? [];
-    group.push(request);
-    baselineByDate.set(request.date, group);
+  let percentile: number | null = null;
+  if (options.percentile !== false) {
+    const baselineByDate = new Map<string, DatedRequest[]>();
+    for (const request of baseline) {
+      const group = baselineByDate.get(request.date) ?? [];
+      group.push(request);
+      baselineByDate.set(request.date, group);
+    }
+    const historicalIndices = [...baselineByDate.values()]
+      .map((requests) => calculate(requests))
+      .filter((item): item is number => item != null);
+    percentile =
+      value != null && historicalIndices.length > 0
+        ? (historicalIndices.filter((item) => item <= value).length / historicalIndices.length) * 100
+        : null;
   }
-  const historicalIndices = [...baselineByDate.values()]
-    .map((requests) => calculate(requests))
-    .filter((item): item is number => item != null);
-  const percentile =
-    value != null && historicalIndices.length > 0
-      ? (historicalIndices.filter((item) => item <= value).length / historicalIndices.length) * 100
-      : null;
   return { value, ciLow, ciHigh, percentile, eligible: reason == null, reason };
 }
 
@@ -265,6 +294,35 @@ export class Analytics {
       return total;
     };
     const weeklyTokens = usageBetween(weekStart, weekEnd);
+    const weeklyRequests = valid.filter(
+      (request) => request.date >= weekStart && request.date <= today
+    );
+    const weeklyBaselineStart = addCalendarDays(weekStart, -28);
+    const weeklyBaseline = valid.filter(
+      (request) => request.date >= weeklyBaselineStart && request.date < weekStart
+    );
+    const weeklyByDate = new Map<string, DatedRequest[]>();
+    for (const request of weeklyRequests) {
+      const group = weeklyByDate.get(request.date) ?? [];
+      group.push(request);
+      weeklyByDate.set(request.date, group);
+    }
+    const measuredDays = [...weeklyByDate.entries()]
+      .flatMap(([date, requests]) => {
+        const value = median(metrics(requests).map(({ value }) => value));
+        return value === null ? [] : [{ date, median: value }];
+      })
+      .sort((left, right) => left.date.localeCompare(right.date));
+    const fastestDay = [...measuredDays].sort(
+      (left, right) => right.median - left.median || left.date.localeCompare(right.date)
+    )[0] ?? null;
+    const slowestDay = [...measuredDays].sort(
+      (left, right) => left.median - right.median || left.date.localeCompare(right.date)
+    )[0] ?? null;
+    const weeklySpeedIndex = speedIndex(weeklyRequests, weeklyBaseline, {
+      confidence: false,
+      percentile: false
+    });
     const weekStartMs = zonedMidnight(weekStart, timezone);
     const weekEndMs = zonedMidnight(weekEnd, timezone);
     const elapsedFraction = Math.max(0, Math.min(1, (now.getTime() - weekStartMs) / (weekEndMs - weekStartMs)));
@@ -289,7 +347,20 @@ export class Analytics {
         outputTokens: weeklyTokens,
         projectedOutputTokens: elapsedFraction >= 0.01 ? weeklyTokens / elapsedFraction : null,
         elapsedFraction,
-        previousFourWeekMedian: median(priorWeeks)
+        previousFourWeekMedian: median(priorWeeks),
+        recap: {
+          weekStart,
+          throughDate: today,
+          daysObserved: measuredDays.length,
+          observedDates: measuredDays.map(({ date }) => date),
+          requestCount: weeklyRequests.length,
+          sessions: new Set(weeklyRequests.map(({ sessionId }) => sessionId)).size,
+          median: median(metrics(weeklyRequests).map(({ value }) => value)),
+          speedIndex: weeklySpeedIndex,
+          models: weeklyModelMix(weeklyRequests),
+          fastestDay,
+          slowestDay
+        }
       },
       refusals: this.refusals(timezone),
       scan: this.database.getScanStatus()

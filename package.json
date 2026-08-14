@@ -1,6 +1,6 @@
 {
   "name": "tokenenvy",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Token Envy is a private, local-first performance dashboard for Claude Code session logs.",
   "type": "module",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "tokens"
   ],
   "bin": {
-    "tokenenvy": "bin/tokenenvy.js"
+    "tokenenvy": "bin/launch.js"
   },
   "files": [
     "bin",

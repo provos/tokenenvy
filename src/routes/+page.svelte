@@ -91,7 +91,9 @@
   import HistogramDrawer from '$lib/components/HistogramDrawer.svelte';
   import ScanProgress from '$lib/components/ScanProgress.svelte';
   import ShareModal from '$lib/components/ShareModal.svelte';
+  import WeeklyRecapModal from '$lib/components/WeeklyRecapModal.svelte';
   import { compactNumber, dayLabel, FAMILY_COLORS } from '$lib/components/chart';
+  import { DASHBOARD_SHARE_CTA, weeklyRecapReady } from '$lib/components/weekly-recap';
   import type {
     DayDetailResponse,
     ModelFamily,
@@ -128,6 +130,7 @@
   let dayDetailRevision: number | null = null;
   let dayRequestRevision: number | null = null;
   let shareOpen = $state(false);
+  let weeklyRecapOpen = $state(false);
   let eventSource: EventSource | null = null;
   let dashboardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let quotaRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -140,6 +143,7 @@
   let hasData = $derived(Boolean(overview?.headline.count || series?.points.length));
   let latestUpdate = $derived(formatUpdate(overview?.generatedAt));
   let shareReady = $derived(Boolean(dayDetail && !dayLoading && !dayError));
+  let recapReady = $derived(overview ? weeklyRecapReady(overview.weekly.recap) : false);
   let selectedDayLabel = $derived(
     selectedDate ? (selectedDate === overview?.today ? 'Today' : dayLabel(selectedDate)) : 'Selected day'
   );
@@ -547,17 +551,25 @@
 
           <section class="envy-callout" aria-labelledby="envy-callout-title">
             <div>
-              <p class="eyebrow">Token Envy</p>
-              <h2 id="envy-callout-title">Think your Claude Code is faster?</h2>
-              <p>Drop your daily TPS card and challenge the timeline. Same metric, wildly different days.</p>
-              <small>For fun—not a global benchmark. Model mix, output length, and workload affect effective TPS.</small>
+              <p class="eyebrow">{DASHBOARD_SHARE_CTA.eyebrow}</p>
+              <h2 id="envy-callout-title">{DASHBOARD_SHARE_CTA.title}</h2>
+              <p>{DASHBOARD_SHARE_CTA.body}</p>
+              <small>{DASHBOARD_SHARE_CTA.note}</small>
             </div>
-            <button
-              class="primary-button"
-              type="button"
-              disabled={!shareReady}
-              onclick={() => (shareOpen = true)}
-            >Share {selectedDayLabel.toLowerCase()}</button>
+            <div class="envy-callout-actions">
+              <button
+                class="secondary-button"
+                type="button"
+                disabled={!shareReady}
+                onclick={() => (shareOpen = true)}
+              >Share {selectedDayLabel.toLowerCase()}</button>
+              <button
+                class="primary-button"
+                type="button"
+                disabled={!recapReady}
+                onclick={() => (weeklyRecapOpen = true)}
+              >Recap my week</button>
+            </div>
           </section>
 
           <section class="panel trend-panel">
@@ -655,6 +667,13 @@
               <span><small>4-week median</small><strong>{overview.weekly.previousFourWeekMedian === null ? '—' : compactNumber(overview.weekly.previousFourWeekMedian)}</strong></span>
             </div>
             <p>This is locally observed usage, not an account quota.</p>
+            <button
+              class="secondary-button weekly-recap-button"
+              type="button"
+              disabled={!recapReady}
+              title={recapReady ? 'Open your private weekly recap' : 'A recap appears after the first measured request this week'}
+              onclick={() => (weeklyRecapOpen = true)}
+            >Open weekly recap</button>
             {#if quota?.available && quota.sevenDay}
               <div class="quota-reading" class:stale={sevenDayQuotaStale}>
                 {#if sevenDayQuotaStale}
@@ -742,5 +761,14 @@
     isToday={dayDetail.date === overview.today}
     refreshing={dayLoading}
     onclose={() => (shareOpen = false)}
+  />
+{/if}
+
+{#if overview}
+  <WeeklyRecapModal
+    open={weeklyRecapOpen}
+    recap={overview.weekly.recap}
+    outputTokens={overview.weekly.outputTokens}
+    onclose={() => (weeklyRecapOpen = false)}
   />
 {/if}
