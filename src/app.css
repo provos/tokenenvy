@@ -1432,6 +1432,23 @@ td .model-dot {
   margin-top: 34px;
 }
 
+.drawer-refusal-section {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--panel);
+}
+
+.drawer-refusal-section .refusal-total {
+  margin: 18px 0 14px;
+}
+
+.drawer-refusal-note {
+  margin: 11px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
 .compact-heading > span {
   color: var(--text-faint);
   font-size: 10px;

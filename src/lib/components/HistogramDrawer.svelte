@@ -2,21 +2,26 @@
   import type { DayDetailResponse } from '$lib/types';
   import { dayLabel, FAMILY_COLORS } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
+  import type { ShareRefusalCounts } from './share';
 
   interface Props {
     open: boolean;
     loading: boolean;
     detail: DayDetailResponse | null;
+    refusals: ShareRefusalCounts;
     error?: string | null;
     onclose: () => void;
   }
 
-  let { open, loading, detail, error = null, onclose }: Props = $props();
+  let { open, loading, detail, refusals, error = null, onclose }: Props = $props();
   let panel = $state<HTMLElement>();
   let histogramMax = $derived(Math.max(1, ...(detail?.histogram.map((bin) => bin.count) ?? [1])));
   let hourlyMax = $derived(Math.max(1, ...(detail?.hourly.map((hour) => hour.median ?? 0) ?? [1])));
   let totalExcluded = $derived(
     Object.values(detail?.exclusions ?? {}).reduce((total, count) => total + count, 0)
+  );
+  let refusalUnknown = $derived(
+    Math.max(0, refusals.attempted - refusals.recovered - refusals.userVisible)
   );
 
   $effect(() => {
@@ -81,6 +86,27 @@
             <span>Sessions</span>
             <strong>{detail.summary.sessions.toLocaleString()}</strong>
           </div>
+        </section>
+
+        <section class="drawer-section drawer-refusal-section" aria-label="Refusals for this day">
+          <div class="section-heading compact-heading">
+            <div>
+              <p class="eyebrow">This day</p>
+              <h3>Classifier refusals</h3>
+            </div>
+            {#if refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
+          </div>
+          {#if refusals.recorded}
+            <div class="refusal-total"><strong>{refusals.attempted.toLocaleString()}</strong><span>attempted</span></div>
+            <div class="refusal-grid">
+              <span><i class="recovered"></i><strong>{refusals.recovered.toLocaleString()}</strong><small>recovered by fallback</small></span>
+              <span><i class="visible"></i><strong>{refusals.userVisible.toLocaleString()}</strong><small>user-visible</small></span>
+              <span><i class="unknown"></i><strong>{refusalUnknown.toLocaleString()}</strong><small>unknown outcome</small></span>
+            </div>
+            <p class="drawer-refusal-note">Explicit transcript signals only; these counts are a lower bound.</p>
+          {:else}
+            <p class="subtle-empty">This log format does not expose explicit classifier outcomes.</p>
+          {/if}
         </section>
 
         <section class="drawer-section">

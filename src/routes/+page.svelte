@@ -706,6 +706,7 @@
   open={drawerOpen}
   loading={dayLoading}
   detail={dayDetail}
+  refusals={selectedDayRefusals}
   error={dayError}
   onclose={() => (drawerOpen = false)}
 />

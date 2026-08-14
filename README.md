@@ -9,7 +9,7 @@ It does not need an LLM, an Anthropic API key, telemetry, or an internet connect
 - Effective output tokens/s for Opus, Sonnet, Fable, Haiku, and other models
 - Daily medians, interquartile ranges, sample sizes, and statistically eligible confidence intervals
 - A 28-day mix-adjusted speed index that does not let today's model mix redefine its own baseline
-- Drill-down histograms, hourly medians, exclusions, and data-quality counts
+- Drill-down histograms, hourly medians, selected-day refusal outcomes, exclusions, and data-quality counts
 - Explicit classifier refusals split into attempted, recovered by fallback, user-visible, and unknown
 - Observed weekly output and a projection based on the current week
 - Optional five-hour and seven-day rate-limit percentages from Claude Code's local status-line payload
