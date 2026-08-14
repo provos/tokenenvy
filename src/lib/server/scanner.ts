@@ -13,6 +13,7 @@ export interface ScannerOptions {
   chunkSize?: number;
   reconciliationMs?: number;
   watchDebounceMs?: number;
+  progressIntervalBytes?: number;
 }
 
 type StatusListener = (status: ScanStatus) => void;
@@ -48,6 +49,7 @@ export class Scanner {
   readonly chunkSize: number;
   readonly reconciliationMs: number;
   readonly watchDebounceMs: number;
+  readonly progressIntervalBytes: number;
   #watcher: FSWatcher | null = null;
   #listeners = new Set<StatusListener>();
   #queue: Promise<void> = Promise.resolve();
@@ -78,6 +80,7 @@ export class Scanner {
     this.chunkSize = options.chunkSize ?? 256 * 1_024;
     this.reconciliationMs = options.reconciliationMs ?? 60_000;
     this.watchDebounceMs = options.watchDebounceMs ?? 150;
+    this.progressIntervalBytes = Math.max(1, options.progressIntervalBytes ?? 4 * 1_024 * 1_024);
     this.database.syncRoots(this.roots.map((root) => this.database.rootId(root)));
   }
 
@@ -233,7 +236,18 @@ export class Scanner {
       if (actualTail !== previous.tailHash) replace = true;
     }
     const startOffset = replace ? 0 : (previous?.offset ?? 0);
-    const result = await this.readCompleteLines(filePath, sourceId, startOffset);
+    const progressBase = {
+      bytesRead: this.#status.bytesRead,
+      rowsRead: this.#status.rowsRead,
+      invalidRows: this.#status.invalidRows
+    };
+    const result = await this.readCompleteLines(filePath, sourceId, startOffset, (progress) => {
+      this.publish({
+        bytesRead: progressBase.bytesRead + progress.bytesRead,
+        rowsRead: progressBase.rowsRead + progress.rows,
+        invalidRows: progressBase.invalidRows + progress.invalidRows
+      });
+    });
     const rowsRead = (replace ? 0 : (previous?.rowsRead ?? 0)) + result.rows;
     const invalidRows = (replace ? 0 : (previous?.invalidRows ?? 0)) + result.invalidRows;
     const checkpoint: FileCheckpoint = {
@@ -250,9 +264,9 @@ export class Scanner {
     this.database.applyFileScan({ checkpoint, events: result.events, replace });
     this.publish({
       filesScanned: this.#status.filesScanned + 1,
-      bytesRead: this.#status.bytesRead + result.bytesRead,
-      rowsRead: this.#status.rowsRead + result.rows,
-      invalidRows: this.#status.invalidRows + result.invalidRows
+      bytesRead: progressBase.bytesRead + result.bytesRead,
+      rowsRead: progressBase.rowsRead + result.rows,
+      invalidRows: progressBase.invalidRows + result.invalidRows
     });
     if (rebuild) {
       this.database.rebuildRequests(Date.now(), this.idleMs);
@@ -265,7 +279,8 @@ export class Scanner {
   private async readCompleteLines(
     filePath: string,
     sourceId: string,
-    startOffset: number
+    startOffset: number,
+    onProgress?: (progress: { bytesRead: number; rows: number; invalidRows: number }) => void
   ): Promise<{
     events: ScannedEvent[];
     rows: number;
@@ -282,6 +297,8 @@ export class Scanner {
     let rows = 0;
     let invalidRows = 0;
     let bytesRead = 0;
+    let nextProgressAt = this.progressIntervalBytes;
+    let lastProgressAt = Date.now();
     try {
       while (true) {
         const chunk = Buffer.allocUnsafe(this.chunkSize);
@@ -321,6 +338,12 @@ export class Scanner {
         if (remainder.length > 0) {
           lineParts.push(remainder);
           lineLength += remainder.length;
+        }
+        const now = Date.now();
+        if (bytesRead >= nextProgressAt || now - lastProgressAt >= 250) {
+          onProgress?.({ bytesRead, rows, invalidRows });
+          nextProgressAt = bytesRead + this.progressIntervalBytes;
+          lastProgressAt = now;
         }
       }
     } finally {

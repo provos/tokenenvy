@@ -79,6 +79,7 @@
   import DayHero from '$lib/components/DayHero.svelte';
   import DailyChart from '$lib/components/DailyChart.svelte';
   import HistogramDrawer from '$lib/components/HistogramDrawer.svelte';
+  import ScanProgress from '$lib/components/ScanProgress.svelte';
   import ShareModal from '$lib/components/ShareModal.svelte';
   import { compactNumber, dayLabel, FAMILY_COLORS } from '$lib/components/chart';
   import type {
@@ -149,6 +150,7 @@
   let sevenDayQuotaStale = $derived(
     quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false
   );
+  let displayedScanStatus = $derived(latestScanStatus ?? overview?.scan ?? null);
 
   $effect(() => {
     const window = quota?.sevenDay;
@@ -183,10 +185,24 @@
   }
 
   async function getJson<T>(url: string, optional = false): Promise<T | null> {
-    const response = await fetch(url, { headers: { accept: 'application/json' } });
-    if (optional && response.status === 404) return null;
-    if (!response.ok) throw new Error(`The local service returned ${response.status}`);
-    return (await response.json()) as T;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: controller.signal
+      });
+      if (optional && response.status === 404) return null;
+      if (!response.ok) throw new Error(`The local service returned ${response.status}`);
+      return (await response.json()) as T;
+    } catch (cause) {
+      if (controller.signal.aborted) {
+        throw new Error('The local service took more than 30 seconds to respond.');
+      }
+      throw cause;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async function loadDashboard(showLoading = false, requestedDays = rangeDays) {
@@ -461,6 +477,7 @@
         <p class="eyebrow">Reading private metadata</p>
         <h1>Warming up Token Envy</h1>
         <p>The first scan may take a moment. The dashboard is already listening for new sessions.</p>
+        <ScanProgress status={displayedScanStatus} />
         <div class="skeleton-grid" aria-hidden="true">
           <i></i><i></i><i></i>
         </div>
@@ -475,15 +492,23 @@
       </section>
     {:else if overview && !hasData}
       <section class="empty-state">
-        <div class="empty-gauge" aria-hidden="true"><span></span></div>
-        <p class="eyebrow">Live scanner ready</p>
-        <h1>Your first reading will appear here</h1>
-        <p>Use Claude Code as usual. Eligible requests are summarized locally as soon as a session log is completed.</p>
-        <div class="empty-details">
-          <span><b>{overview.scan.filesDiscovered}</b> log files found</span>
-          <span><b>{overview.scan.rowsRead.toLocaleString()}</b> events inspected</span>
-          <span><b>0</b> prompts retained</span>
-        </div>
+        {#if displayedScanStatus?.state === 'discovering' || displayedScanStatus?.state === 'scanning' || displayedScanStatus?.state === 'error'}
+          <div class="loading-orbit"><span></span></div>
+          <p class="eyebrow">{displayedScanStatus.state === 'error' ? 'Scanner needs attention' : 'Building your private index'}</p>
+          <h1>{displayedScanStatus.state === 'error' ? 'We couldn’t finish the first scan' : 'Reading your Claude Code history'}</h1>
+          <p>{displayedScanStatus.state === 'error' ? 'Your existing local data is safe. The scanner details are shown below.' : 'The dashboard will appear as soon as the first complete scan is ready.'}</p>
+          <ScanProgress status={displayedScanStatus} />
+        {:else}
+          <div class="empty-gauge" aria-hidden="true"><span></span></div>
+          <p class="eyebrow">Live scanner ready</p>
+          <h1>Your first reading will appear here</h1>
+          <p>Use Claude Code as usual. Eligible requests are summarized locally as soon as a session log is completed.</p>
+          <div class="empty-details">
+            <span><b>{overview.scan.filesDiscovered}</b> log files found</span>
+            <span><b>{overview.scan.rowsRead.toLocaleString()}</b> events inspected</span>
+            <span><b>0</b> prompts retained</span>
+          </div>
+        {/if}
       </section>
     {:else if overview && series}
       <section class="dashboard-grid">

@@ -229,6 +229,33 @@ describe('incremental scanner', () => {
     database.close();
   });
 
+  it('publishes byte and row progress while a large file is still being read', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-progress-'));
+    temporaryDirectories.push(directory);
+    const database = new Database({ path: ':memory:', hmacKey: 'progress-key' });
+    const scanner = new Scanner({
+      roots: [directory],
+      database,
+      chunkSize: 1_024,
+      progressIntervalBytes: 16 * 1_024
+    });
+    const statuses: Array<ReturnType<Scanner['getStatus']>> = [];
+    scanner.subscribe((status) => statuses.push(status));
+    await writeFile(
+      join(directory, 'large.jsonl'),
+      Array.from({ length: 2_000 }, (_, index) =>
+        line(user(`u${index}`, '2026-08-14T12:00:00.000Z'))
+      ).join('')
+    );
+
+    await scanner.scanAll();
+
+    expect(statuses.some((status) =>
+      status.state === 'scanning' && status.filesScanned === 0 && status.bytesRead > 0 && status.rowsRead > 0
+    )).toBe(true);
+    database.close();
+  });
+
   it('deduplicates copied history and retracts only after the last occurrence disappears', async () => {
     const { directory, database, scanner } = await setup();
     const payload =

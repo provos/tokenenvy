@@ -1184,6 +1184,94 @@ td .model-dot {
   animation: shimmer 2s ease-in-out infinite;
 }
 
+.scan-progress {
+  width: min(620px, 82vw);
+  margin-top: 30px;
+  padding: 17px 18px 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-solid) 86%, transparent);
+  text-align: left;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.12);
+}
+
+.scan-progress-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 11px;
+}
+
+.scan-progress-heading strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.scan-progress-heading span {
+  color: var(--accent);
+  font: 650 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.scan-progress progress {
+  width: 100%;
+  height: 8px;
+  display: block;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  appearance: none;
+  background: var(--panel-soft);
+}
+
+.scan-progress progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--panel-soft);
+}
+
+.scan-progress progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--mint));
+  transition: width 180ms ease-out;
+}
+
+.scan-progress progress::-moz-progress-bar {
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--mint));
+}
+
+.scan-progress progress:indeterminate {
+  background: linear-gradient(90deg, var(--panel-soft) 0 30%, var(--accent) 48%, var(--panel-soft) 66% 100%);
+  background-size: 220% 100%;
+  animation: scan-progress 1.5s linear infinite;
+}
+
+.scan-progress progress:indeterminate::-webkit-progress-bar {
+  background: linear-gradient(90deg, var(--panel-soft) 0 30%, var(--accent) 48%, var(--panel-soft) 66% 100%);
+  background-size: 220% 100%;
+  animation: scan-progress 1.5s linear infinite;
+}
+
+.scan-progress progress:indeterminate::-moz-progress-bar {
+  background: linear-gradient(90deg, var(--panel-soft) 0 30%, var(--accent) 48%, var(--panel-soft) 66% 100%);
+  background-size: 220% 100%;
+  animation: scan-progress 1.5s linear infinite;
+}
+
+.scan-progress p {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font: 500 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.scan-progress.scan-error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+@keyframes scan-progress {
+  to { background-position: -220% 0; }
+}
+
 .error-glyph {
   width: 58px;
   height: 58px;
