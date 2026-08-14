@@ -2,7 +2,7 @@ import { dev } from '$app/environment';
 import type { Handle } from '@sveltejs/kit';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
-const SESSION_COOKIE = 'claude_speedometer_session';
+const SESSION_COOKIE = 'tokenenvy_session';
 const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 function equalSecret(left: string | null | undefined, right: string | null | undefined): boolean {
@@ -38,7 +38,7 @@ export function isAllowedOrigin(origin: string | null, authority?: string | null
   }
 }
 
-function unauthorized(message = 'Open Claude Speedometer using the private URL printed by the CLI.'): Response {
+function unauthorized(message = 'Open Token Envy using the private URL printed by the CLI.'): Response {
   return new Response(message, {
     status: 401,
     headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
@@ -57,13 +57,13 @@ export function createSecurityHandle(options: SecurityHandleOptions = {}): Handl
   let bootstrapConsumed = false;
   const production = options.production ?? !dev;
   const sessionToken = options.sessionToken ?? randomBytes(32).toString('base64url');
-  const bootstrapToken = options.bootstrapToken ?? process.env.CLAUDE_SPEEDOMETER_BOOTSTRAP_TOKEN;
-  const statuslineSecret = options.statuslineSecret ?? process.env.CLAUDE_SPEEDOMETER_STATUSLINE_SECRET;
+  const bootstrapToken = options.bootstrapToken ?? process.env.TOKENENVY_BOOTSTRAP_TOKEN;
+  const statuslineSecret = options.statuslineSecret ?? process.env.TOKENENVY_STATUSLINE_SECRET;
 
   return async ({ event, resolve }) => {
   const host = event.request.headers.get('host');
   if (!isLoopbackAuthority(host)) {
-    return new Response('Claude Speedometer only accepts loopback requests.', { status: 403 });
+    return new Response('Token Envy only accepts loopback requests.', { status: 403 });
   }
 
   const origin = event.request.headers.get('origin');

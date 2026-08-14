@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 
@@ -13,14 +13,11 @@ const MAX_STDIN_BYTES = 1024 * 1024;
 
 /** @typedef {{ usedPercentage: number, resetsAt: string }} QuotaWindow */
 /** @typedef {{ fiveHour?: QuotaWindow, sevenDay?: QuotaWindow, observedAt: string }} QuotaSample */
-/** @typedef {{ command: string, logs: string, port: number, timezone: string, open: boolean, rescan: boolean, help: boolean }} CliOptions */
+/** @typedef {{ command: string, logs: string[], port: number, timezone: string, open: boolean, rescan: boolean, help: boolean }} CliOptions */
 
-export function stateDirectory(env = process.env, os = platform()) {
-  if (env.CLAUDE_SPEEDOMETER_DATA_DIR) return resolve(expandHome(env.CLAUDE_SPEEDOMETER_DATA_DIR));
-  if (env.XDG_STATE_HOME) return join(resolve(expandHome(env.XDG_STATE_HOME)), 'claude-speedometer');
-  if (os === 'darwin') return join(homedir(), 'Library', 'Application Support', 'claude-speedometer');
-  if (os === 'win32') return join(env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'claude-speedometer');
-  return join(homedir(), '.local', 'state', 'claude-speedometer');
+export function stateDirectory(env = process.env) {
+  if (env.TOKENENVY_DATA_DIR) return resolve(expandHome(env.TOKENENVY_DATA_DIR));
+  return join(homedir(), '.tokenenvy');
 }
 
 /** @param {string} value */
@@ -30,19 +27,33 @@ function expandHome(value) {
   return value;
 }
 
+/** @param {string} root @param {string} candidate */
+function containsPath(root, candidate) {
+  const within = relative(root, candidate);
+  return within === '' || (within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within));
+}
+
+/** Resolve, deduplicate, and remove nested roots without touching the filesystem. @param {string[]} values */
+export function normalizeLogRoots(values) {
+  const unique = [...new Set(values.map((value) => resolve(expandHome(value))))];
+  return unique.filter((candidate, index) =>
+    !unique.some((root, rootIndex) => rootIndex !== index && containsPath(root, candidate))
+  );
+}
+
 function usage() {
-  return `Claude Speedometer — a private, local Claude Code performance dashboard
+  return `Token Envy — a private, local Claude Code performance dashboard
 
 Usage:
-  claude-speedometer [--logs PATH] [--port PORT] [--timezone ZONE] [--no-open] [--rescan]
-  claude-speedometer statusline
+  tokenenvy [--logs PATH]... [--port PORT] [--timezone ZONE] [--no-open] [--rescan]
+  tokenenvy statusline
 
 Options:
-  --logs PATH       Claude projects log root (default: ~/.claude/projects)
+  --logs PATH       Claude projects log root; repeat for more roots (default: ~/.claude/projects)
   --port PORT       Loopback HTTP port (default: ${DEFAULT_PORT})
   --timezone ZONE   IANA timezone for daily boundaries (default: system timezone)
   --no-open         Do not open the dashboard in a browser
-  --rescan          Rebuild the derived local index before scanning
+  --rescan          Re-read live transcripts while preserving archived history
   -h, --help        Show this help
 `;
 }
@@ -52,7 +63,7 @@ export function parseArgs(argv) {
   /** @type {CliOptions} */
   const options = {
     command: 'server',
-    logs: join(homedir(), '.claude', 'projects'),
+    logs: [],
     port: DEFAULT_PORT,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     open: true,
@@ -71,7 +82,7 @@ export function parseArgs(argv) {
     if (arg === '--no-open') options.open = false;
     else if (arg === '--rescan') options.rescan = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
-    else if (arg === '--logs') options.logs = resolve(expandHome(requiredValue(args, ++index, arg)));
+    else if (arg === '--logs') options.logs.push(requiredValue(args, ++index, arg));
     else if (arg === '--port') options.port = parsePort(requiredValue(args, ++index, arg));
     else if (arg === '--timezone') options.timezone = parseTimezone(requiredValue(args, ++index, arg));
     else throw new Error(`Unknown option: ${arg}`);
@@ -80,6 +91,9 @@ export function parseArgs(argv) {
   if (options.command === 'statusline' && args.length > 0) {
     throw new Error('The statusline command does not accept server options.');
   }
+  options.logs = normalizeLogRoots(
+    options.logs.length > 0 ? options.logs : [join(homedir(), '.claude', 'projects')]
+  );
   return options;
 }
 
@@ -256,16 +270,16 @@ export async function runServer(options) {
     PORT: String(options.port),
     ORIGIN: url,
     NODE_ENV: 'production',
-    CLAUDE_SPEEDOMETER_LOGS: options.logs,
-    CLAUDE_SPEEDOMETER_TIMEZONE: options.timezone,
-    CLAUDE_SPEEDOMETER_DATA_DIR: directory,
-    CLAUDE_SPEEDOMETER_BOOTSTRAP_TOKEN: bootstrapToken,
-    CLAUDE_SPEEDOMETER_STATUSLINE_SECRET: statuslineSecret,
-    CLAUDE_SPEEDOMETER_RESCAN: options.rescan ? '1' : '0'
+    TOKENENVY_LOGS: JSON.stringify(options.logs),
+    TOKENENVY_TIMEZONE: options.timezone,
+    TOKENENVY_DATA_DIR: directory,
+    TOKENENVY_BOOTSTRAP_TOKEN: bootstrapToken,
+    TOKENENVY_STATUSLINE_SECRET: statuslineSecret,
+    TOKENENVY_RESCAN: options.rescan ? '1' : '0'
   });
 
   const privateUrl = `${url}/?token=${encodeURIComponent(bootstrapToken)}`;
-  process.stdout.write(`Claude Speedometer is running at ${url}\n`);
+  process.stdout.write(`Token Envy is running at ${url}\n`);
   process.stdout.write(`Private dashboard URL: ${privateUrl}\n`);
   process.stdout.write(`Status-line setup: ${process.argv[1]} statusline\n`);
 
@@ -322,7 +336,7 @@ try {
 
 if (invokedAsEntrypoint) {
   main().catch((error) => {
-    process.stderr.write(`claude-speedometer: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });
 }

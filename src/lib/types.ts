@@ -70,6 +70,7 @@ export interface DayDetailResponse {
   date: string;
   timezone: string;
   summary: QuantileSummary & { outputTokens: number };
+  speedIndex: SpeedIndex;
   models: ModelSummary[];
   histogram: HistogramBin[];
   hourly: Array<{ hour: number; median: number | null; count: number }>;

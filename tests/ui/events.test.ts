@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   parseScanStatus,
   quotaWindowIsStale,
-  scanRefreshTarget
+  scanRefreshTarget,
+  selectActiveDate
 } from '../../src/routes/+page.svelte';
 
 const status = {
@@ -47,5 +48,13 @@ describe('dashboard event parsing', () => {
     expect(quotaWindowIsStale(window, Date.parse('2026-08-14T12:15:00.001Z'))).toBe(true);
     expect(quotaWindowIsStale(window, Date.parse('2026-08-14T13:00:00.000Z'))).toBe(true);
     expect(quotaWindowIsStale({ ...window, stale: true }, Date.parse('2026-08-14T12:01:00.000Z'))).toBe(true);
+  });
+
+  it('preserves an available selected day and otherwise chooses the newest useful day', () => {
+    const dates = ['2026-08-12', '2026-08-13', '2026-08-13'];
+    expect(selectActiveDate('2026-08-12', '2026-08-14', 0, dates)).toBe('2026-08-12');
+    expect(selectActiveDate('2026-07-01', '2026-08-14', 0, dates)).toBe('2026-08-13');
+    expect(selectActiveDate(null, '2026-08-14', 4, dates)).toBe('2026-08-14');
+    expect(selectActiveDate(null, '2026-08-14', 0, [])).toBeNull();
   });
 });

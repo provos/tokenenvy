@@ -1,6 +1,6 @@
-# Claude Speedometer
+# Token Envy
 
-Claude Speedometer is a private, local-first performance dashboard for Claude Code. It continuously indexes performance metadata from Claude Code JSONL transcripts and turns it into model-by-model throughput trends, daily distributions, refusal outcomes, observed usage, and privacy-safe share cards.
+Token Envy is a private, local-first performance dashboard for Claude Code. It continuously indexes performance metadata from Claude Code JSONL transcripts and turns it into model-by-model throughput trends, daily distributions, refusal outcomes, observed usage, and privacy-safe share cards.
 
 It does not need an LLM, an Anthropic API key, telemetry, or an internet connection. The web server listens only on the loopback interface and the transcript directory is always read-only.
 
@@ -13,18 +13,18 @@ It does not need an LLM, an Anthropic API key, telemetry, or an internet connect
 - Explicit classifier refusals split into attempted, recovered by fallback, user-visible, and unknown
 - Observed weekly output and a projection based on the current week
 - Optional five-hour and seven-day rate-limit percentages from Claude Code's local status-line payload
-- Downloadable, privacy-safe share images with friendly or user-enabled spicy taglines
+- Downloadable selected-day histogram share images with friendly or user-enabled spicy taglines
 
 The spicy share tone is an explicit choice in the share dialog. Each dialog opens in the friendly default. Performance taglines are withheld when there is not enough current or baseline data to justify them.
 
 ## Install and run
 
-Claude Speedometer requires Node.js 22.13 or newer.
+Token Envy requires Node.js 22.13 or newer.
 
 After an npm release is published, it can be run with:
 
 ```bash
-npx claude-speedometer
+npx tokenenvy
 ```
 
 From this checkout:
@@ -33,16 +33,17 @@ From this checkout:
 npm install
 npm run build
 npm link
-claude-speedometer
+tokenenvy
 ```
 
 The CLI prints the loopback address and normally opens it in the default browser. The initial browser URL has a one-time random access token; a `SameSite=Strict`, HTTP-only cookie is used after that token is redeemed. A fresh token is created on every server launch.
 
-By default, the scanner reads `~/.claude/projects/**/*.jsonl`. Point it at a replacement transcript root with `--logs`; it never broadens an explicit path into a crawl of the whole Claude directory.
+By default, the scanner reads `~/.claude/projects/**/*.jsonl`. One or more `--logs` options replace that default. Repeat the option to monitor multiple transcript roots; Token Envy deduplicates roots and removes nested overlaps rather than scanning the same file twice. It never broadens an explicit path into a crawl of the whole Claude directory.
 
 ```bash
-claude-speedometer \
+tokenenvy \
   --logs ~/.claude/projects \
+  --logs /Volumes/archive/claude-projects \
   --port 4173 \
   --timezone America/Los_Angeles \
   --no-open
@@ -52,18 +53,18 @@ claude-speedometer \
 
 | Option | Meaning |
 | --- | --- |
-| `--logs PATH` | Replace the default `~/.claude/projects` transcript root |
+| `--logs PATH` | Replace the default transcript root; repeat for additional roots |
 | `--port PORT` | Listen on this loopback port; default is `4173` |
 | `--timezone ZONE` | Use this IANA timezone for calendar-day boundaries |
 | `--no-open` | Start without opening a browser |
-| `--rescan` | Rebuild the derived index before scanning all transcripts |
+| `--rescan` | Re-read live transcripts while preserving archived history and usage samples |
 | `-h`, `--help` | Print CLI help |
 
-The watcher remains active while the server process runs. Stop it with Ctrl-C. The derived SQLite index and its pseudonymization key live in the OS user-state directory (`~/Library/Application Support/claude-speedometer` on macOS, `$XDG_STATE_HOME/claude-speedometer` on Linux). Set `CLAUDE_SPEEDOMETER_DATA_DIR` to override that location.
+The watcher remains active while the server process runs. Stop it with Ctrl-C. The derived SQLite index, its pseudonymization key, and a compact content-free history of stable requests and refusal outcomes live in `~/.tokenenvy`. Stable summaries are archived after 24 hours so statistics survive upstream transcript cleanup. Set `TOKENENVY_DATA_DIR` to override that location. When launching the built server without the CLI, `TOKENENVY_LOGS` must be a JSON array of transcript-root paths.
 
 ## Optional rate-limit display
 
-Transcript totals are not an account quota: Claude web, Desktop, and Code may share limits, and the service decides the actual allowance. Claude Speedometer therefore labels transcript-only totals as **observed usage**.
+Transcript totals are not an account quota: Claude web, Desktop, and Code may share limits, and the service decides the actual allowance. Token Envy therefore labels transcript-only totals as **observed usage**.
 
 Claude Code can provide current five-hour and seven-day percentages to a status-line command. To opt in, add a status-line command to your own Claude settings:
 
@@ -71,12 +72,12 @@ Claude Code can provide current five-hour and seven-day percentages to a status-
 {
   "statusLine": {
     "type": "command",
-    "command": "claude-speedometer statusline"
+    "command": "tokenenvy statusline"
   }
 }
 ```
 
-Claude Speedometer never creates or overwrites `~/.claude/settings.json`. If you already use a status-line command, integrate the helper into that command rather than replacing it blindly.
+Token Envy never creates or overwrites `~/.claude/settings.json`. If you already use a status-line command, integrate the helper into that command rather than replacing it blindly.
 
 The companion reads the JSON Claude supplies on stdin, immediately discards everything except valid `five_hour` and `seven_day` rate-limit fields, and posts that small projection to the active loopback server with a per-launch secret. Its network timeout is 150 ms, and a stopped dashboard never delays or breaks Claude Code. The latest sample becomes stale after 15 minutes or after its reset time.
 
@@ -101,15 +102,15 @@ Anyone able to read your local user account may be able to access the derived in
 
 ## Social sharing
 
-Open the share preview from the dashboard, choose the friendly or spicy tone, and export the generated PNG. The card contains aggregate statistics, the mix-adjusted comparison, a bounded 14-day trend, and Claude Speedometer attribution; it contains no session IDs, project paths, prompts, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available for manual posting.
+Open any measured day, choose **Share this day**, select the friendly or spicy tone, and export the generated PNG. The card contains that day's aggregate statistics, model mix, selected-day histogram, and Token Envy attribution; it contains no session IDs, project paths, prompts, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
 
 Release builders can add a canonical product link to share cards and social composers at build time:
 
 ```bash
-PUBLIC_CLAUDE_SPEEDOMETER_URL=https://example.com/claude-speedometer npm run build
+PUBLIC_TOKENENVY_URL=https://example.com/tokenenvy npm run build
 ```
 
-The value must be a public `https://` URL. When it is unset or invalid, the card keeps the Claude Speedometer name but omits the link. This checkout does not claim an npm URL before the package is published.
+The value must be a public `https://` URL. When it is unset or invalid, the card keeps the Token Envy name but omits the link. This checkout does not claim an npm URL before the package is published.
 
 ## Development
 
@@ -127,7 +128,7 @@ npm run build
 npm run test:package
 ```
 
-`test:package` builds the npm tarball, installs it into a temporary empty project, exercises the installed `.bin`, and starts a fixture-backed server through its health check. The development server is loopback-only. Production access controls are enabled in the built Node server launched by the CLI. Tests and fixtures should use temporary transcript and state directories; do not point mutating test helpers at a real `~/.claude` directory.
+`test:package` builds the npm tarball, installs it into a temporary empty project, exercises the installed `.bin`, scans fixtures from two transcript roots, and verifies authenticated access plus clean shutdown. The development server is loopback-only. Production access controls are enabled in the built Node server launched by the CLI. Tests and fixtures should use temporary transcript and state directories; do not point mutating test helpers at a real `~/.claude` directory.
 
 ## License
 

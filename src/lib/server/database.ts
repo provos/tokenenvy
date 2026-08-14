@@ -14,6 +14,7 @@ export interface DatabaseOptions {
 
 export interface FileCheckpoint {
   sourceId: string;
+  rootId: string;
   identity: string;
   size: number;
   offset: number;
@@ -68,8 +69,17 @@ export interface DataQualitySummary {
   uuidMissing: number;
   requests: number;
   includedRequests: number;
+  archivedRequests: number;
+  archivedRefusals: number;
   exclusions: Record<string, number>;
 }
+
+export interface StoredSource {
+  sourceId: string;
+  rootId: string;
+}
+
+export const HISTORY_STABILITY_MS = 24 * 60 * 60_000;
 
 const EMPTY_SCAN_STATUS: ScanStatus = {
   state: 'idle',
@@ -118,12 +128,14 @@ export class Database {
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('temp_store = MEMORY');
     this.migrate();
+    this.archiveStable(Date.now());
   }
 
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS files (
         source_id TEXT PRIMARY KEY,
+        root_id TEXT NOT NULL DEFAULT '',
         identity TEXT NOT NULL,
         size INTEGER NOT NULL,
         offset INTEGER NOT NULL,
@@ -152,6 +164,8 @@ export class Database {
       CREATE INDEX IF NOT EXISTS events_request_idx ON events(request_id);
       CREATE INDEX IF NOT EXISTS events_parent_idx ON events(parent_id);
       CREATE INDEX IF NOT EXISTS events_timestamp_idx ON events(timestamp_ms);
+      CREATE INDEX IF NOT EXISTS events_refusal_timestamp_idx
+        ON events(timestamp_ms) WHERE refusal_outcome IS NOT NULL;
       CREATE TABLE IF NOT EXISTS occurrences (
         source_id TEXT NOT NULL REFERENCES files(source_id) ON DELETE CASCADE,
         line_offset INTEGER NOT NULL,
@@ -177,6 +191,41 @@ export class Database {
       );
       CREATE INDEX IF NOT EXISTS requests_finished_idx ON requests(finished_at);
       CREATE INDEX IF NOT EXISTS requests_family_idx ON requests(family);
+      CREATE TABLE IF NOT EXISTS monitored_roots (
+        root_id TEXT PRIMARY KEY,
+        priority INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE IF NOT EXISTS request_history (
+        request_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        started_at INTEGER,
+        finished_at INTEGER,
+        duration_ms INTEGER,
+        output_tokens INTEGER NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        cache_read_tokens INTEGER NOT NULL,
+        cache_creation_tokens INTEGER NOT NULL,
+        family TEXT NOT NULL,
+        stratum INTEGER NOT NULL,
+        tokens_per_second REAL,
+        provisional INTEGER NOT NULL DEFAULT 0,
+        quality_reason TEXT,
+        archived_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS request_history_finished_idx ON request_history(finished_at);
+      CREATE INDEX IF NOT EXISTS request_history_family_idx ON request_history(family);
+      CREATE TABLE IF NOT EXISTS refusal_history (
+        event_id TEXT PRIMARY KEY,
+        request_id TEXT,
+        session_id TEXT NOT NULL,
+        timestamp_ms INTEGER NOT NULL,
+        refusal_outcome TEXT NOT NULL,
+        archived_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS refusal_history_timestamp_idx ON refusal_history(timestamp_ms);
       CREATE TABLE IF NOT EXISTS quota_samples (
         window TEXT NOT NULL,
         observed_at INTEGER NOT NULL,
@@ -185,10 +234,16 @@ export class Database {
         PRIMARY KEY(window, observed_at)
       );
     `);
+    const fileColumns = this.db.pragma('table_info(files)') as Array<{ name: string }>;
+    if (!fileColumns.some(({ name }) => name === 'root_id')) {
+      this.db.exec("ALTER TABLE files ADD COLUMN root_id TEXT NOT NULL DEFAULT ''");
+    }
     const eventColumns = this.db.pragma('table_info(events)') as Array<{ name: string }>;
     if (eventColumns.some(({ name }) => name === 'refusal_category')) {
       this.db.exec('ALTER TABLE events DROP COLUMN refusal_category');
     }
+    this.db.pragma('user_version = 2');
+    this.db.pragma('optimize');
   }
 
   close(): void {
@@ -203,6 +258,22 @@ export class Database {
     return this.digest(`source:${filePath}`);
   }
 
+  rootId(rootPath: string): string {
+    return this.digest(`root:${rootPath}`);
+  }
+
+  syncRoots(rootIds: readonly string[]): void {
+    const update = this.db.transaction(() => {
+      this.db.prepare('UPDATE monitored_roots SET enabled = 0').run();
+      const upsert = this.db.prepare(`
+        INSERT INTO monitored_roots(root_id, priority, enabled) VALUES (?, ?, 1)
+        ON CONFLICT(root_id) DO UPDATE SET priority=excluded.priority, enabled=1
+      `);
+      rootIds.forEach((rootId, priority) => upsert.run(rootId, priority));
+    });
+    update();
+  }
+
   getFileCheckpoint(sourceId: string): FileCheckpoint | null {
     const row = this.db.prepare('SELECT * FROM files WHERE source_id = ?').get(sourceId) as
       | Record<string, number | string>
@@ -210,6 +281,7 @@ export class Database {
     if (!row) return null;
     return {
       sourceId: String(row.source_id),
+      rootId: String(row.root_id),
       identity: String(row.identity),
       size: Number(row.size),
       offset: Number(row.offset),
@@ -226,16 +298,28 @@ export class Database {
     );
   }
 
+  listSources(): StoredSource[] {
+    return (this.db.prepare('SELECT source_id, root_id FROM files').all() as Array<{
+      source_id: string;
+      root_id: string;
+    }>).map((row) => ({ sourceId: row.source_id, rootId: row.root_id }));
+  }
+
+  assignSourceRoot(sourceId: string, rootId: string): boolean {
+    return this.db.prepare('UPDATE files SET root_id = ? WHERE source_id = ? AND root_id <> ?')
+      .run(rootId, sourceId, rootId).changes > 0;
+  }
+
   applyFileScan(options: {
     checkpoint: FileCheckpoint;
     events: readonly ScannedEvent[];
     replace: boolean;
   }): void {
     const insertFile = this.db.prepare(`
-      INSERT INTO files(source_id, identity, size, offset, mtime_ms, tail_hash, rows_read, invalid_rows)
-      VALUES (@sourceId, @identity, @size, @offset, @mtimeMs, @tailHash, @rowsRead, @invalidRows)
+      INSERT INTO files(source_id, root_id, identity, size, offset, mtime_ms, tail_hash, rows_read, invalid_rows)
+      VALUES (@sourceId, @rootId, @identity, @size, @offset, @mtimeMs, @tailHash, @rowsRead, @invalidRows)
       ON CONFLICT(source_id) DO UPDATE SET
-        identity=excluded.identity, size=excluded.size, offset=excluded.offset,
+        root_id=excluded.root_id, identity=excluded.identity, size=excluded.size, offset=excluded.offset,
         mtime_ms=excluded.mtime_ms, tail_hash=excluded.tail_hash,
         rows_read=excluded.rows_read, invalid_rows=excluded.invalid_rows
     `);
@@ -255,6 +339,7 @@ export class Database {
     );
 
     this.db.transaction(() => {
+      if (options.replace) this.archiveStableInternal(Date.now());
       // The FK requires the file row to exist before occurrences are inserted.
       insertFile.run(options.checkpoint);
       if (options.replace) {
@@ -268,21 +353,34 @@ export class Database {
     })();
   }
 
-  retractSource(sourceId: string): boolean {
-    return this.retractSources([sourceId]);
+  retractSource(sourceId: string, nowMs = Date.now()): boolean {
+    return this.retractSources([sourceId], nowMs);
   }
 
-  retractSources(sourceIds: readonly string[]): boolean {
+  retractSources(sourceIds: readonly string[], nowMs = Date.now()): boolean {
     if (sourceIds.length === 0) return false;
-    const changed = this.db.transaction(() => {
+    const result = this.db.transaction(() => {
+      const archived = this.archiveStableInternal(nowMs);
       const remove = this.db.prepare('DELETE FROM files WHERE source_id = ?');
       let changes = 0;
       for (const sourceId of new Set(sourceIds)) changes += remove.run(sourceId).changes;
       if (changes > 0) this.deleteOrphanEvents();
-      return changes > 0;
+      return { sources: changes, archived };
     })();
-    if (changed) this.#requestRevision += 1;
+    const changed = result.sources > 0 || result.archived.requests > 0 || result.archived.refusals > 0;
+    if (result.sources > 0 || result.archived.requests > 0) this.#requestRevision += 1;
     return changed;
+  }
+
+  resetLive(nowMs = Date.now()): void {
+    this.db.transaction(() => {
+      this.archiveStableInternal(nowMs);
+      this.db.prepare('DELETE FROM occurrences').run();
+      this.db.prepare('DELETE FROM events').run();
+      this.db.prepare('DELETE FROM files').run();
+      this.db.prepare('DELETE FROM requests').run();
+    })();
+    this.#requestRevision += 1;
   }
 
   private deleteOrphanEvents(): void {
@@ -290,6 +388,80 @@ export class Database {
       DELETE FROM events
       WHERE NOT EXISTS (SELECT 1 FROM occurrences WHERE occurrences.event_id = events.event_id)
     `).run();
+  }
+
+  private archiveStableInternal(nowMs: number): { requests: number; refusals: number } {
+    const cutoff = nowMs - HISTORY_STABILITY_MS;
+    const requestResult = this.db.prepare(`
+      INSERT INTO request_history(
+        request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
+        tokens_per_second, provisional, quality_reason, archived_at, updated_at
+      )
+      SELECT request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
+        tokens_per_second, 0, quality_reason, @nowMs, @nowMs
+      FROM requests
+      WHERE finished_at IS NOT NULL AND finished_at <= @cutoff
+      ON CONFLICT(request_id) DO UPDATE SET
+        session_id=excluded.session_id, started_at=excluded.started_at,
+        finished_at=excluded.finished_at, duration_ms=excluded.duration_ms,
+        output_tokens=excluded.output_tokens, input_tokens=excluded.input_tokens,
+        cache_read_tokens=excluded.cache_read_tokens,
+        cache_creation_tokens=excluded.cache_creation_tokens,
+        family=excluded.family, stratum=excluded.stratum,
+        tokens_per_second=excluded.tokens_per_second, provisional=0,
+        quality_reason=excluded.quality_reason, updated_at=excluded.updated_at
+      WHERE request_history.session_id IS NOT excluded.session_id
+        OR request_history.started_at IS NOT excluded.started_at
+        OR request_history.finished_at IS NOT excluded.finished_at
+        OR request_history.duration_ms IS NOT excluded.duration_ms
+        OR request_history.output_tokens IS NOT excluded.output_tokens
+        OR request_history.input_tokens IS NOT excluded.input_tokens
+        OR request_history.cache_read_tokens IS NOT excluded.cache_read_tokens
+        OR request_history.cache_creation_tokens IS NOT excluded.cache_creation_tokens
+        OR request_history.family IS NOT excluded.family
+        OR request_history.stratum IS NOT excluded.stratum
+        OR request_history.tokens_per_second IS NOT excluded.tokens_per_second
+        OR request_history.provisional IS NOT 0
+        OR request_history.quality_reason IS NOT excluded.quality_reason
+    `).run({ nowMs, cutoff });
+    const removedRefusals = this.db.prepare(`
+      DELETE FROM refusal_history
+      WHERE EXISTS (
+        SELECT 1 FROM events live
+        WHERE live.event_id = refusal_history.event_id
+          AND live.refusal_outcome IS NULL
+          AND live.timestamp_ms IS NOT NULL
+          AND live.timestamp_ms <= @cutoff
+      )
+    `).run({ cutoff });
+    const refusalResult = this.db.prepare(`
+      INSERT INTO refusal_history(
+        event_id, request_id, session_id, timestamp_ms, refusal_outcome, archived_at, updated_at
+      )
+      SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome, @nowMs, @nowMs
+      FROM events
+      WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
+      ON CONFLICT(event_id) DO UPDATE SET
+        request_id=excluded.request_id, session_id=excluded.session_id,
+        timestamp_ms=excluded.timestamp_ms, refusal_outcome=excluded.refusal_outcome,
+        updated_at=excluded.updated_at
+      WHERE refusal_history.request_id IS NOT excluded.request_id
+        OR refusal_history.session_id IS NOT excluded.session_id
+        OR refusal_history.timestamp_ms IS NOT excluded.timestamp_ms
+        OR refusal_history.refusal_outcome IS NOT excluded.refusal_outcome
+    `).run({ nowMs, cutoff });
+    return {
+      requests: requestResult.changes,
+      refusals: removedRefusals.changes + refusalResult.changes
+    };
+  }
+
+  archiveStable(nowMs = Date.now()): boolean {
+    const changed = this.db.transaction(() => this.archiveStableInternal(nowMs))();
+    if (changed.requests > 0) this.#requestRevision += 1;
+    return changed.requests > 0 || changed.refusals > 0;
   }
 
   rebuildRequests(nowMs = Date.now(), idleMs = 120_000): void {
@@ -385,6 +557,7 @@ export class Database {
           qualityReason
         );
       }
+      this.archiveStableInternal(nowMs);
     })();
     this.#requestRevision += 1;
   }
@@ -410,7 +583,20 @@ export class Database {
       provisional: number;
       quality_reason: string | null;
     };
-    return (this.db.prepare('SELECT * FROM requests ORDER BY finished_at').all() as Row[]).map((row) => ({
+    return (this.db.prepare(`
+      SELECT request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
+        tokens_per_second, provisional, quality_reason
+      FROM requests
+      UNION ALL
+      SELECT history.request_id, history.session_id, history.started_at, history.finished_at,
+        history.duration_ms, history.output_tokens, history.input_tokens,
+        history.cache_read_tokens, history.cache_creation_tokens, history.family,
+        history.stratum, history.tokens_per_second, history.provisional, history.quality_reason
+      FROM request_history history
+      WHERE NOT EXISTS (SELECT 1 FROM requests live WHERE live.request_id = history.request_id)
+      ORDER BY finished_at
+    `).all() as Row[]).map((row) => ({
       requestId: row.request_id,
       sessionId: row.session_id,
       startedAt: row.started_at,
@@ -441,6 +627,11 @@ export class Database {
         .prepare(`
           SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome
           FROM events WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL
+          UNION ALL
+          SELECT history.event_id, history.request_id, history.session_id,
+            history.timestamp_ms, history.refusal_outcome
+          FROM refusal_history history
+          WHERE NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
           ORDER BY timestamp_ms
         `)
         .all() as Row[]
@@ -466,7 +657,17 @@ export class Database {
       .get() as { events: number; uuid_missing: number };
     const occurrences = this.db.prepare('SELECT COUNT(*) count FROM occurrences').get() as { count: number };
     const requests = this.db
-      .prepare('SELECT quality_reason, provisional, COUNT(*) count FROM requests GROUP BY quality_reason, provisional')
+      .prepare(`
+        WITH effective AS (
+          SELECT request_id, quality_reason, provisional FROM requests
+          UNION ALL
+          SELECT history.request_id, history.quality_reason, history.provisional
+          FROM request_history history
+          WHERE NOT EXISTS (SELECT 1 FROM requests live WHERE live.request_id = history.request_id)
+        )
+        SELECT quality_reason, provisional, COUNT(*) count
+        FROM effective GROUP BY quality_reason, provisional
+      `)
       .all() as Array<{
         quality_reason: string | null;
         provisional: number;
@@ -485,6 +686,8 @@ export class Database {
         includedRequests += row.count;
       }
     }
+    const archivedRequests = (this.db.prepare('SELECT COUNT(*) count FROM request_history').get() as { count: number }).count;
+    const archivedRefusals = (this.db.prepare('SELECT COUNT(*) count FROM refusal_history').get() as { count: number }).count;
     return {
       files: files.files,
       rows: files.rows,
@@ -494,6 +697,8 @@ export class Database {
       uuidMissing: events.uuid_missing,
       requests: requestCount,
       includedRequests,
+      archivedRequests,
+      archivedRefusals,
       exclusions
     };
   }

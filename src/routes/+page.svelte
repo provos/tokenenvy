@@ -53,6 +53,18 @@
     );
   }
 
+  export function selectActiveDate(
+    selectedDate: string | null,
+    today: string,
+    todayCount: number,
+    dates: string[]
+  ): string | null {
+    const availableDates = [...new Set(dates)].sort();
+    if (selectedDate && availableDates.includes(selectedDate)) return selectedDate;
+    if (todayCount > 0) return today;
+    return availableDates.at(-1) ?? null;
+  }
+
   function quotaWindowExpiresAt(window: QuotaWindow): number | null {
     const observedAt = Date.parse(window.observedAt);
     const resetsAt = Date.parse(window.resetsAt);
@@ -64,11 +76,11 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
+  import DayHero from '$lib/components/DayHero.svelte';
   import DailyChart from '$lib/components/DailyChart.svelte';
   import HistogramDrawer from '$lib/components/HistogramDrawer.svelte';
   import ShareModal from '$lib/components/ShareModal.svelte';
-  import { compactNumber, FAMILY_COLORS } from '$lib/components/chart';
-  import { speedIndexDelta } from '$lib/components/share';
+  import { compactNumber, dayLabel, FAMILY_COLORS } from '$lib/components/chart';
   import type {
     DayDetailResponse,
     ModelFamily,
@@ -101,6 +113,9 @@
   let dayDetail = $state<DayDetailResponse | null>(null);
   let dayLoading = $state(false);
   let dayError = $state<string | null>(null);
+  let drawerOpen = $state(false);
+  let dayDetailRevision: number | null = null;
+  let dayRequestRevision: number | null = null;
   let shareOpen = $state(false);
   let eventSource: EventSource | null = null;
   let dashboardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -112,9 +127,20 @@
   let latestScanStatus: ScanStatus | null = null;
 
   let hasData = $derived(Boolean(overview?.headline.count || series?.points.length));
-  let hasTodayData = $derived(Boolean(overview?.headline.count));
   let latestUpdate = $derived(formatUpdate(overview?.generatedAt));
-  let baselineCopy = $derived(getBaselineCopy(overview));
+  let shareReady = $derived(Boolean(dayDetail && !dayLoading && !dayError));
+  let selectedDayLabel = $derived(
+    selectedDate ? (selectedDate === overview?.today ? 'Today' : dayLabel(selectedDate)) : 'Selected day'
+  );
+  let selectedAnnouncement = $derived(
+    dayDetail && !dayLoading
+      ? `${selectedDayLabel} selected. Median ${Math.round(dayDetail.summary.median)} effective output tokens per second across ${dayDetail.summary.count} measured requests.`
+      : dayLoading && selectedDate
+        ? `Loading ${selectedDayLabel.toLowerCase()}.`
+        : dayError && selectedDate
+          ? `${selectedDayLabel} could not be loaded.`
+          : ''
+  );
   let qualityRatio = $derived(
     dataQuality && dataQuality.rows > 0
       ? Math.max(0, 1 - dataQuality.invalidRows / dataQuality.rows)
@@ -156,27 +182,6 @@
     }).format(timestamp);
   }
 
-  function getBaselineCopy(data: OverviewResponse | null): { value: string; label: string; positive: boolean | null } {
-    const index = data?.speedIndex;
-    if (!index?.eligible || index.value === null) {
-      return {
-        value: 'Building baseline',
-        label: index?.reason ?? 'Needs 20 requests, five sessions, and seven prior days',
-        positive: null
-      };
-    }
-    const percentValue = speedIndexDelta(index);
-    if (percentValue === null) {
-      return { value: 'Building baseline', label: index.reason ?? 'Not enough comparable data', positive: null };
-    }
-    const rounded = Math.abs(percentValue).toFixed(0);
-    return {
-      value: `${percentValue >= 0 ? '+' : '−'}${rounded}%`,
-      label: `${percentValue >= 0 ? 'faster' : 'slower'} than your mix-adjusted 28-day baseline`,
-      positive: percentValue >= 0
-    };
-  }
-
   async function getJson<T>(url: string, optional = false): Promise<T | null> {
     const response = await fetch(url, { headers: { accept: 'application/json' } });
     if (optional && response.status === 404) return null;
@@ -207,7 +212,8 @@
         getJson<DataQualityResponse>('/api/v1/data-quality')
       ]);
       if (sequence !== loadSequence) return;
-      analyticsRevision = nextOverview?.scan.revision ?? null;
+      const nextRevision = nextOverview?.scan.revision ?? null;
+      analyticsRevision = nextRevision;
       overview = nextOverview && latestScanStatus && latestScanStatus.revision >= nextOverview.scan.revision
         ? { ...nextOverview, scan: latestScanStatus }
         : nextOverview;
@@ -219,6 +225,7 @@
       dataQuality = nextDataQuality;
       rangeDays = requestedDays;
       if (rangeChange || !refreshError || refreshError.requestedDays === requestedDays) refreshError = null;
+      reconcileSelectedDay(nextOverview, nextSeries, nextRevision);
       if (latestScanStatus && analyticsRevision !== null && latestScanStatus.revision > analyticsRevision) {
         scheduleDashboardRefresh();
       }
@@ -290,29 +297,82 @@
     };
   }
 
-  async function openDay(date: string) {
+  function reconcileSelectedDay(
+    nextOverview: OverviewResponse | null,
+    nextSeries: SeriesResponse | null,
+    revision: number | null
+  ) {
+    if (!nextOverview || !nextSeries) return;
+    const target = selectActiveDate(
+      selectedDate,
+      nextOverview.today,
+      nextOverview.headline.count,
+      nextSeries.points.map((point) => point.date)
+    );
+
+    if (!target) {
+      clearSelectedDay();
+      return;
+    }
+
+    const requestAlreadyCurrent =
+      dayLoading && selectedDate === target && dayRequestRevision === revision;
+    const detailIsCurrent =
+      dayDetail?.date === target && dayDetailRevision === revision && !dayError;
+    if (!requestAlreadyCurrent && !detailIsCurrent) void selectDay(target, true);
+  }
+
+  async function selectDay(date: string, force = false) {
+    const revision = analyticsRevision;
+    const dateChanged = selectedDate !== date;
+    if (!force && !dateChanged && dayDetail?.date === date && dayDetailRevision === revision) return;
     const sequence = ++dayLoadSequence;
+    if (dateChanged) {
+      drawerOpen = false;
+      shareOpen = false;
+      dayDetail = null;
+      dayDetailRevision = null;
+    }
     selectedDate = date;
-    dayDetail = null;
     dayError = null;
     dayLoading = true;
+    dayRequestRevision = revision;
     try {
       const detail = await getJson<DayDetailResponse>(`/api/v1/days/${encodeURIComponent(date)}`);
       if (sequence !== dayLoadSequence || selectedDate !== date) return;
       dayDetail = detail;
+      dayDetailRevision = revision;
     } catch (cause) {
       if (sequence !== dayLoadSequence || selectedDate !== date) return;
+      dayDetail = null;
+      dayDetailRevision = null;
       dayError = cause instanceof Error ? cause.message : 'Could not load the selected day.';
     } finally {
-      if (sequence === dayLoadSequence && selectedDate === date) dayLoading = false;
+      if (sequence === dayLoadSequence && selectedDate === date) {
+        dayLoading = false;
+        dayRequestRevision = null;
+      }
     }
   }
 
-  function closeDay() {
+  function clearSelectedDay() {
     dayLoadSequence += 1;
     selectedDate = null;
     dayDetail = null;
+    dayDetailRevision = null;
+    dayRequestRevision = null;
     dayError = null;
+    dayLoading = false;
+    drawerOpen = false;
+    shareOpen = false;
+  }
+
+  function retrySelectedDay() {
+    if (selectedDate) void selectDay(selectedDate, true);
+  }
+
+  function openDayDetails() {
+    if (dayDetail && !dayLoading) drawerOpen = true;
   }
 
   function toggleFamily(family: ModelFamily) {
@@ -327,18 +387,19 @@
     theme = next;
     if (browser) {
       document.documentElement.dataset.theme = next;
-      localStorage.setItem('claude-speedometer-theme', next);
+      localStorage.setItem('token-envy-theme', next);
     }
   }
 
   onMount(() => {
-    const saved = localStorage.getItem('claude-speedometer-theme');
+    const saved = localStorage.getItem('token-envy-theme');
     applyTheme(saved === 'light' ? 'light' : 'dark');
     connectEvents();
     void loadDashboard(true);
   });
 
   onDestroy(() => {
+    dayLoadSequence += 1;
     eventSource?.close();
     if (dashboardRefreshTimer) clearTimeout(dashboardRefreshTimer);
     if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
@@ -346,14 +407,14 @@
 </script>
 
 <svelte:head>
-  <title>Claude Speedometer · Local performance</title>
+  <title>Token Envy · Local Claude Code performance</title>
 </svelte:head>
 
 <div class="app-shell">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Claude Speedometer home">
-      <span class="brand-mark" aria-hidden="true">C</span>
-      <span>Claude Speedometer</span>
+    <a class="brand" href="/" aria-label="Token Envy home">
+      <span class="brand-mark" aria-hidden="true">T</span>
+      <span>Token Envy</span>
     </a>
 
     <div class="topbar-meta">
@@ -382,8 +443,8 @@
       >{theme === 'dark' ? '☼' : '◐'}</button>
       <button
         class="share-button"
-        disabled={!hasTodayData}
-        title={hasTodayData ? 'Create a privacy-safe share card' : 'Sharing unlocks after today has a measured request'}
+        disabled={!shareReady}
+        title={shareReady ? `Share ${selectedDayLabel.toLowerCase()}` : 'Select a measured day to create a share card'}
         onclick={() => (shareOpen = true)}
       >
         <span aria-hidden="true">↗</span> Share
@@ -396,7 +457,7 @@
       <section class="loading-state" aria-live="polite">
         <div class="loading-orbit"><span></span></div>
         <p class="eyebrow">Reading private metadata</p>
-        <h1>Warming up your speedometer</h1>
+        <h1>Warming up Token Envy</h1>
         <p>The first scan may take a moment. The dashboard is already listening for new sessions.</p>
         <div class="skeleton-grid" aria-hidden="true">
           <i></i><i></i><i></i>
@@ -425,55 +486,37 @@
     {:else if overview && series}
       <section class="dashboard-grid">
         <div class="dashboard-main">
-          <section class="hero-card">
-            {#if hasTodayData}
-              <div class="hero-copy">
-                <div class="hero-kicker">
-                  <span>Today · {overview.today}</span>
-                  {#if overview.headline.provisional}<span class="provisional">Live estimate</span>{/if}
-                </div>
-                <div class="hero-number">
-                  <strong>{overview.headline.median.toFixed(1)}</strong>
-                  <span>effective output<br /> tokens / second</span>
-                </div>
-                <div class="baseline-line" class:positive={baselineCopy.positive === true} class:negative={baselineCopy.positive === false}>
-                  <strong>{baselineCopy.value}</strong>
-                  <span>{baselineCopy.label}</span>
-                </div>
-              </div>
-              <div class="hero-stats">
-                <div>
-                  <span>Middle 50%</span>
-                  <strong>{overview.headline.q1.toFixed(1)}–{overview.headline.q3.toFixed(1)}</strong>
-                  <small>effective tok/s</small>
-                </div>
-                <div>
-                  <span>Measured requests</span>
-                  <strong>{overview.headline.count.toLocaleString()}</strong>
-                  <small>across {overview.headline.sessions.toLocaleString()} sessions</small>
-                </div>
-                <div>
-                  <span>Output observed</span>
-                  <strong>{compactNumber(overview.headline.outputTokens)}</strong>
-                  <small>tokens today</small>
-                </div>
-              </div>
-            {:else}
-              <div class="hero-copy hero-empty-today">
-                <div class="hero-kicker"><span>Today · {overview.today}</span></div>
-                <p class="eyebrow">Historical dashboard ready</p>
-                <h1>No eligible readings yet today</h1>
-                <p>Your prior trends remain below. Today’s speed and sharing will unlock after the first measured request.</p>
-              </div>
-            {/if}
-            <div class="hero-glow" aria-hidden="true"></div>
+          <p class="sr-only" aria-live="polite" aria-atomic="true">{selectedAnnouncement}</p>
+          <DayHero
+            date={selectedDate}
+            today={overview.today}
+            detail={dayDetail}
+            loading={dayLoading}
+            error={dayError}
+            onretry={retrySelectedDay}
+            onmore={openDayDetails}
+          />
+
+          <section class="envy-callout" aria-labelledby="envy-callout-title">
+            <div>
+              <p class="eyebrow">Token Envy</p>
+              <h2 id="envy-callout-title">Think your Claude Code is faster?</h2>
+              <p>Drop your daily TPS card and challenge the timeline. Same metric, wildly different days.</p>
+              <small>For fun—not a global benchmark. Model mix, output length, and workload affect effective TPS.</small>
+            </div>
+            <button
+              class="primary-button"
+              type="button"
+              disabled={!shareReady}
+              onclick={() => (shareOpen = true)}
+            >Share {selectedDayLabel.toLowerCase()}</button>
           </section>
 
           <section class="panel trend-panel">
             <div class="section-heading chart-heading">
               <div>
                 <p class="eyebrow">Longitudinal view</p>
-                <h2>How fast has Claude felt?</h2>
+                <h2>How fast has Claude Code felt?</h2>
                 <p>Daily median with the middle 50% shaded. Whiskers show the clustered 95% confidence interval when eligible.</p>
               </div>
               <span class="freshness">{latestUpdate}</span>
@@ -507,9 +550,9 @@
                 timezone={series.timezone}
                 {visibleFamilies}
                 {selectedDate}
-                onselect={openDay}
+                onselect={selectDay}
               />
-              <p class="chart-hint">Select any day to open its histogram and hourly rhythm.</p>
+              <p class="chart-hint">Select a day to update the summary. Use “More info” for its full distribution.</p>
             {:else}
               <div class="subtle-empty">No eligible daily measurements in this range yet.</div>
             {/if}
@@ -519,11 +562,13 @@
         <aside class="dashboard-rail" aria-label="Usage and performance at a glance">
           <section class="panel rail-panel">
             <div class="section-heading compact-heading">
-              <div><p class="eyebrow">Model families</p><h2>Today’s mix</h2></div>
+              <div><p class="eyebrow">Model families</p><h2>{selectedDayLabel} mix</h2></div>
             </div>
             <div class="model-list">
-              {#if overview.models.length}
-                {#each overview.models as model}
+              {#if dayLoading}
+                <p class="subtle-empty rail-empty">Refreshing the selected day…</p>
+              {:else if dayDetail?.models.length}
+                {#each dayDetail.models as model}
                   <div class="rail-model">
                     <div class="rail-model-name">
                       <i style={`--model-color:${FAMILY_COLORS[model.family]}`}></i>
@@ -534,7 +579,7 @@
                   </div>
                 {/each}
               {:else}
-                <p class="subtle-empty rail-empty">No model readings yet today.</p>
+                <p class="subtle-empty rail-empty">No model readings for the selected day.</p>
               {/if}
             </div>
           </section>
@@ -616,22 +661,25 @@
   </main>
 
   <footer class="site-footer">
-    <span>Claude Speedometer</span>
+    <span>Token Envy</span>
     <span>Private by default · Open source · Local-first</span>
   </footer>
 </div>
 
-<HistogramDrawer open={selectedDate !== null} loading={dayLoading} detail={dayDetail} error={dayError} onclose={closeDay} />
+<HistogramDrawer
+  open={drawerOpen}
+  loading={dayLoading}
+  detail={dayDetail}
+  error={dayError}
+  onclose={() => (drawerOpen = false)}
+/>
 
-{#if overview}
+{#if overview && dayDetail}
   <ShareModal
     open={shareOpen}
-    date={overview.today}
-    median={overview.headline.median}
-    count={overview.headline.count}
-    speedIndex={overview.speedIndex}
-    models={overview.models}
-    points={series?.points ?? []}
+    detail={dayDetail}
+    isToday={dayDetail.date === overview.today}
+    refreshing={dayLoading}
     onclose={() => (shareOpen = false)}
   />
 {/if}

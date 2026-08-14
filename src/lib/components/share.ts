@@ -1,144 +1,196 @@
-import type { DailyPoint, ModelFamily, ModelSummary, SpeedIndex } from '$lib/types';
+import type { HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
 
 export type ShareTone = 'friendly' | 'spicy';
+export type SharePlatform = 'generic' | 'x' | 'bluesky' | 'linkedin';
 
-export interface ShareProductLink {
-  href: string;
-  label: string;
-}
-
-export interface ShareCardModel {
-  family: ModelFamily;
-  share: number;
-}
-
-export interface ShareTrendPoint {
-  date: string;
-  family: ModelFamily;
-  median: number;
+export interface ShareHistogramBar {
+	lower: number;
+	upper: number;
+	count: number;
+	height: number;
+	containsMedian: boolean;
 }
 
 export interface ShareCardData {
-  date: string;
-  median: number;
-  count: number;
-  indexLabel: string;
-  indexEligible: boolean;
-  percentile: number | null;
-  models: ShareCardModel[];
-  trend: ShareTrendPoint[];
+	date: string;
+	median: number;
+	count: number;
+	sessions: number;
+	outputTokens: number;
+	isToday: boolean;
+	indexLabel: string;
+	indexEligible: boolean;
+	percentile: number | null;
+	models: Array<{ family: string; median: number; count: number }>;
+	histogram: Array<{ lower: number; upper: number; count: number }>;
 }
 
-interface ShareCardInput {
-  date: string;
-  median: number;
-  count: number;
-  speedIndex: SpeedIndex;
-  models: ModelSummary[];
-  points: DailyPoint[];
+export interface ShareCardInput {
+	date: string;
+	median: number;
+	count: number;
+	sessions: number;
+	outputTokens: number;
+	isToday: boolean;
+	speedIndex: SpeedIndex;
+	models: ModelSummary[];
+	histogram: HistogramBin[];
 }
 
-function boundedNumber(value: number, minimum: number, maximum: number): number {
-  return Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, value)) : minimum;
+export interface ShareProductLink {
+	href: string;
+	label: string;
 }
 
 export function safeShareProductLink(value: string | undefined): ShareProductLink | null {
-  if (!value?.trim()) return null;
-  try {
-    const url = new URL(value.trim());
-    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return null;
-    const href = url.toString();
-    return {
-      href,
-      label: href.replace(/^https?:\/\//, '').replace(/\/$/, '')
-    };
-  } catch {
-    return null;
-  }
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		if (
+			url.protocol !== 'https:' ||
+			url.href.length > 2048 ||
+			url.username ||
+			url.password
+		) {
+			return null;
+		}
+		const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+		const label = `${url.host}${path}`;
+		return { href: url.href, label: label.length > 48 ? `${label.slice(0, 47)}…` : label };
+	} catch {
+		return null;
+	}
 }
 
 export function speedIndexDelta(index: SpeedIndex): number | null {
-  return index.eligible && index.value != null && Number.isFinite(index.value) ? index.value - 100 : null;
+	if (!index.eligible || index.value === null) return null;
+	return Math.round(index.value - 100);
 }
 
 export function speedIndexLabel(index: SpeedIndex): string {
-  const delta = speedIndexDelta(index);
-  if (delta == null) return 'Building a mix-adjusted baseline';
-  return `${delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(0)}% vs 28-day mix-adjusted baseline`;
+	const delta = speedIndexDelta(index);
+	if (delta === null) return 'Baseline warming up';
+	if (delta === 0) return 'Right at your baseline';
+	return `${delta > 0 ? '+' : ''}${delta}% vs your baseline`;
 }
 
-/** Build the complete, privacy-allowlisted object used by both preview and PNG output. */
-export function buildShareCardData(input: ShareCardInput): ShareCardData {
-  const models = input.models
-    .map((model) => ({ family: model.family, share: boundedNumber(model.share, 0, 1) }))
-    .sort((left, right) => right.share - left.share)
-    .slice(0, 4);
-  const families = new Set(models.map(({ family }) => family));
-  const dates = [...new Set(input.points.map(({ date }) => date))].sort().slice(-14);
-  const includedDates = new Set(dates);
-  const trend = input.points
-    .filter(
-      (point) =>
-        includedDates.has(point.date) &&
-        families.has(point.family) &&
-        Number.isFinite(point.median) &&
-        point.median >= 0
-    )
-    .map(({ date, family, median }) => ({ date, family, median }))
-    .sort((left, right) => left.date.localeCompare(right.date) || left.family.localeCompare(right.family));
+function sanitizeHistogram(histogram: HistogramBin[]): Array<{ lower: number; upper: number; count: number }> {
+	return histogram
+		.filter(
+			(bin) =>
+				Number.isFinite(bin.lower) &&
+				Number.isFinite(bin.upper) &&
+				Number.isFinite(bin.count) &&
+				bin.upper > bin.lower &&
+				bin.count >= 0,
+		)
+		.slice(0, 40)
+		.map((bin) => ({
+			lower: bin.lower,
+			upper: bin.upper,
+			count: Math.round(bin.count),
+		}));
+}
 
-  return {
-    date: /^\d{4}-\d{2}-\d{2}$/.test(input.date) ? input.date : '',
-    median: boundedNumber(input.median, 0, 1_000_000),
-    count: Math.round(boundedNumber(input.count, 0, Number.MAX_SAFE_INTEGER)),
-    indexLabel: speedIndexLabel(input.speedIndex),
-    indexEligible: input.speedIndex.eligible,
-    percentile:
-      input.speedIndex.percentile == null
-        ? null
-        : boundedNumber(input.speedIndex.percentile, 0, 100),
-    models,
-    trend
-  };
+export function normalizeHistogram(
+	histogram: Array<{ lower: number; upper: number; count: number }>,
+	median: number,
+): ShareHistogramBar[] {
+	const bins = sanitizeHistogram(histogram);
+	const maximum = Math.max(1, ...bins.map((bin) => bin.count));
+	const medianIndex = bins.findIndex(
+		(bin, index) =>
+			median >= bin.lower &&
+			(median < bin.upper || (index === bins.length - 1 && median <= bin.upper)),
+	);
+
+	return bins.map((bin, index) => ({
+		...bin,
+		height: bin.count / maximum,
+		containsMedian: index === medianIndex,
+	}));
+}
+
+export function buildShareCardData(input: ShareCardInput): ShareCardData {
+	return {
+		date: input.date,
+		median: input.median,
+		count: input.count,
+		sessions: input.sessions,
+		outputTokens: input.outputTokens,
+		isToday: input.isToday,
+		indexLabel: speedIndexLabel(input.speedIndex),
+		indexEligible: input.speedIndex.eligible,
+		percentile: input.speedIndex.percentile,
+		models: [...input.models].sort((left, right) => right.share - left.share).slice(0, 8).map((model) => ({
+			family: model.family,
+			median: model.median,
+			count: model.count,
+		})),
+		histogram: sanitizeHistogram(input.histogram),
+	};
+}
+
+function ordinal(value: number): string {
+	const rounded = Math.round(value);
+	const modulo100 = rounded % 100;
+	const suffix =
+		modulo100 >= 11 && modulo100 <= 13
+			? 'th'
+			: rounded % 10 === 1
+				? 'st'
+				: rounded % 10 === 2
+					? 'nd'
+					: rounded % 10 === 3
+						? 'rd'
+						: 'th';
+	return `${rounded}${suffix}`;
+}
+
+export function getShareMoodLine(data: ShareCardData): string {
+	if (!data.indexEligible || data.percentile === null) {
+		return `Baseline warming up · ${data.count.toLocaleString('en-US')} measured requests`;
+	}
+
+	const mood = data.percentile >= 75 ? 'Flying' : data.percentile <= 25 ? 'Scenic route' : 'Cruising';
+	return `${mood} · ${ordinal(data.percentile)} percentile in my comparable days`;
 }
 
 export function getShareTagline(tone: ShareTone, data: ShareCardData): string {
-  if (!data.indexEligible || data.percentile === null) return 'A day in the life of Claude Code';
-  if (tone === 'spicy') {
-    if (data.percentile >= 75) return 'Anthropic loves me today';
-    if (data.percentile <= 25) return 'Anthropic hates me today';
-    return 'Anthropic and I are on speaking terms';
-  }
-  if (data.percentile >= 75) return 'Claude is flying today';
-  if (data.percentile <= 25) return 'Claude is taking the scenic route';
-  return 'Claude found its rhythm today';
+	const percentile = data.indexEligible ? data.percentile : null;
+
+	if (tone === 'friendly') {
+		if (percentile !== null && percentile >= 75) {
+			return data.isToday ? 'Claude Code is flying today' : 'Claude Code was flying that day';
+		}
+		if (percentile !== null && percentile <= 25) {
+			return data.isToday
+				? 'Claude Code is taking the scenic route today'
+				: 'Claude Code took the scenic route that day';
+		}
+		return data.isToday ? 'Claude Code found its rhythm today' : 'Claude Code found its rhythm that day';
+	}
+
+	if (percentile !== null && percentile >= 75) {
+		return data.isToday ? 'Anthropic loves me today' : 'Anthropic loved me that day';
+	}
+	if (percentile !== null && percentile <= 25) {
+		return data.isToday ? 'Anthropic hates me today' : 'Anthropic hated me that day';
+	}
+	return data.isToday
+		? 'Anthropic and I are on speaking terms'
+		: 'Anthropic and I were on speaking terms';
 }
 
-export function shareTrendPath(
-  trend: readonly ShareTrendPoint[],
-  family: ModelFamily,
-  width: number,
-  height: number
+export function getShareCaption(
+	tone: ShareTone,
+	data: ShareCardData,
+	platform: SharePlatform,
+	productLink: string | null,
 ): string {
-  return shareTrendCoordinates(trend, family, width, height)
-    .map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`)
-    .join(' ');
-}
-
-export function shareTrendCoordinates(
-  trend: readonly ShareTrendPoint[],
-  family: ModelFamily,
-  width: number,
-  height: number
-): Array<{ x: number; y: number }> {
-  const selected = trend.filter((point) => point.family === family);
-  if (selected.length === 0) return [];
-  const dates = [...new Set(trend.map(({ date }) => date))].sort();
-  const maximum = Math.max(1, ...trend.map(({ median }) => median));
-  return selected.map((point) => {
-    const dateIndex = dates.indexOf(point.date);
-    const x = dates.length <= 1 ? width / 2 : (dateIndex / (dates.length - 1)) * width;
-    const y = height - (point.median / maximum) * height;
-    return { x, y };
-  });
+	const base = `${getShareTagline(tone, data)}: ${Math.round(data.median)} effective output tokens/s — ${getShareMoodLine(data)}. #TokenEnvy`;
+	if ((platform === 'bluesky' || platform === 'generic') && productLink) {
+		return `${base} ${productLink}`;
+	}
+	return base;
 }

@@ -36,7 +36,7 @@ function eventFor(url: string, cookie?: string, headers: Record<string, string> 
     request,
     url: new URL(url),
     cookies: {
-      get: (name: string) => (name === 'claude_speedometer_session' ? cookie : undefined),
+      get: (name: string) => (name === 'tokenenvy_session' ? cookie : undefined),
       serialize: (name: string, value: string, options: Record<string, unknown>) => {
         const attributes = [
           `${name}=${value}`,
@@ -66,7 +66,7 @@ describe('production browser handshake', () => {
     });
     expect(bootstrap.status).toBe(303);
     expect(bootstrap.headers.get('location')).toBe('/?view=week');
-    expect(bootstrap.headers.get('set-cookie')).toContain('claude_speedometer_session=browser-session');
+    expect(bootstrap.headers.get('set-cookie')).toContain('tokenenvy_session=browser-session');
     expect(bootstrap.headers.get('set-cookie')).toContain('HttpOnly');
     expect(bootstrap.headers.get('set-cookie')).toContain('SameSite=Strict');
     expect(bootstrap.headers.get('set-cookie')).not.toContain('one-time-bootstrap');

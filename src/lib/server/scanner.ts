@@ -7,7 +7,7 @@ import { parseTranscriptEvent } from '../core/parser';
 import { Database, type FileCheckpoint, type ScannedEvent } from './database';
 
 export interface ScannerOptions {
-  root: string;
+  roots: string[];
   database: Database;
   idleMs?: number;
   chunkSize?: number;
@@ -18,8 +18,31 @@ export interface ScannerOptions {
 type StatusListener = (status: ScanStatus) => void;
 type WatchAction = 'scan' | 'remove';
 
+function isWithin(root: string, candidate: string): boolean {
+  const within = relative(root, candidate);
+  return within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within);
+}
+
+export function normalizeRoots(configured: readonly string[]): string[] {
+  const result: string[] = [];
+  for (const candidate of configured.map((root) => resolve(root))) {
+    if (result.some((root) => isWithin(root, candidate))) continue;
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      if (isWithin(candidate, result[index])) result.splice(index, 1);
+    }
+    result.push(candidate);
+  }
+  return result;
+}
+
+function filesystemErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) return null;
+  const code = String(error.code);
+  return ['EACCES', 'EMFILE', 'ENOENT', 'ENOSPC', 'EPERM', 'EIO'].includes(code) ? code : null;
+}
+
 export class Scanner {
-  readonly root: string;
+  readonly roots: string[];
   readonly database: Database;
   readonly idleMs: number;
   readonly chunkSize: number;
@@ -48,12 +71,14 @@ export class Scanner {
   };
 
   constructor(options: ScannerOptions) {
-    this.root = resolve(options.root);
+    this.roots = normalizeRoots(options.roots);
+    if (this.roots.length === 0) throw new TypeError('At least one monitored root is required.');
     this.database = options.database;
     this.idleMs = options.idleMs ?? 120_000;
     this.chunkSize = options.chunkSize ?? 256 * 1_024;
     this.reconciliationMs = options.reconciliationMs ?? 60_000;
     this.watchDebounceMs = options.watchDebounceMs ?? 150;
+    this.database.syncRoots(this.roots.map((root) => this.database.rootId(root)));
   }
 
   getStatus(): ScanStatus {
@@ -72,13 +97,17 @@ export class Scanner {
     for (const listener of this.#listeners) listener(this.getStatus());
   }
 
-  private accepts(filePath: string): boolean {
+  private rootFor(filePath: string): string | null {
     const absolute = resolve(filePath);
-    const within = relative(this.root, absolute);
-    return absolute.endsWith('.jsonl') && within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within);
+    if (!absolute.endsWith('.jsonl')) return null;
+    return this.roots.find((root) => isWithin(root, absolute)) ?? null;
   }
 
-  private async discover(directory = this.root, result: string[] = []): Promise<string[]> {
+  private accepts(filePath: string): boolean {
+    return this.rootFor(filePath) != null;
+  }
+
+  private async discover(directory: string, result: string[] = []): Promise<string[]> {
     const entries = await opendir(directory);
     for await (const entry of entries) {
       const item = resolve(directory, entry.name);
@@ -103,29 +132,76 @@ export class Scanner {
       lastError: null
     });
     try {
-      const files = (await this.discover()).sort();
-      this.publish({ state: 'scanning', filesDiscovered: files.length });
+      const activeRootIds = new Set(this.roots.map((root) => this.database.rootId(root)));
+      const sourceRecords = this.database.listSources();
+      const successfulRootIds = new Set<string>();
+      const openedRootIds = new Set<string>();
       const present = new Set<string>();
+      const failures: string[] = [];
       let changed = false;
-      for (const file of files) {
-        present.add(this.database.sourceId(file));
-        changed = (await this.scanFileInternal(file, false)) || changed;
+      let discovered = 0;
+      for (const root of this.roots) {
+        const rootId = this.database.rootId(root);
+        let files: string[];
+        try {
+          files = (await this.discover(root)).sort();
+        } catch (error) {
+          const code = filesystemErrorCode(error) ?? 'IO';
+          const hasIndexedSources = sourceRecords.some(
+            (source) => source.rootId === rootId || source.rootId === ''
+          );
+          if (code === 'ENOENT' && !hasIndexedSources) {
+            successfulRootIds.add(rootId);
+            continue;
+          }
+          failures.push(code);
+          continue;
+        }
+        discovered += files.length;
+        this.publish({ state: 'scanning', filesDiscovered: discovered });
+        try {
+          for (const file of files) {
+            present.add(this.database.sourceId(file));
+            changed = (await this.scanFileInternal(file, false, root)) || changed;
+          }
+          successfulRootIds.add(rootId);
+          openedRootIds.add(rootId);
+        } catch (error) {
+          const code = filesystemErrorCode(error);
+          if (!code) throw error;
+          failures.push(code);
+        }
       }
-      const missingSources = this.database.listSourceIds().filter((sourceId) => !present.has(sourceId));
+      const allRootsOpened = openedRootIds.size === this.roots.length;
+      const missingSources = this.database.listSources().flatMap(({ sourceId, rootId }) => {
+        if (!activeRootIds.has(rootId) && rootId !== '') return [sourceId];
+        if (rootId === '') return allRootsOpened && !present.has(sourceId) ? [sourceId] : [];
+        return successfulRootIds.has(rootId) && !present.has(sourceId) ? [sourceId] : [];
+      });
       const retracted = this.database.retractSources(missingSources);
       const databaseChanged = changed || retracted;
+      let analyticsChanged = false;
       if (databaseChanged || rebuildWhenUnchanged) {
         // One rebuild after discovery is dramatically faster than rebuilding after
         // each historical file and makes clean/chunked ingestion converge.
         this.database.rebuildRequests(Date.now(), this.idleMs);
-        this.publish({ state: 'idle', revision: this.#status.revision + 1 });
+        analyticsChanged = true;
       } else {
-        this.publish({ state: 'idle' });
+        analyticsChanged = this.database.archiveStable(Date.now());
       }
+      const state = failures.length > 0 ? 'error' : 'idle';
+      const lastError = failures.length > 0
+        ? `Unable to scan ${failures.length} monitored root${failures.length === 1 ? '' : 's'} (${[...new Set(failures)].join(', ')})`
+        : null;
+      this.publish({
+        state,
+        lastError,
+        ...(analyticsChanged ? { revision: this.#status.revision + 1 } : {})
+      });
       if (databaseChanged) this.scheduleSettledRebuild();
       return this.getStatus();
     } catch (error) {
-      this.publish({ state: 'error', lastError: error instanceof Error ? error.message : String(error) });
+      this.publish({ state: 'error', lastError: filesystemErrorCode(error) ?? 'Scanner database failure' });
       throw error;
     }
   }
@@ -134,12 +210,14 @@ export class Scanner {
     await this.scanFileInternal(filePath, true);
   }
 
-  private async scanFileInternal(filePath: string, rebuild: boolean): Promise<boolean> {
-    if (!this.accepts(filePath)) return false;
+  private async scanFileInternal(filePath: string, rebuild: boolean, knownRoot?: string): Promise<boolean> {
+    const root = knownRoot ?? this.rootFor(filePath);
+    if (!root) return false;
     const metadata = await lstat(filePath);
     if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
     const sourceId = this.database.sourceId(resolve(filePath));
     const previous = this.database.getFileCheckpoint(sourceId);
+    const rootId = this.database.rootId(root);
     const identity = `${metadata.dev}:${metadata.ino}`;
     let replace =
       previous != null &&
@@ -147,6 +225,7 @@ export class Scanner {
         metadata.size < previous.size ||
         (metadata.size === previous.size && metadata.mtimeMs !== previous.mtimeMs));
 
+    if (previous && previous.rootId !== rootId) this.database.assignSourceRoot(sourceId, rootId);
     if (previous && metadata.size === previous.size && metadata.mtimeMs === previous.mtimeMs) return false;
 
     if (!replace && previous && previous.offset > 0) {
@@ -159,6 +238,7 @@ export class Scanner {
     const invalidRows = (replace ? 0 : (previous?.invalidRows ?? 0)) + result.invalidRows;
     const checkpoint: FileCheckpoint = {
       sourceId,
+      rootId,
       identity,
       size: metadata.size,
       offset: result.completeOffset,
@@ -273,7 +353,7 @@ export class Scanner {
   private enqueue(task: () => Promise<void>): Promise<void> {
     const result = this.#queue.then(task);
     this.#queue = result.catch((error: unknown) => {
-      this.publish({ state: 'error', lastError: error instanceof Error ? error.message : String(error) });
+      this.publish({ state: 'error', lastError: filesystemErrorCode(error) ?? 'Scanner task failure' });
     });
     return result;
   }
@@ -338,35 +418,69 @@ export class Scanner {
     }
     const actions = [...this.#watchActions.entries()];
     this.#watchActions.clear();
-    const removedSources = new Set<string>();
+    const removedFiles: string[] = [];
+    const unavailableRoots = new Set<string>();
     let changed = false;
 
     for (const [filePath, action] of actions) {
       if (action === 'remove') {
-        removedSources.add(this.database.sourceId(filePath));
+        removedFiles.push(filePath);
         continue;
       }
       try {
         changed = (await this.scanFileInternal(filePath, false)) || changed;
       } catch (error) {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-          removedSources.add(this.database.sourceId(filePath));
+          removedFiles.push(filePath);
         } else {
           throw error;
         }
       }
     }
 
+    const removedSources = new Set<string>();
+    const rootAvailability = new Map<string, boolean>();
+    for (const filePath of removedFiles) {
+      const root = this.rootFor(filePath);
+      if (!root) continue;
+      let available = rootAvailability.get(root);
+      if (available === undefined) {
+        try {
+          const metadata = await lstat(root);
+          available = metadata.isDirectory() && !metadata.isSymbolicLink();
+        } catch {
+          available = false;
+        }
+        rootAvailability.set(root, available);
+      }
+      if (available) removedSources.add(this.database.sourceId(filePath));
+      else unavailableRoots.add(root);
+    }
+
     changed = this.database.retractSources([...removedSources]) || changed;
-    if (!changed || this.#stopped) return;
+    if (!changed || this.#stopped) {
+      if (unavailableRoots.size > 0 && !this.#stopped) {
+        this.publish({
+          state: 'error',
+          lastError: `Unable to scan ${unavailableRoots.size} monitored root${unavailableRoots.size === 1 ? '' : 's'} (ENOENT)`
+        });
+      }
+      return;
+    }
     this.database.rebuildRequests(Date.now(), this.idleMs);
-    this.publish({ state: 'idle', revision: this.#status.revision + 1, lastError: null });
+    this.publish({
+      state: unavailableRoots.size > 0 ? 'error' : 'idle',
+      revision: this.#status.revision + 1,
+      lastError: unavailableRoots.size > 0
+        ? `Unable to scan ${unavailableRoots.size} monitored root${unavailableRoots.size === 1 ? '' : 's'} (ENOENT)`
+        : null
+    });
     this.scheduleSettledRebuild();
   }
 
   async start(): Promise<void> {
     if (this.#watcher || this.#stopped) return;
-    this.#watcher = chokidar.watch(this.root, {
+    this.#watcher = chokidar.watch(this.roots, {
       ignored: (candidate, stats) => Boolean(stats?.isFile() && !candidate.endsWith('.jsonl')),
       ignoreInitial: true,
       followSymlinks: false,
@@ -375,9 +489,13 @@ export class Scanner {
     this.#watcher.on('add', (file) => this.queueWatchAction(file, 'scan'));
     this.#watcher.on('change', (file) => this.queueWatchAction(file, 'scan'));
     this.#watcher.on('unlink', (file) => this.queueWatchAction(file, 'remove'));
-    this.#watcher.on('error', (error) =>
-      this.publish({ state: 'error', lastError: error instanceof Error ? error.message : String(error) })
-    );
+    this.#watcher.on('error', (error) => {
+      const code = filesystemErrorCode(error) ?? 'IO';
+      // A configured root may not exist yet. Reconciliation distinguishes an
+      // empty never-seen root from a previously indexed unavailable root.
+      if (code === 'ENOENT') return;
+      this.publish({ state: 'error', lastError: `Filesystem watcher failure (${code})` });
+    });
     await new Promise<void>((resolveReady) => {
       this.#resolveWatcherReady = resolveReady;
       this.#watcher?.once('ready', () => {

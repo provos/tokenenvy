@@ -1,6 +1,6 @@
-# Claude Speedometer v1 specification
+# Token Envy v2 specification
 
-Claude Speedometer is a local-only Svelte 5 dashboard for performance metadata
+Token Envy is a local-only Svelte 5 dashboard for performance metadata
 derived from Claude Code JSONL transcripts. It scans the configured projects
 directory read-only, writes only privacy-safe derived records to its own app-data
 directory, and makes no automatic network requests.
@@ -30,13 +30,18 @@ directory, and makes no automatic network requests.
 ## Security and privacy invariants
 
 - Default input is `~/.claude/projects/**/*.jsonl`; the scanner never crawls all
-  of `~/.claude`. An explicit CLI path replaces that root rather than expanding
-  it.
+  of `~/.claude`. One or more explicit CLI roots replace that default rather
+  than expanding it.
+- The derived index and local status-line connection live in `~/.tokenenvy`
+  unless the user explicitly sets `TOKENENVY_DATA_DIR`.
 - The HTTP server binds to loopback. Host and Origin are validated; CORS is not
   enabled; production browser access uses a one-time bootstrap token and strict
   cookie.
 - Persisted identifiers and source paths are HMAC digests. The key is local
   pseudonymization, not encryption.
+- Stable request and refusal summaries move into a compact content-free archive
+  after 24 hours. That archive survives later upstream transcript cleanup and
+  `--rescan`; live transcript-derived rows remain retractable.
 - No prompts, response text, tool inputs or outputs, commands, project names,
   raw paths, refusal categories or explanations, or raw identifiers are persisted or returned.
 - Share cards are built from an allowlisted aggregate object and contain no
@@ -52,6 +57,8 @@ directory, and makes no automatic network requests.
   which affected requests and daily aggregates are recomputed.
 - A request may be shown as provisional after two idle minutes, but any later
   content reopens and recomputes it. Idle time is never proof of completion.
+- Requests and refusal outcomes become durable historical summaries only after
+  24 hours of stability; no prompt or response content is added to the archive.
 - Synthetic, non-positive-token, missing-parent, invalid-time, sub-100 ms, and
   hour-scale intervals are excluded with explicit quality reasons.
 
@@ -64,6 +71,7 @@ directory, and makes no automatic network requests.
 - A canary fixture proves private strings are absent from DB, API, logs, and PNG.
 - The observed 1.5 GB corpus indexes in under 120 seconds with under 500 MB RSS;
   the UI remains available with visible progress.
-- The packed npm tarball installs and starts from an empty directory.
+- The packed npm tarball installs from an empty directory, scans two explicit
+  roots through the installed `tokenenvy` bin, and shuts down cleanly.
 - Keyboard, reduced-motion, 200% zoom, 360 px layout, empty states, and share
   preview are validated in a browser.

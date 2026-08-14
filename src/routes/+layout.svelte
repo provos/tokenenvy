@@ -4,7 +4,7 @@
 </script>
 
 <svelte:head>
-  <title>Claude Speedometer</title>
+  <title>Token Envy</title>
   <meta
     name="description"
     content="A private, local-first performance dashboard for Claude Code session logs."

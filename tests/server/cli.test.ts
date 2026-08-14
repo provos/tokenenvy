@@ -1,19 +1,19 @@
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { extractRateLimits, parseArgs } from '../../bin/claude-speedometer.js';
+import { extractRateLimits, parseArgs, stateDirectory } from '../../bin/tokenenvy.js';
 
 describe('CLI arguments', () => {
   it('runs when invoked through an npm-style bin symlink', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'speedometer-bin-'));
-    const executable = join(directory, 'claude-speedometer');
+    const directory = mkdtempSync(join(tmpdir(), 'tokenenvy-bin-'));
+    const executable = join(directory, 'tokenenvy');
     try {
-      symlinkSync(resolve('bin/claude-speedometer.js'), executable);
+      symlinkSync(resolve('bin/tokenenvy.js'), executable);
       const result = spawnSync(process.execPath, [executable, '--help'], { encoding: 'utf8' });
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('Claude Speedometer');
+      expect(result.stdout).toContain('Token Envy');
       expect(result.stdout).toContain('--no-open');
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -24,6 +24,8 @@ describe('CLI arguments', () => {
     const options = parseArgs([
       '--logs',
       '/tmp/claude-logs',
+      '--logs',
+      '/tmp/other-claude-logs',
       '--port',
       '4321',
       '--timezone',
@@ -33,12 +35,36 @@ describe('CLI arguments', () => {
     ]);
     expect(options).toMatchObject({
       command: 'server',
-      logs: '/tmp/claude-logs',
+      logs: ['/tmp/claude-logs', '/tmp/other-claude-logs'],
       port: 4321,
       timezone: 'America/Los_Angeles',
       open: false,
       rescan: true
     });
+  });
+
+  it('uses the Claude projects root only when no explicit roots are provided', () => {
+    expect(parseArgs([]).logs).toEqual([join(homedir(), '.claude', 'projects')]);
+  });
+
+  it('deduplicates roots and removes nested overlaps', () => {
+    expect(
+      parseArgs([
+        '--logs',
+        '/tmp/claude-logs/project',
+        '--logs',
+        '/tmp/claude-logs',
+        '--logs',
+        '/tmp/claude-logs',
+        '--logs',
+        '/tmp/other-logs'
+      ]).logs
+    ).toEqual(['/tmp/claude-logs', '/tmp/other-logs']);
+  });
+
+  it('defaults state to ~/.tokenenvy and honors only the new override', () => {
+    expect(stateDirectory({})).toBe(join(homedir(), '.tokenenvy'));
+    expect(stateDirectory({ TOKENENVY_DATA_DIR: '/tmp/tokenenvy-state' })).toBe('/tmp/tokenenvy-state');
   });
 
   it.each([['--port', '0'], ['--port', '65536'], ['--timezone', 'Mars/Olympus'], ['--unknown']])(

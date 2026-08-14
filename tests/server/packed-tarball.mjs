@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const projectRoot = resolve(import.meta.dirname, '..', '..');
-const work = mkdtempSync(join(tmpdir(), 'claude-speedometer-pack-'));
+const work = mkdtempSync(join(tmpdir(), 'tokenenvy-pack-'));
 const packageDirectory = join(work, 'consumer');
-const logsDirectory = join(work, 'logs');
+const firstLogsDirectory = join(work, 'logs-a');
+const secondLogsDirectory = join(work, 'logs-b');
 const stateDirectory = join(work, 'state');
 
 function run(command, args, options = {}) {
@@ -39,13 +40,34 @@ async function waitForHealth(url, child) {
     if (child.exitCode != null) throw new Error(`Installed server exited early with status ${child.exitCode}`);
     try {
       const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(500) });
-      if (response.ok && (await response.json()).service === 'claude-speedometer') return;
+      if (response.ok && (await response.json()).service === 'tokenenvy') return;
     } catch {
       // Startup commonly needs a few polling intervals.
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error('Installed server did not become healthy within 15 seconds');
+}
+
+async function waitForScanner(url, cookie, child) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) throw new Error(`Installed server exited early with status ${child.exitCode}`);
+    try {
+      const response = await fetch(`${url}/api/v1/overview`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(500)
+      });
+      if (response.ok) {
+        const overview = await response.json();
+        if (overview.scan?.state === 'idle' && overview.scan.filesDiscovered === 2) return overview;
+      }
+    } catch {
+      // The scanner initializes in the background.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error('Installed server did not scan both configured transcript roots within 15 seconds');
 }
 
 async function waitForExit(child, timeoutMs) {
@@ -75,8 +97,11 @@ async function forceStop(child) {
 }
 
 mkdirSync(packageDirectory);
-mkdirSync(logsDirectory);
+mkdirSync(firstLogsDirectory);
+mkdirSync(secondLogsDirectory);
 mkdirSync(stateDirectory);
+writeFileSync(join(firstLogsDirectory, 'first.jsonl'), '{}\n');
+writeFileSync(join(secondLogsDirectory, 'second.jsonl'), '{}\n');
 
 let server;
 try {
@@ -84,7 +109,7 @@ try {
   const packResult = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', work]));
   const packed = packResult[0];
   const names = packed.files.map(({ path }) => path);
-  for (const required of ['package.json', 'README.md', 'LICENSE', 'bin/claude-speedometer.js', 'build/index.js']) {
+  for (const required of ['package.json', 'README.md', 'LICENSE', 'bin/tokenenvy.js', 'build/index.js']) {
     if (!names.includes(required)) throw new Error(`Packed package is missing ${required}`);
   }
   for (const privateOrLegacy of ['REPORT.md', 'analyze-claude-logs.mjs', 'throughput-histogram.csv']) {
@@ -95,7 +120,7 @@ try {
   run('npm', ['init', '--yes'], { cwd: packageDirectory });
   run('npm', ['install', tarball, '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: packageDirectory });
 
-  const executable = join(packageDirectory, 'node_modules', '.bin', 'claude-speedometer');
+  const executable = join(packageDirectory, 'node_modules', '.bin', 'tokenenvy');
   const help = run(executable, ['--help'], { cwd: packageDirectory });
   if (!help.includes('--logs PATH') || !help.includes('statusline')) throw new Error('Installed CLI help is incomplete');
 
@@ -103,10 +128,20 @@ try {
   const url = `http://127.0.0.1:${port}`;
   server = spawn(
     executable,
-    ['--logs', logsDirectory, '--port', String(port), '--timezone', 'UTC', '--no-open'],
+    [
+      '--logs',
+      firstLogsDirectory,
+      '--logs',
+      secondLogsDirectory,
+      '--port',
+      String(port),
+      '--timezone',
+      'UTC',
+      '--no-open'
+    ],
     {
       cwd: packageDirectory,
-      env: { ...process.env, CLAUDE_SPEEDOMETER_DATA_DIR: stateDirectory },
+      env: { ...process.env, TOKENENVY_DATA_DIR: stateDirectory },
       stdio: ['ignore', 'pipe', 'pipe']
     }
   );
@@ -123,13 +158,10 @@ try {
     throw new Error('Installed server did not complete its production bootstrap handshake');
   }
   const dashboard = await fetch(url, { headers: { cookie } });
-  if (!dashboard.ok || !(await dashboard.text()).includes('Claude Speedometer')) {
+  if (!dashboard.ok || !(await dashboard.text()).includes('Token Envy')) {
     throw new Error('Installed server did not accept its production session cookie');
   }
-  const overview = await fetch(`${url}/api/v1/overview`, { headers: { cookie } });
-  if (!overview.ok || typeof (await overview.json()).scan !== 'object') {
-    throw new Error('Installed server did not start its scanner-backed API');
-  }
+  await waitForScanner(url, cookie, server);
 
   const connection = JSON.parse(readFileSync(join(stateDirectory, 'server.json'), 'utf8'));
   if (connection.url !== url || typeof connection.secret !== 'string') {
@@ -147,7 +179,7 @@ try {
   }
 
   process.stdout.write(
-    `Packed ${packed.filename}, installed its bin, started its scanner, and shut it down cleanly.\n`
+    `Packed ${packed.filename}, installed its bin, scanned two roots, and shut it down cleanly.\n`
   );
 } finally {
   if (server) await forceStop(server);

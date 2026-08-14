@@ -1,309 +1,437 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
-  import type { DailyPoint, ModelSummary, SpeedIndex } from '$lib/types';
-  import { FAMILY_COLORS } from './chart';
+  import { onMount } from 'svelte';
+  import type { DayDetailResponse } from '$lib/types';
+  import { dayLabel } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
+  import HistogramBackdrop from './HistogramBackdrop.svelte';
   import {
     buildShareCardData,
+    getShareCaption,
+    getShareMoodLine,
     getShareTagline,
+    normalizeHistogram,
     safeShareProductLink,
-    shareTrendCoordinates,
-    shareTrendPath,
-    type ShareTone
+    type ShareCardData,
+    type SharePlatform,
+    type ShareTone,
   } from './share';
 
   interface Props {
     open: boolean;
-    date: string;
-    median: number;
-    count: number;
-    speedIndex: SpeedIndex;
-    models: ModelSummary[];
-    points: DailyPoint[];
+    detail: DayDetailResponse;
+    isToday: boolean;
+    refreshing: boolean;
     onclose: () => void;
   }
 
-  let { open, date, median, count, speedIndex, models, points, onclose }: Props = $props();
+  let { open, detail, isToday, refreshing, onclose }: Props = $props();
   let tone = $state<ShareTone>('friendly');
   let status = $state<string | null>(null);
-  let panel = $state<HTMLElement>();
-  const productLink = safeShareProductLink(env.PUBLIC_CLAUDE_SPEEDOMETER_URL);
-  const productAttribution = productLink?.label ?? 'Claude Speedometer';
-  let card = $derived(buildShareCardData({ date, median, count, speedIndex, models, points }));
-  let tagline = $derived(getShareTagline(tone, card));
+  let modal = $state<HTMLElement>();
+  let previousOpen = false;
+  let preparedFile = $state<File | null>(null);
+  let preparing = $state(false);
+  let nativeFileShareAvailable = $state(false);
+  let clipboardImageAvailable = $state(false);
+  let renderVersion = 0;
 
-  $effect(() => {
-    if (open && panel) {
-      const dialog = panel;
-      const previous = document.activeElement as HTMLElement | null;
-      tone = 'friendly';
-      status = null;
-      focusDialog(dialog);
-      document.body.classList.add('overlay-open');
-      return () => {
-        document.body.classList.remove('overlay-open');
-        previous?.focus?.();
-      };
-    }
+  let productLink = $derived(safeShareProductLink(env.PUBLIC_TOKENENVY_URL));
+  let productAttribution = $derived(productLink?.label ?? 'Token Envy');
+  let card = $derived(
+    buildShareCardData({
+      date: detail.date,
+      median: detail.summary.median,
+      count: detail.summary.count,
+      sessions: detail.summary.sessions,
+      outputTokens: detail.summary.outputTokens,
+      isToday,
+      speedIndex: detail.speedIndex,
+      models: detail.models,
+      histogram: detail.histogram,
+    }),
+  );
+  let tagline = $derived(getShareTagline(tone, card));
+  let moodLine = $derived(getShareMoodLine(card));
+  let previewLabel = $derived(
+    `Token Envy share card for ${dayLabel(card.date)}. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}`,
+  );
+  let canExport = $derived(!refreshing && preparedFile !== null);
+
+  onMount(() => {
+    clipboardImageAvailable =
+      typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function';
   });
 
-  function selectTone(next: ShareTone) {
+  $effect(() => {
+    if (open && !previousOpen) {
+      tone = 'friendly';
+      status = null;
+    }
+    previousOpen = open;
+  });
+
+  $effect(() => {
+    if (!open || !modal) return;
+    const dialog = modal;
+    const previous = document.activeElement as HTMLElement | null;
+    focusDialog(dialog);
+    document.body.classList.add('overlay-open');
+    return () => {
+      document.body.classList.remove('overlay-open');
+      previous?.focus?.();
+    };
+  });
+
+  $effect(() => {
+    const currentCard = card;
+    const currentTagline = tagline;
+    const currentMood = moodLine;
+    const currentAttribution = productAttribution;
+    if (!open) {
+      renderVersion += 1;
+      preparedFile = null;
+      nativeFileShareAvailable = false;
+      preparing = false;
+      return;
+    }
+    void prepareCard(currentCard, currentTagline, currentMood, currentAttribution);
+  });
+
+  function trapFocus(event: KeyboardEvent) {
+    if (!open || !modal) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onclose();
+      return;
+    }
+    trapDialogTab(event, modal);
+  }
+
+  function setTone(next: ShareTone) {
     tone = next;
+    status = null;
   }
 
-  function onKeydown(event: KeyboardEvent) {
-    if (!open) return;
-    if (event.key === 'Escape') onclose();
-    if (panel) trapDialogTab(event, panel);
-  }
-
-  function roundedRect(
-    context: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    radius: number
+  async function prepareCard(
+    currentCard: ShareCardData,
+    currentTagline: string,
+    currentMood: string,
+    currentAttribution: string,
   ) {
-    context.beginPath();
-    context.roundRect(x, y, width, height, radius);
+    const version = ++renderVersion;
+    preparedFile = null;
+    nativeFileShareAvailable = false;
+    preparing = true;
+    try {
+      const blob = await renderCard(currentCard, currentTagline, currentMood, currentAttribution);
+      if (version !== renderVersion) return;
+      const file = new File([blob], `token-envy-${currentCard.date}.png`, { type: 'image/png' });
+      preparedFile = file;
+      nativeFileShareAvailable =
+        typeof navigator.share === 'function' &&
+        typeof navigator.canShare === 'function' &&
+        navigator.canShare({ files: [file] });
+    } catch {
+      if (version === renderVersion) status = 'The image could not be prepared. Try again.';
+    } finally {
+      if (version === renderVersion) preparing = false;
+    }
   }
 
-  async function createCard(): Promise<Blob> {
+  function renderCard(
+    currentCard: ShareCardData,
+    currentTagline: string,
+    currentMood: string,
+    currentAttribution: string,
+  ): Promise<Blob> {
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
     canvas.height = 630;
     const context = canvas.getContext('2d');
-    if (!context) throw new Error('Canvas is not available');
+    if (!context) throw new Error('Canvas is unavailable');
 
-    const gradient = context.createLinearGradient(0, 0, 1200, 630);
-    gradient.addColorStop(0, '#111315');
-    gradient.addColorStop(0.64, '#181716');
-    gradient.addColorStop(1, '#231a17');
-    context.fillStyle = gradient;
+    const background = context.createLinearGradient(0, 0, 1200, 630);
+    background.addColorStop(0, '#07131c');
+    background.addColorStop(0.58, '#102a2e');
+    background.addColorStop(1, '#173f3a');
+    context.fillStyle = background;
     context.fillRect(0, 0, 1200, 630);
 
-    context.fillStyle = 'rgba(255,115,89,.13)';
-    context.beginPath();
-    context.arc(1085, 20, 330, 0, Math.PI * 2);
-    context.fill();
-    context.fillStyle = 'rgba(95,214,189,.07)';
-    context.beginPath();
-    context.arc(90, 660, 300, 0, Math.PI * 2);
-    context.fill();
+    const glow = context.createRadialGradient(600, 335, 20, 600, 335, 440);
+    glow.addColorStop(0, 'rgba(199, 255, 98, 0.18)');
+    glow.addColorStop(1, 'rgba(199, 255, 98, 0)');
+    context.fillStyle = glow;
+    context.fillRect(0, 0, 1200, 630);
 
-    context.fillStyle = '#ff7359';
-    roundedRect(context, 70, 62, 44, 44, 12);
-    context.fill();
-    context.fillStyle = '#151515';
-    context.font = '700 27px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText('C', 82, 94);
-    context.fillStyle = '#f5f1e9';
-    context.font = '650 25px system-ui, -apple-system, sans-serif';
-    context.fillText('CLAUDE SPEEDOMETER', 132, 92);
-    context.fillStyle = '#9f9b94';
-    context.font = '500 20px system-ui, -apple-system, sans-serif';
+    context.fillStyle = '#c7ff62';
+    context.font = '700 25px ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.fillText('TOKEN ENVY', 70, 68);
+
     context.textAlign = 'right';
-    context.fillText(card.date, 1130, 91);
-    context.textAlign = 'left';
+    context.fillStyle = 'rgba(238, 246, 239, 0.82)';
+    context.font = '500 24px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText(formatShareDate(currentCard.date), 1130, 68);
 
-    context.fillStyle = '#f5f1e9';
-    context.font = '650 53px system-ui, -apple-system, sans-serif';
-    context.fillText(tagline, 70, 196);
+    context.textAlign = 'center';
+    context.fillStyle = '#eef6ef';
+    context.font = '650 42px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText(currentTagline, 600, 140);
 
-    context.fillStyle = '#ff7359';
-    context.font = '700 136px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText(card.median.toFixed(1), 62, 370);
-    context.fillStyle = '#b6b0a7';
-    context.font = '600 28px system-ui, -apple-system, sans-serif';
-    context.fillText('effective output tokens / second', 72, 414);
-    context.fillStyle = card.indexEligible ? '#5fd6bd' : '#9f9b94';
-    context.font = '600 20px system-ui, -apple-system, sans-serif';
-    context.fillText(card.indexLabel, 72, 457);
-
-    const cardX = 750;
-    roundedRect(context, cardX, 210, 380, 250, 24);
-    context.fillStyle = 'rgba(255,255,255,.055)';
-    context.fill();
-    context.fillStyle = '#9f9b94';
-    context.font = '600 17px system-ui, -apple-system, sans-serif';
-    context.fillText('LEADING OUTPUT MIX', cardX + 28, 245);
-    card.models.forEach((model, index) => {
-      const y = 278 + index * 24;
-      context.fillStyle = FAMILY_COLORS[model.family];
-      context.beginPath();
-      context.arc(cardX + 34, y - 6, 6, 0, Math.PI * 2);
-      context.fill();
-      context.fillStyle = '#f5f1e9';
-      context.font = '600 20px system-ui, -apple-system, sans-serif';
-      context.fillText(model.family, cardX + 53, y);
-      context.textAlign = 'right';
-      context.fillStyle = '#c2bdb5';
-      context.fillText(`${Math.round(model.share * 100)}%`, cardX + 348, y);
-      context.textAlign = 'left';
-    });
-
-    context.fillStyle = '#9f9b94';
-    context.font = '600 14px system-ui, -apple-system, sans-serif';
-    context.fillText('LAST 14 DAYS', cardX + 28, 383);
-    context.save();
-    context.translate(cardX + 28, 392);
-    for (const model of card.models) {
-      const coordinates = shareTrendCoordinates(card.trend, model.family, 324, 44);
-      if (coordinates.length === 0) continue;
-      context.beginPath();
-      coordinates.forEach(({ x, y }, index) => {
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.strokeStyle = FAMILY_COLORS[model.family];
-      context.lineWidth = 2;
-      context.stroke();
-      if (coordinates.length === 1) {
-        context.beginPath();
-        context.arc(coordinates[0].x, coordinates[0].y, 2.5, 0, Math.PI * 2);
-        context.fillStyle = FAMILY_COLORS[model.family];
-        context.fill();
-      }
+    const bars = normalizeHistogram(currentCard.histogram, currentCard.median);
+    const chartX = 88;
+    const chartY = 192;
+    const chartWidth = 1024;
+    const chartHeight = 220;
+    const gap = bars.length > 24 ? 3 : 6;
+    const barWidth = bars.length > 0 ? (chartWidth - gap * (bars.length - 1)) / bars.length : 0;
+    for (const [index, bar] of bars.entries()) {
+      const height = Math.max(8, chartHeight * bar.height);
+      context.fillStyle = bar.containsMedian
+        ? 'rgba(199, 255, 98, 0.72)'
+        : 'rgba(119, 211, 180, 0.28)';
+      context.fillRect(
+        chartX + index * (barWidth + gap),
+        chartY + chartHeight - height,
+        barWidth,
+        height,
+      );
     }
-    context.restore();
 
-    context.strokeStyle = 'rgba(255,255,255,.12)';
+    context.lineWidth = 14;
+    context.strokeStyle = 'rgba(7, 19, 28, 0.8)';
+    context.fillStyle = '#ffffff';
+    context.font = '750 142px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.strokeText(`${Math.round(currentCard.median)}`, 600, 350);
+    context.fillText(`${Math.round(currentCard.median)}`, 600, 350);
+    context.fillStyle = 'rgba(238, 246, 239, 0.88)';
+    context.font = '650 27px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText('EFFECTIVE OUTPUT TOKENS / SECOND', 600, 392);
+
+    context.fillStyle = '#c7ff62';
+    context.font = '650 26px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText(currentMood, 600, 456);
+
+    context.fillStyle = 'rgba(238, 246, 239, 0.68)';
+    context.font = '500 21px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText(
+      `${currentCard.count.toLocaleString('en-US')} measured requests · ${currentCard.sessions.toLocaleString('en-US')} sessions`,
+      600,
+      494,
+    );
+
+    context.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    context.lineWidth = 1;
     context.beginPath();
-    context.moveTo(70, 504);
-    context.lineTo(1130, 504);
+    context.moveTo(70, 536);
+    context.lineTo(1130, 536);
     context.stroke();
-    context.fillStyle = '#b6b0a7';
-    context.font = '500 20px system-ui, -apple-system, sans-serif';
-    context.fillText(`${card.count.toLocaleString()} measured requests · median, locally computed`, 70, 553);
-    context.textAlign = 'right';
-    context.fillStyle = '#f5f1e9';
-    context.font = '600 20px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText(productAttribution, 1130, 553);
 
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not render PNG'))), 'image/png');
+    context.textAlign = 'left';
+    context.fillStyle = 'rgba(238, 246, 239, 0.78)';
+    context.font = '500 20px Inter, ui-sans-serif, system-ui, sans-serif';
+    const leadingModels = currentCard.models
+      .slice(0, 3)
+      .map((model) => model.family)
+      .join(' · ');
+    context.fillText(leadingModels || 'All measured model families', 70, 582);
+
+    context.textAlign = 'right';
+    context.fillStyle = '#c7ff62';
+    context.font = '650 20px Inter, ui-sans-serif, system-ui, sans-serif';
+    context.fillText(currentAttribution, 1130, 582);
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('PNG export failed'))),
+        'image/png',
+      );
     });
   }
 
   async function copyImage() {
+    if (!preparedFile || !clipboardImageAvailable) return;
+    status = null;
     try {
-      const blob = await createCard();
-      if (!navigator.clipboard || typeof ClipboardItem === 'undefined') throw new Error('Image copy is not supported here');
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      status = 'Image copied — ready to paste.';
-    } catch (error) {
-      status = error instanceof Error ? error.message : 'Could not copy the image.';
+      const write = navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': preparedFile }),
+      ]);
+      await write;
+      status = 'Image copied. Paste or attach it in your composer.';
+    } catch {
+      status = 'Image copy was blocked. Download the PNG instead.';
     }
   }
 
-  async function downloadImage() {
-    try {
-      const blob = await createCard();
-      const link = document.createElement('a');
-      link.download = `claude-speedometer-${card.date}.png`;
-      link.href = URL.createObjectURL(blob);
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-      status = 'Downloaded 1200 × 630 PNG.';
-    } catch (error) {
-      status = error instanceof Error ? error.message : 'Could not download the image.';
-    }
+  function downloadImage() {
+    if (!preparedFile) return;
+    const url = URL.createObjectURL(preparedFile);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = preparedFile.name;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    status = 'PNG downloaded. Attach it in your composer.';
   }
 
   async function nativeShare() {
+    if (!preparedFile || !nativeFileShareAvailable) return;
+    status = null;
     try {
-      const blob = await createCard();
-      const file = new File([blob], `claude-speedometer-${card.date}.png`, { type: 'image/png' });
-      if (!navigator.share || !navigator.canShare?.({ files: [file] })) throw new Error('Native image sharing is not available here');
-      await navigator.share({ title: tagline, text: 'My Claude Code performance today', files: [file] });
-      status = 'Shared.';
+      const result = navigator.share({
+        files: [preparedFile],
+        title: 'My Token Envy daily speed card',
+        text: getShareCaption(tone, card, 'generic', productLink?.href ?? null),
+      });
+      await result;
+      status = 'Share sheet opened with the image attached.';
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      status = error instanceof Error ? error.message : 'Could not open sharing.';
+      if ((error as Error).name !== 'AbortError') {
+        status = 'Sharing was blocked. Download the PNG instead.';
+      }
     }
   }
 
-  function openComposer(service: 'x' | 'bluesky') {
-    const text = `${tagline} — ${card.median.toFixed(1)} effective output tokens/s. Made with Claude Speedometer.`;
-    const url = service === 'x'
-      ? `https://x.com/intent/post?text=${encodeURIComponent(text)}${productLink ? `&url=${encodeURIComponent(productLink.href)}` : ''}`
-      : `https://bsky.app/intent/compose?text=${encodeURIComponent(productLink ? `${text} ${productLink.href}` : text)}`;
+  function openComposer(platform: 'x' | 'bluesky' | 'linkedin') {
+    let url: string;
+    if (platform === 'x') {
+      const params = new URLSearchParams({ text: getShareCaption(tone, card, 'x', null) });
+      if (productLink) params.set('url', productLink.href);
+      url = `https://x.com/intent/tweet?${params.toString()}`;
+    } else if (platform === 'bluesky') {
+      const text = getShareCaption(tone, card, 'bluesky', productLink?.href ?? null);
+      url = `https://bsky.app/intent/compose?text=${encodeURIComponent(text)}`;
+    } else {
+      url = 'https://www.linkedin.com/feed/';
+    }
     window.open(url, '_blank', 'noopener,noreferrer');
-    status = 'Composer opened. Attach the copied or downloaded image.';
+    status =
+      platform === 'linkedin'
+        ? 'LinkedIn opened. Attach your downloaded PNG and paste the copied caption.'
+        : `${platform === 'x' ? 'X' : 'Bluesky'} opened with the caption. Attach your copied or downloaded PNG.`;
+  }
+
+  async function copyCaption(platform: SharePlatform = 'linkedin') {
+    status = null;
+    try {
+      const write = navigator.clipboard.writeText(
+        getShareCaption(
+          tone,
+          card,
+          platform,
+          platform === 'bluesky' ? (productLink?.href ?? null) : null,
+        ),
+      );
+      await write;
+      status = 'Caption copied.';
+    } catch {
+      status = 'Caption copy was blocked. Try again after granting clipboard access.';
+    }
+  }
+
+  function formatShareDate(value: string) {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(new Date(`${value}T12:00:00Z`));
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={trapFocus} />
 
 {#if open}
-  <button class="scrim share-scrim" aria-label="Close share dialog" onclick={onclose}></button>
-  <div class="share-modal" bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="share-title" tabindex="-1">
-    <header class="drawer-header">
-      <div>
-        <p class="eyebrow">Privacy-safe by design</p>
-        <h2 id="share-title">Share your speed</h2>
-      </div>
-      <button class="icon-button" data-autofocus aria-label="Close share dialog" onclick={onclose}>×</button>
-    </header>
+  <button class="scrim share-scrim" type="button" aria-label="Close share card" onclick={onclose}></button>
+  <div
+    class="share-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="share-title"
+    tabindex="-1"
+    bind:this={modal}
+  >
+      <header class="drawer-header">
+        <div>
+          <p class="eyebrow">Share a daily card</p>
+          <h2 id="share-title">Make this day a little competitive</h2>
+          <p>Only aggregate speed statistics shown in the preview leave this browser.</p>
+        </div>
+        <button class="icon-button" data-autofocus type="button" onclick={onclose} aria-label="Close share card">×</button>
+      </header>
 
     <div class="share-body">
-      <div class="tone-picker" aria-label="Share card tone">
-        <button class:active={tone === 'friendly'} aria-pressed={tone === 'friendly'} onclick={() => selectTone('friendly')}>
-          Friendly
-        </button>
-        <button class:active={tone === 'spicy'} aria-pressed={tone === 'spicy'} onclick={() => selectTone('spicy')}>
-          Spicy
-        </button>
+      <div class="tone-control" role="group" aria-label="Card tone">
+        <button
+          type="button"
+          class:active={tone === 'friendly'}
+          aria-pressed={tone === 'friendly'}
+          onclick={() => setTone('friendly')}
+        >Friendly</button>
+        <button
+          type="button"
+          class:active={tone === 'spicy'}
+          aria-pressed={tone === 'spicy'}
+          onclick={() => setTone('spicy')}
+        >Spicy</button>
       </div>
 
-      <div class="share-preview" class:spicy={tone === 'spicy'} aria-label="Share image preview">
-        <div class="share-preview-top">
-          <span><b>C</b> Claude Speedometer</span>
-          <span>{card.date}</span>
+      <div class="share-preview" role="img" aria-label={previewLabel} aria-busy={refreshing}>
+        <div class="share-preview-header">
+          <strong>Token Envy</strong>
+          <span>{formatShareDate(card.date)}</span>
         </div>
-        <h3>{tagline}</h3>
-        <div class="share-number">{card.median.toFixed(1)}</div>
-        <p>effective output tokens / second</p>
-        <strong class:eligible={card.indexEligible} class="share-index">{card.indexLabel}</strong>
-        {#if card.trend.length}
-          <svg class="share-preview-trend" viewBox="0 0 320 54" role="img" aria-label="Fourteen-day model-family speed trend">
-            {#each card.models as model}
-              <path d={shareTrendPath(card.trend, model.family, 320, 54)} stroke={FAMILY_COLORS[model.family]} />
-            {/each}
-          </svg>
+        <div class="share-preview-center">
+          <HistogramBackdrop bins={card.histogram} median={card.median} />
+          <p>{tagline}</p>
+          <strong>{Math.round(card.median)}</strong>
+          <span>effective output tokens / second</span>
+          <em>{moodLine}</em>
+        </div>
+        <div class="share-preview-footer">
+          <span>{card.count.toLocaleString('en-US')} measured requests · {card.sessions.toLocaleString('en-US')} sessions</span>
+          <strong>{productAttribution}</strong>
+        </div>
+      </div>
+
+      <div class="share-actions" aria-label="Prepare the image">
+        {#if nativeFileShareAvailable}
+          <button class="primary-button" type="button" onclick={nativeShare} disabled={!canExport}>Share image…</button>
         {/if}
-        <div class="share-preview-models">
-          {#each card.models as model}
-            <span><i style={`--model-color:${FAMILY_COLORS[model.family]}`}></i>{model.family} {Math.round(model.share * 100)}% output</span>
-          {/each}
+        {#if clipboardImageAvailable}
+          <button class="secondary-button" type="button" onclick={copyImage} disabled={!canExport}>
+            Copy image
+          </button>
+        {/if}
+        <button class="secondary-button" type="button" onclick={downloadImage} disabled={!canExport}>
+          {preparing ? 'Preparing PNG…' : 'Download PNG'}
+        </button>
+      </div>
+
+      <section class="composer-guide" aria-labelledby="composer-title">
+        <div>
+          <p class="eyebrow">Post it</p>
+          <h3 id="composer-title">Prepare the image, then open a composer</h3>
+          <p>X and Bluesky can prefill text, but browsers cannot attach this image for them.</p>
         </div>
-        <footer>
-          <span>{card.count.toLocaleString()} measured requests</span>
-          {#if productLink}
-            <a href={productLink.href} target="_blank" rel="noreferrer">{productLink.label}</a>
-          {:else}
-            <strong>Claude Speedometer</strong>
-          {/if}
-        </footer>
-      </div>
+        <div class="composer-buttons">
+          <button class="secondary-button" type="button" onclick={() => openComposer('x')} disabled={refreshing}>Open X</button>
+          <button class="secondary-button" type="button" onclick={() => openComposer('bluesky')} disabled={refreshing}>Open Bluesky</button>
+        </div>
+        <div class="linkedin-guide">
+          <strong>LinkedIn</strong>
+          <button class="text-button" type="button" onclick={downloadImage} disabled={!canExport}>1. Download PNG</button>
+          <button class="text-button" type="button" onclick={() => copyCaption('linkedin')} disabled={refreshing}>2. Copy caption</button>
+          <button class="text-button" type="button" onclick={() => openComposer('linkedin')} disabled={refreshing}>3. Open LinkedIn</button>
+        </div>
+      </section>
 
-      {#if !card.indexEligible}
-        <p class="share-gate-note">The playful verdict unlocks after enough requests and baseline days. Your stats are still ready to share.</p>
-      {/if}
-
-      <div class="share-actions">
-        <button class="primary-button" onclick={copyImage}>Copy image</button>
-        <button class="secondary-button" onclick={downloadImage}>Download PNG</button>
-        <button class="secondary-button" onclick={nativeShare}>Share…</button>
-      </div>
-      <div class="composer-actions">
-        <span>Open a composer</span>
-        <button onclick={() => openComposer('x')}>X</button>
-        <button onclick={() => openComposer('bluesky')}>Bluesky</button>
-      </div>
-      <p class="privacy-copy">Only the aggregate numbers visible above enter the image. Prompts, projects, and session identifiers never do.</p>
-      <p class="share-status" aria-live="polite">{status ?? ''}</p>
+      <p class="privacy-note">
+        No prompts, responses, project names, file paths, or session identifiers are included.
+      </p>
+      <p class="share-status" aria-live="polite">
+        {refreshing ? 'Refreshing this day before sharing…' : (status ?? (preparing ? 'Preparing the daily PNG…' : ''))}
+      </p>
     </div>
   </div>
 {/if}

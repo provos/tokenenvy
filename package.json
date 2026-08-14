@@ -1,11 +1,11 @@
 {
-  "name": "claude-speedometer",
+  "name": "tokenenvy",
   "version": "0.1.0",
-  "description": "A private, local-first performance dashboard for Claude Code session logs.",
+  "description": "Token Envy is a private, local-first performance dashboard for Claude Code session logs.",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "claude-speedometer": "bin/claude-speedometer.js"
+    "tokenenvy": "bin/tokenenvy.js"
   },
   "files": [
     "bin",

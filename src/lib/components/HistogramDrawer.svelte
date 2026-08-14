@@ -43,7 +43,7 @@
 
 {#if open}
   <button class="scrim" aria-label="Close day details" onclick={onclose}></button>
-  <div class="drawer" bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
+  <div class="drawer" id="daily-detail" bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
     <header class="drawer-header">
       <div>
         <p class="eyebrow">Daily distribution</p>

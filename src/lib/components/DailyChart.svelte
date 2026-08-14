@@ -73,7 +73,7 @@
     <title id="trend-title">Daily effective output speed by model family</title>
     <desc id="trend-desc">
       Median effective output tokens per second. Shaded regions show the middle 50 percent of requests.
-      Select any day to inspect its distribution. Use Left and Right Arrow to move between days.
+      Select any day to update the daily summary. Use Left and Right Arrow to move between days.
     </desc>
     <g transform={`translate(${pad.left} ${pad.top})`}>
       {#each gridValues as value}
@@ -148,7 +148,7 @@
           tabindex={keyboardDate === date ? 0 : -1}
           role="button"
           aria-pressed={selectedDate === date}
-          aria-label={`Open distribution for ${dayLabel(date, timezone)}`}
+          aria-label={`Select ${dayLabel(date, timezone)} for the daily summary`}
           onclick={() => {
             keyboardDate = date;
             onselect(date);
@@ -176,7 +176,7 @@
       <tbody>
         {#each [...filtered].sort((a, b) => b.date.localeCompare(a.date) || a.family.localeCompare(b.family)) as point}
           <tr>
-            <th scope="row"><button class="table-date" onclick={() => onselect(point.date)}>{dayLabel(point.date, timezone)}</button></th>
+            <th scope="row"><button class="table-date" aria-pressed={selectedDate === point.date} onclick={() => onselect(point.date)}>{dayLabel(point.date, timezone)}</button></th>
             <td><span class="model-dot" style={`--model-color:${FAMILY_COLORS[point.family]}`}></span>{point.family}</td>
             <td>{point.median.toFixed(1)}</td>
             <td>{point.q1.toFixed(1)}–{point.q3.toFixed(1)}</td>

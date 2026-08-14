@@ -18,7 +18,7 @@ async function fixture(events: unknown[]) {
   dirs.push(directory);
   await writeFile(join(directory, 'events.jsonl'), events.map(row).join(''));
   const database = new Database({ path: ':memory:', hmacKey: 'analytics-key' });
-  const scanner = new Scanner({ root: directory, database, chunkSize: 11 });
+  const scanner = new Scanner({ roots: [directory], database, chunkSize: 11 });
   await scanner.scanAll();
   return { database, analytics: new Analytics(database) };
 }
@@ -247,6 +247,36 @@ describe('analytics', () => {
     const index = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).speedIndex;
     expect(index.eligible).toBe(true);
     expect(index.value).toBeCloseTo(100, 8);
+    database.close();
+  });
+
+  it('compares a selected historical day with its own preceding 28-day baseline', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'historical-index-key' });
+    for (let index = 0; index < 100; index += 1) {
+      insertRequest(database, {
+        id: `historical-baseline-${index}`,
+        sessionId: `historical-baseline-session-${index % 8}`,
+        date: `2026-07-${String(1 + (index % 10)).padStart(2, '0')}`,
+        outputTokens: 32,
+        family: 'sonnet',
+        stratum: 0,
+        tokensPerSecond: 10
+      });
+    }
+    for (let index = 0; index < 20; index += 1) {
+      insertRequest(database, {
+        id: `historical-current-${index}`,
+        sessionId: `historical-current-session-${index % 5}`,
+        date: '2026-07-15',
+        outputTokens: 32,
+        family: 'sonnet',
+        stratum: 0,
+        tokensPerSecond: 20
+      });
+    }
+
+    const detail = new Analytics(database).day('2026-07-15', 'UTC');
+    expect(detail?.speedIndex).toMatchObject({ eligible: true, value: 200 });
     database.close();
   });
 });

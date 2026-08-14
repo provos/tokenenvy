@@ -348,6 +348,10 @@ export class Analytics {
     const selected = selectedAll.filter(
       (request) => request.qualityReason == null && request.tokensPerSecond != null && !request.provisional
     );
+    const baselineStart = addCalendarDays(date, -28);
+    const baseline = this.dated(timezone).completed.filter(
+      (request) => request.date >= baselineStart && request.date < date
+    );
     const exclusions: Record<string, number> = {};
     for (const request of selectedAll) {
       if (request.qualityReason) exclusions[request.qualityReason] = (exclusions[request.qualityReason] ?? 0) + 1;
@@ -367,6 +371,10 @@ export class Analytics {
         ...summarize(metrics(selected)),
         outputTokens: selected.reduce((total, request) => total + request.outputTokens, 0)
       },
+      speedIndex: speedIndex(
+        selected.map((request) => ({ ...request, date })),
+        baseline
+      ),
       models: modelSummaries(selected),
       histogram: niceHistogram(selected),
       hourly,
