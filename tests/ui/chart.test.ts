@@ -139,6 +139,37 @@ describe('privacy-safe share-card data', () => {
     expect(new Set([negative.accent, neutral.accent, positive.accent]).size).toBe(3);
   });
 
+  it('suggests conservative moods from percentile, adjusted effect, and confidence together', () => {
+    const sentimentFor = (
+      value: number,
+      percentile: number,
+      ciLow: number,
+      ciHigh: number
+    ) => suggestedShareSentiment(
+      buildShareCardData({
+        date: '2026-08-14',
+        median: 60,
+        count: 30,
+        sessions: 6,
+        outputTokens: 2_400,
+        isToday: true,
+        speedIndex: { value, ciLow, ciHigh, percentile, eligible: true, reason: null },
+        models: [],
+        histogram: []
+      })
+    );
+
+    expect(sentimentFor(90, 10, 82, 99)).toBe(-2);
+    expect(sentimentFor(90, 10, 82, 100)).toBe(-1);
+    expect(sentimentFor(91, 10, 82, 99)).toBe(-1);
+    expect(sentimentFor(99, 35, 90, 108)).toBe(-1);
+    expect(sentimentFor(100, 10, 90, 110)).toBe(0);
+    expect(sentimentFor(101, 65, 92, 112)).toBe(1);
+    expect(sentimentFor(110, 90, 101, 118)).toBe(2);
+    expect(sentimentFor(110, 90, 100, 118)).toBe(1);
+    expect(sentimentFor(109, 90, 101, 118)).toBe(1);
+  });
+
   it('uses historical tense and only adds the configured link where the flow supports it', () => {
     const card = buildShareCardData({
       date: '2026-08-13',

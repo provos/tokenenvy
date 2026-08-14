@@ -548,7 +548,10 @@
           <div class="sentiment-labels" aria-hidden="true">
             <span>Negative</span><span>Neutral</span><span>Positive</span>
           </div>
-          <p id="sentiment-description">Changes the attitude, expression, and palette—not your stats.</p>
+          <p id="sentiment-description">
+            Starts from your adjusted comparable-day result. Move it anywhere; it changes the attitude,
+            expression, and palette—not your stats.
+          </p>
         </div>
       </div>
 

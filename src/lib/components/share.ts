@@ -124,6 +124,9 @@ export interface ShareCardData {
 	isToday: boolean;
 	indexLabel: string;
 	indexEligible: boolean;
+	indexValue: number | null;
+	indexCiLow: number | null;
+	indexCiHigh: number | null;
 	percentile: number | null;
 	refusals: ShareRefusalCounts;
 	models: Array<{ family: string; median: number; count: number }>;
@@ -197,11 +200,28 @@ export function getShareSentimentTheme(value: number): ShareSentimentTheme {
 }
 
 export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
-	if (!data.indexEligible || data.percentile === null) return 0;
-	if (data.percentile <= 10) return -2;
-	if (data.percentile <= 35) return -1;
-	if (data.percentile >= 90) return 2;
-	if (data.percentile >= 65) return 1;
+	const { indexValue, indexCiLow, indexCiHigh, percentile } = data;
+	if (!data.indexEligible || indexValue === null || percentile === null) return 0;
+
+	if (
+		percentile <= 10 &&
+		indexValue <= 90 &&
+		indexCiHigh !== null &&
+		indexCiHigh < 100
+	) {
+		return -2;
+	}
+	if (percentile <= 35 && indexValue < 100) return -1;
+
+	if (
+		percentile >= 90 &&
+		indexValue >= 110 &&
+		indexCiLow !== null &&
+		indexCiLow > 100
+	) {
+		return 2;
+	}
+	if (percentile >= 65 && indexValue > 100) return 1;
 	return 0;
 }
 
@@ -258,6 +278,9 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
 		isToday: input.isToday,
 		indexLabel: speedIndexLabel(input.speedIndex),
 		indexEligible: input.speedIndex.eligible,
+		indexValue: input.speedIndex.value,
+		indexCiLow: input.speedIndex.ciLow,
+		indexCiHigh: input.speedIndex.ciHigh,
 		percentile: input.speedIndex.percentile,
 		refusals: {
 			recorded: input.refusals?.recorded === true,

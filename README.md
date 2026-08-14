@@ -15,7 +15,7 @@ It does not need an LLM, an Anthropic API key, telemetry, or an internet connect
 - Optional five-hour and seven-day rate-limit percentages from Claude Code's local status-line payload
 - Downloadable selected-day histogram share images with friendly or user-enabled spicy taglines and an adjustable five-stop mood
 
-The spicy share voice is an explicit choice in the share dialog. Each dialog opens in the friendly default. A five-stop negative-to-positive mood slider changes the card's editorial tagline, vector expression, and palette without changing its measurements. The initial mood follows the comparable-day percentile when available and stays neutral while the baseline is warming up.
+The spicy share voice is an explicit choice in the share dialog. Each dialog opens in the friendly default. A five-stop negative-to-positive mood slider changes the card's editorial tagline, vector expression, and palette without changing its measurements. The initial mood follows a conservative, mix-adjusted comparable-day recommendation when available and stays neutral while the baseline is warming up. Extreme moods require an unusual percentile, a material adjusted difference, and a confidence interval entirely on the same side of baseline; users can always move the slider elsewhere.
 
 ## Install and run
 

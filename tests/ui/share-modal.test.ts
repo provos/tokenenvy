@@ -56,6 +56,7 @@ describe('share-card customization', () => {
     expect(body).toContain('share-sentiment-face');
     expect(body).toContain('Refusals (explicit lower bound): 2 · 1 recovered · 1 user-visible');
     expect(body).toContain('Run it yourself · npx tokenenvy');
-    expect(body).toContain('Changes the attitude, expression, and palette—not your stats.');
+    expect(body).toContain('Starts from your adjusted comparable-day result. Move it anywhere;');
+    expect(body).toContain('it changes the attitude, expression, and palette—not your stats.');
   });
 });
