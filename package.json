@@ -4,6 +4,22 @@
   "description": "Token Envy is a private, local-first performance dashboard for Claude Code session logs.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/provos/tokenenvy.git"
+  },
+  "homepage": "https://github.com/provos/tokenenvy#readme",
+  "bugs": {
+    "url": "https://github.com/provos/tokenenvy/issues"
+  },
+  "keywords": [
+    "anthropic",
+    "claude",
+    "claude-code",
+    "dashboard",
+    "performance",
+    "tokens"
+  ],
   "bin": {
     "tokenenvy": "bin/tokenenvy.js"
   },
@@ -27,7 +43,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:package": "node tests/server/packed-tarball.mjs",
+    "prepublishOnly": "npm run check && npm test",
     "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

@@ -47,7 +47,8 @@ directory, and makes no automatic network requests.
 - Share cards are built from an allowlisted aggregate object and contain no
   local identifiers. They may show the selected day's aggregate explicit
   refusal counts, labeled as a lower bound, but never refusal categories or
-  explanations. Social navigation is user-triggered.
+  explanations. Every card includes the static `npx tokenenvy` install command;
+  social navigation is user-triggered.
 
 ## Scanner correctness
 

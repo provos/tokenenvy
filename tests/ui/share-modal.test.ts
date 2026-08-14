@@ -55,6 +55,7 @@ describe('share-card customization', () => {
     expect(body).toContain('aria-valuetext="Neutral"');
     expect(body).toContain('share-sentiment-face');
     expect(body).toContain('Refusals (explicit lower bound): 2 · 1 recovered · 1 user-visible');
+    expect(body).toContain('Run it yourself · npx tokenenvy');
     expect(body).toContain('Changes the attitude, expression, and palette—not your stats.');
   });
 });

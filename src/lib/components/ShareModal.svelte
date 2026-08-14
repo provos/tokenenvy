@@ -15,6 +15,7 @@
     normalizeHistogram,
     normalizeShareSentiment,
     safeShareProductLink,
+    SHARE_INSTALL_CTA,
     suggestedShareSentiment,
     type ShareCardData,
     type SharePlatform,
@@ -46,7 +47,6 @@
   let renderVersion = 0;
 
   let productLink = $derived(safeShareProductLink(env.PUBLIC_TOKENENVY_URL));
-  let productAttribution = $derived(productLink?.label ?? 'Token Envy');
   let card = $derived(
     buildShareCardData({
       date: detail.date,
@@ -66,7 +66,7 @@
   let moodLine = $derived(getShareMoodLine(card));
   let refusalLine = $derived(getShareRefusalLine(card));
   let previewLabel = $derived(
-    `Token Envy share card for ${dayLabel(card.date)}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}. ${refusalLine}`,
+    `Token Envy share card for ${dayLabel(card.date)}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}. ${refusalLine}. ${SHARE_INSTALL_CTA}.`,
   );
   let previewStyle = $derived(
     `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar}`,
@@ -103,7 +103,6 @@
     const currentCard = card;
     const currentTagline = tagline;
     const currentMood = moodLine;
-    const currentAttribution = productAttribution;
     const currentRefusals = refusalLine;
     const currentSentiment = sentiment;
     const currentTheme = sentimentTheme;
@@ -118,7 +117,6 @@
       currentCard,
       currentTagline,
       currentMood,
-      currentAttribution,
       currentRefusals,
       currentSentiment,
       currentTheme,
@@ -149,7 +147,6 @@
     currentCard: ShareCardData,
     currentTagline: string,
     currentMood: string,
-    currentAttribution: string,
     currentRefusals: string,
     currentSentiment: ShareSentiment,
     currentTheme: ShareSentimentTheme,
@@ -163,7 +160,6 @@
         currentCard,
         currentTagline,
         currentMood,
-        currentAttribution,
         currentRefusals,
         currentSentiment,
         currentTheme,
@@ -186,7 +182,6 @@
     currentCard: ShareCardData,
     currentTagline: string,
     currentMood: string,
-    currentAttribution: string,
     currentRefusals: string,
     currentSentiment: ShareSentiment,
     currentTheme: ShareSentimentTheme,
@@ -287,7 +282,7 @@
     context.textAlign = 'right';
     context.fillStyle = currentTheme.accent;
     context.font = '650 20px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(currentAttribution, 1130, 582);
+    context.fillText(SHARE_INSTALL_CTA, 1130, 582);
 
     context.textAlign = 'center';
     context.fillStyle = currentTheme.accent;
@@ -599,7 +594,7 @@
         <div class="share-preview-footer">
           <div class="share-preview-footer-row">
             <span>{card.count.toLocaleString('en-US')} measured requests · {card.sessions.toLocaleString('en-US')} sessions</span>
-            <strong>{productAttribution}</strong>
+            <strong>{SHARE_INSTALL_CTA}</strong>
           </div>
           <span class="share-preview-refusals">{refusalLine}</span>
         </div>

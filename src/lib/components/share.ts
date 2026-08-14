@@ -3,6 +3,7 @@ import type { HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
 export type ShareTone = 'friendly' | 'spicy';
 export type ShareSentiment = -2 | -1 | 0 | 1 | 2;
 export type SharePlatform = 'generic' | 'x' | 'bluesky' | 'linkedin';
+export const SHARE_INSTALL_CTA = 'Run it yourself · npx tokenenvy';
 
 export interface ShareSentimentTheme {
 	value: ShareSentiment;
