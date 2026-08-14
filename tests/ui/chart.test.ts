@@ -5,9 +5,11 @@ import {
   buildShareCardData,
   getShareCaption,
   getShareMoodLine,
+  getShareSentimentTheme,
   getShareTagline,
   normalizeHistogram,
   safeShareProductLink,
+  suggestedShareSentiment,
 } from '../../src/lib/components/share';
 
 const points: DailyPoint[] = [
@@ -110,9 +112,20 @@ describe('privacy-safe share-card data', () => {
     expect(card.models.map(({ family }) => family)).toEqual(['opus', 'sonnet']);
     expect(card.histogram).toHaveLength(40);
     expect(JSON.stringify(card)).not.toContain(privateMarker);
-    expect(getShareTagline('spicy', card)).toBe('Anthropic loves me today');
+    expect(suggestedShareSentiment(card)).toBe(1);
+    expect(getShareTagline('spicy', 2, card)).toBe('Anthropic loves me today');
     expect(getShareMoodLine(card)).toContain('88th percentile');
     expect(normalizeHistogram(card.histogram, card.median).some((bar) => bar.containsMedian)).toBe(true);
+  });
+
+  it('maps sentiment to distinct semantic palettes without changing measurements', () => {
+    const negative = getShareSentimentTheme(-2);
+    const neutral = getShareSentimentTheme(0);
+    const positive = getShareSentimentTheme(2);
+
+    expect([negative.label, neutral.label, positive.label]).toEqual(['Brutal', 'Neutral', 'Glorious']);
+    expect(new Set([negative.backgroundStart, neutral.backgroundStart, positive.backgroundStart]).size).toBe(3);
+    expect(new Set([negative.accent, neutral.accent, positive.accent]).size).toBe(3);
   });
 
   it('uses historical tense and only adds the configured link where the flow supports it', () => {
@@ -135,12 +148,13 @@ describe('privacy-safe share-card data', () => {
       histogram: [{ lower: 40, upper: 50, count: 9 }]
     });
 
-    expect(getShareTagline('friendly', card)).toBe('Claude Code found its rhythm that day');
-    expect(getShareTagline('spicy', card)).toBe('Anthropic and I were on speaking terms');
-    expect(getShareCaption('friendly', card, 'bluesky', 'https://tokenenvy.example/')).toContain(
+    expect(suggestedShareSentiment(card)).toBe(0);
+    expect(getShareTagline('friendly', 0, card)).toBe('Claude Code kept it steady that day');
+    expect(getShareTagline('spicy', 0, card)).toBe('Anthropic and I were on speaking terms');
+    expect(getShareCaption('friendly', 0, card, 'bluesky', 'https://tokenenvy.example/')).toContain(
       'https://tokenenvy.example/'
     );
-    expect(getShareCaption('friendly', card, 'linkedin', 'https://tokenenvy.example/')).not.toContain(
+    expect(getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/')).not.toContain(
       'https://tokenenvy.example/'
     );
   });

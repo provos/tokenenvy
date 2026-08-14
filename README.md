@@ -13,9 +13,9 @@ It does not need an LLM, an Anthropic API key, telemetry, or an internet connect
 - Explicit classifier refusals split into attempted, recovered by fallback, user-visible, and unknown
 - Observed weekly output and a projection based on the current week
 - Optional five-hour and seven-day rate-limit percentages from Claude Code's local status-line payload
-- Downloadable selected-day histogram share images with friendly or user-enabled spicy taglines
+- Downloadable selected-day histogram share images with friendly or user-enabled spicy taglines and an adjustable five-stop mood
 
-The spicy share tone is an explicit choice in the share dialog. Each dialog opens in the friendly default. Performance taglines are withheld when there is not enough current or baseline data to justify them.
+The spicy share voice is an explicit choice in the share dialog. Each dialog opens in the friendly default. A five-stop negative-to-positive mood slider changes the card's editorial tagline, vector expression, and palette without changing its measurements. The initial mood follows the comparable-day percentile when available and stays neutral while the baseline is warming up.
 
 ## Install and run
 
@@ -102,7 +102,7 @@ Anyone able to read your local user account may be able to access the derived in
 
 ## Social sharing
 
-Open any measured day, choose **Share this day**, select the friendly or spicy tone, and export the generated PNG. The card contains that day's aggregate statistics, model mix, selected-day histogram, and Token Envy attribution; it contains no session IDs, project paths, prompts, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
+Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, and Token Envy attribution; it contains no session IDs, project paths, prompts, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
 
 Release builders can add a canonical product link to share cards and social composers at build time:
 

@@ -19,7 +19,7 @@ directory, and makes no automatic network requests.
   weights prevent today's model mix from redefining the comparison.
 - Performance taglines require at least 20 requests, five sessions, seven
   baseline days, 100 baseline requests, and sufficient stratum coverage.
-  Friendly is the default; spicy is an explicit choice for the current share.
+  Friendly is the default; spicy is an explicit choice for the current share. A five-stop valence slider defaults from the eligible comparable-day percentile (neutral without a baseline) and lets the user vary editorial sentiment from strongly negative to strongly positive. It changes the card's wording, vector expression, and palette, never its measurements, and resets when the dialog is reopened.
 - Classifier reporting uses explicit metadata only and distinguishes attempted,
   recovered-by-fallback, user-visible, and unknown outcomes.
 - Transcript-only weekly numbers are labelled observed usage, never quota.

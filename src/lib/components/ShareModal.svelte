@@ -9,11 +9,16 @@
     buildShareCardData,
     getShareCaption,
     getShareMoodLine,
+    getShareSentimentTheme,
     getShareTagline,
     normalizeHistogram,
+    normalizeShareSentiment,
     safeShareProductLink,
+    suggestedShareSentiment,
     type ShareCardData,
     type SharePlatform,
+    type ShareSentiment,
+    type ShareSentimentTheme,
     type ShareTone,
   } from './share';
 
@@ -27,6 +32,7 @@
 
   let { open, detail, isToday, refreshing, onclose }: Props = $props();
   let tone = $state<ShareTone>('friendly');
+  let sentiment = $state<ShareSentiment>(0);
   let status = $state<string | null>(null);
   let modal = $state<HTMLElement>();
   let previousOpen = false;
@@ -51,10 +57,14 @@
       histogram: detail.histogram,
     }),
   );
-  let tagline = $derived(getShareTagline(tone, card));
+  let sentimentTheme = $derived(getShareSentimentTheme(sentiment));
+  let tagline = $derived(getShareTagline(tone, sentiment, card));
   let moodLine = $derived(getShareMoodLine(card));
   let previewLabel = $derived(
-    `Token Envy share card for ${dayLabel(card.date)}. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}`,
+    `Token Envy share card for ${dayLabel(card.date)}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}`,
+  );
+  let previewStyle = $derived(
+    `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar}`,
   );
   let canExport = $derived(!refreshing && preparedFile !== null);
 
@@ -66,6 +76,7 @@
   $effect(() => {
     if (open && !previousOpen) {
       tone = 'friendly';
+      sentiment = suggestedShareSentiment(card);
       status = null;
     }
     previousOpen = open;
@@ -88,6 +99,8 @@
     const currentTagline = tagline;
     const currentMood = moodLine;
     const currentAttribution = productAttribution;
+    const currentSentiment = sentiment;
+    const currentTheme = sentimentTheme;
     if (!open) {
       renderVersion += 1;
       preparedFile = null;
@@ -95,7 +108,14 @@
       preparing = false;
       return;
     }
-    void prepareCard(currentCard, currentTagline, currentMood, currentAttribution);
+    void prepareCard(
+      currentCard,
+      currentTagline,
+      currentMood,
+      currentAttribution,
+      currentSentiment,
+      currentTheme,
+    );
   });
 
   function trapFocus(event: KeyboardEvent) {
@@ -113,18 +133,32 @@
     status = null;
   }
 
+  function setSentiment(next: number) {
+    sentiment = normalizeShareSentiment(next);
+    status = null;
+  }
+
   async function prepareCard(
     currentCard: ShareCardData,
     currentTagline: string,
     currentMood: string,
     currentAttribution: string,
+    currentSentiment: ShareSentiment,
+    currentTheme: ShareSentimentTheme,
   ) {
     const version = ++renderVersion;
     preparedFile = null;
     nativeFileShareAvailable = false;
     preparing = true;
     try {
-      const blob = await renderCard(currentCard, currentTagline, currentMood, currentAttribution);
+      const blob = await renderCard(
+        currentCard,
+        currentTagline,
+        currentMood,
+        currentAttribution,
+        currentSentiment,
+        currentTheme,
+      );
       if (version !== renderVersion) return;
       const file = new File([blob], `token-envy-${currentCard.date}.png`, { type: 'image/png' });
       preparedFile = file;
@@ -144,6 +178,8 @@
     currentTagline: string,
     currentMood: string,
     currentAttribution: string,
+    currentSentiment: ShareSentiment,
+    currentTheme: ShareSentimentTheme,
   ): Promise<Blob> {
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
@@ -152,29 +188,31 @@
     if (!context) throw new Error('Canvas is unavailable');
 
     const background = context.createLinearGradient(0, 0, 1200, 630);
-    background.addColorStop(0, '#07131c');
-    background.addColorStop(0.58, '#102a2e');
-    background.addColorStop(1, '#173f3a');
+    background.addColorStop(0, currentTheme.backgroundStart);
+    background.addColorStop(0.58, currentTheme.backgroundMiddle);
+    background.addColorStop(1, currentTheme.backgroundEnd);
     context.fillStyle = background;
     context.fillRect(0, 0, 1200, 630);
 
     const glow = context.createRadialGradient(600, 335, 20, 600, 335, 440);
-    glow.addColorStop(0, 'rgba(199, 255, 98, 0.18)');
-    glow.addColorStop(1, 'rgba(199, 255, 98, 0)');
+    glow.addColorStop(0, currentTheme.glow);
+    glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
     context.fillStyle = glow;
     context.fillRect(0, 0, 1200, 630);
 
-    context.fillStyle = '#c7ff62';
+    drawSentimentFace(context, currentSentiment, currentTheme);
+
+    context.fillStyle = currentTheme.accent;
     context.font = '700 25px ui-monospace, SFMono-Regular, Menlo, monospace';
     context.fillText('TOKEN ENVY', 70, 68);
 
     context.textAlign = 'right';
-    context.fillStyle = 'rgba(238, 246, 239, 0.82)';
+    context.fillStyle = currentTheme.mutedText;
     context.font = '500 24px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(formatShareDate(currentCard.date), 1130, 68);
 
     context.textAlign = 'center';
-    context.fillStyle = '#eef6ef';
+    context.fillStyle = currentTheme.text;
     context.font = '650 42px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(currentTagline, 600, 140);
 
@@ -188,8 +226,8 @@
     for (const [index, bar] of bars.entries()) {
       const height = Math.max(8, chartHeight * bar.height);
       context.fillStyle = bar.containsMedian
-        ? 'rgba(199, 255, 98, 0.72)'
-        : 'rgba(119, 211, 180, 0.28)';
+        ? currentTheme.medianBar
+        : currentTheme.bar;
       context.fillRect(
         chartX + index * (barWidth + gap),
         chartY + chartHeight - height,
@@ -199,20 +237,20 @@
     }
 
     context.lineWidth = 14;
-    context.strokeStyle = 'rgba(7, 19, 28, 0.8)';
-    context.fillStyle = '#ffffff';
+    context.strokeStyle = currentTheme.outline;
+    context.fillStyle = currentTheme.text;
     context.font = '750 142px Inter, ui-sans-serif, system-ui, sans-serif';
     context.strokeText(`${Math.round(currentCard.median)}`, 600, 350);
     context.fillText(`${Math.round(currentCard.median)}`, 600, 350);
-    context.fillStyle = 'rgba(238, 246, 239, 0.88)';
+    context.fillStyle = currentTheme.mutedText;
     context.font = '650 27px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText('EFFECTIVE OUTPUT TOKENS / SECOND', 600, 392);
 
-    context.fillStyle = '#c7ff62';
+    context.fillStyle = currentTheme.accent;
     context.font = '650 26px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(currentMood, 600, 456);
 
-    context.fillStyle = 'rgba(238, 246, 239, 0.68)';
+    context.fillStyle = currentTheme.mutedText;
     context.font = '500 21px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(
       `${currentCard.count.toLocaleString('en-US')} measured requests · ${currentCard.sessions.toLocaleString('en-US')} sessions`,
@@ -228,7 +266,7 @@
     context.stroke();
 
     context.textAlign = 'left';
-    context.fillStyle = 'rgba(238, 246, 239, 0.78)';
+    context.fillStyle = currentTheme.mutedText;
     context.font = '500 20px Inter, ui-sans-serif, system-ui, sans-serif';
     const leadingModels = currentCard.models
       .slice(0, 3)
@@ -237,7 +275,7 @@
     context.fillText(leadingModels || 'All measured model families', 70, 582);
 
     context.textAlign = 'right';
-    context.fillStyle = '#c7ff62';
+    context.fillStyle = currentTheme.accent;
     context.font = '650 20px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(currentAttribution, 1130, 582);
 
@@ -247,6 +285,107 @@
         'image/png',
       );
     });
+  }
+
+  function drawStar(
+    context: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    outerRadius: number,
+    innerRadius = outerRadius * 0.34,
+  ) {
+    context.beginPath();
+    for (let point = 0; point < 8; point += 1) {
+      const radius = point % 2 === 0 ? outerRadius : innerRadius;
+      const angle = -Math.PI / 2 + point * Math.PI / 4;
+      const px = x + Math.cos(angle) * radius;
+      const py = y + Math.sin(angle) * radius;
+      if (point === 0) context.moveTo(px, py);
+      else context.lineTo(px, py);
+    }
+    context.closePath();
+    context.fill();
+  }
+
+  function drawCross(context: CanvasRenderingContext2D, x: number, y: number, radius: number) {
+    context.beginPath();
+    context.moveTo(x - radius, y - radius);
+    context.lineTo(x + radius, y + radius);
+    context.moveTo(x + radius, y - radius);
+    context.lineTo(x - radius, y + radius);
+    context.stroke();
+  }
+
+  function drawSentimentFace(
+    context: CanvasRenderingContext2D,
+    currentSentiment: ShareSentiment,
+    currentTheme: ShareSentimentTheme,
+  ) {
+    context.save();
+    context.globalAlpha = 0.13;
+    context.strokeStyle = currentTheme.accent;
+    context.fillStyle = currentTheme.secondary;
+    context.lineWidth = 14;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+
+    context.beginPath();
+    context.arc(600, 306, 196, 0, Math.PI * 2);
+    context.stroke();
+
+    const eyeY = 258;
+    if (currentSentiment === -2) {
+      drawCross(context, 535, eyeY, 25);
+      drawCross(context, 665, eyeY, 25);
+    } else if (currentSentiment === -1) {
+      context.beginPath();
+      context.moveTo(510, eyeY + 13);
+      context.lineTo(560, eyeY - 12);
+      context.moveTo(640, eyeY - 12);
+      context.lineTo(690, eyeY + 13);
+      context.stroke();
+    } else if (currentSentiment === 0) {
+      context.beginPath();
+      context.moveTo(512, eyeY);
+      context.lineTo(558, eyeY);
+      context.moveTo(642, eyeY);
+      context.lineTo(688, eyeY);
+      context.stroke();
+    } else if (currentSentiment === 1) {
+      context.beginPath();
+      context.arc(535, eyeY, 13, 0, Math.PI * 2);
+      context.arc(665, eyeY, 13, 0, Math.PI * 2);
+      context.fill();
+    } else {
+      drawStar(context, 535, eyeY, 34);
+      drawStar(context, 665, eyeY, 34);
+      drawStar(context, 844, 200, 24);
+      drawStar(context, 382, 390, 17);
+    }
+
+    context.beginPath();
+    context.moveTo(520, 354);
+    if (currentSentiment === 0) context.lineTo(680, 354);
+    else context.quadraticCurveTo(600, 354 + currentSentiment * 40, 680, 354);
+    context.stroke();
+
+    if (currentSentiment === -2) {
+      context.strokeStyle = currentTheme.secondary;
+      context.lineWidth = 12;
+      context.beginPath();
+      context.moveTo(550, 393);
+      context.quadraticCurveTo(575, 376, 600, 393);
+      context.quadraticCurveTo(625, 410, 650, 393);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(570, 408);
+      context.lineTo(570, 436);
+      context.moveTo(622, 410);
+      context.lineTo(622, 448);
+      context.stroke();
+    }
+
+    context.restore();
   }
 
   async function copyImage() {
@@ -281,7 +420,7 @@
       const result = navigator.share({
         files: [preparedFile],
         title: 'My Token Envy daily speed card',
-        text: getShareCaption(tone, card, 'generic', productLink?.href ?? null),
+        text: getShareCaption(tone, sentiment, card, 'generic', productLink?.href ?? null),
       });
       await result;
       status = 'Share sheet opened with the image attached.';
@@ -295,11 +434,11 @@
   function openComposer(platform: 'x' | 'bluesky' | 'linkedin') {
     let url: string;
     if (platform === 'x') {
-      const params = new URLSearchParams({ text: getShareCaption(tone, card, 'x', null) });
+      const params = new URLSearchParams({ text: getShareCaption(tone, sentiment, card, 'x', null) });
       if (productLink) params.set('url', productLink.href);
       url = `https://x.com/intent/tweet?${params.toString()}`;
     } else if (platform === 'bluesky') {
-      const text = getShareCaption(tone, card, 'bluesky', productLink?.href ?? null);
+      const text = getShareCaption(tone, sentiment, card, 'bluesky', productLink?.href ?? null);
       url = `https://bsky.app/intent/compose?text=${encodeURIComponent(text)}`;
     } else {
       url = 'https://www.linkedin.com/feed/';
@@ -317,6 +456,7 @@
       const write = navigator.clipboard.writeText(
         getShareCaption(
           tone,
+          sentiment,
           card,
           platform,
           platform === 'bluesky' ? (productLink?.href ?? null) : null,
@@ -361,22 +501,75 @@
       </header>
 
     <div class="share-body">
-      <div class="tone-control" role="group" aria-label="Card tone">
-        <button
-          type="button"
-          class:active={tone === 'friendly'}
-          aria-pressed={tone === 'friendly'}
-          onclick={() => setTone('friendly')}
-        >Friendly</button>
-        <button
-          type="button"
-          class:active={tone === 'spicy'}
-          aria-pressed={tone === 'spicy'}
-          onclick={() => setTone('spicy')}
-        >Spicy</button>
+      <div class="share-controls">
+        <div class="voice-control">
+          <span class="share-control-label">Voice</span>
+          <div class="tone-control" role="group" aria-label="Card voice">
+            <button
+              type="button"
+              class:active={tone === 'friendly'}
+              aria-pressed={tone === 'friendly'}
+              onclick={() => setTone('friendly')}
+            >Friendly</button>
+            <button
+              type="button"
+              class:active={tone === 'spicy'}
+              aria-pressed={tone === 'spicy'}
+              onclick={() => setTone('spicy')}
+            >Spicy</button>
+          </div>
+        </div>
+        <div class="sentiment-control" style={`--sentiment-accent:${sentimentTheme.accent}`}>
+          <div class="sentiment-heading">
+            <label for="share-sentiment">Card mood</label>
+            <strong>{sentimentTheme.label}</strong>
+          </div>
+          <input
+            id="share-sentiment"
+            type="range"
+            min="-2"
+            max="2"
+            step="1"
+            value={sentiment}
+            aria-valuetext={sentimentTheme.accessibleLabel}
+            aria-describedby="sentiment-description"
+            oninput={(event) => setSentiment(Number(event.currentTarget.value))}
+          />
+          <div class="sentiment-labels" aria-hidden="true">
+            <span>Negative</span><span>Neutral</span><span>Positive</span>
+          </div>
+          <p id="sentiment-description">Changes the attitude, expression, and palette—not your stats.</p>
+        </div>
       </div>
 
-      <div class="share-preview" role="img" aria-label={previewLabel} aria-busy={refreshing}>
+      <div
+        class="share-preview"
+        data-sentiment={sentiment}
+        style={previewStyle}
+        role="img"
+        aria-label={previewLabel}
+        aria-busy={refreshing}
+      >
+        <svg class="share-sentiment-face" viewBox="0 0 440 360" aria-hidden="true">
+          <circle cx="220" cy="180" r="150"></circle>
+          {#if sentiment === -2}
+            <path d="M130 105l42 42m0-42-42 42M268 105l42 42m0-42-42 42"></path>
+          {:else if sentiment === -1}
+            <path d="M128 145l44-25m96 0 44 25"></path>
+          {:else if sentiment === 0}
+            <path d="M130 132h42m96 0h42"></path>
+          {:else if sentiment === 1}
+            <circle class="face-eye-fill" cx="151" cy="132" r="11"></circle>
+            <circle class="face-eye-fill" cx="289" cy="132" r="11"></circle>
+          {:else}
+            <path class="face-eye-fill" d="M151 94l10 26 27 10-27 10-10 27-10-27-27-10 27-10zm138 0 10 26 27 10-27 10-10 27-10-27-27-10 27-10z"></path>
+            <path class="face-spark-fill" d="M379 50l7 18 18 7-18 7-7 18-7-18-18-7 18-7zM62 259l5 13 13 5-13 5-5 13-5-13-13-5 13-5z"></path>
+          {/if}
+          <path d={sentiment === 0 ? 'M150 222h140' : `M150 222q70 ${sentiment * 38} 140 0`}></path>
+          {#if sentiment === -2}
+            <path class="face-accent" d="M174 262q23-18 46 0t46 0M190 276v28m58-27v38"></path>
+          {/if}
+        </svg>
         <div class="share-preview-header">
           <strong>Token Envy</strong>
           <span>{formatShareDate(card.date)}</span>
