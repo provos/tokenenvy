@@ -325,11 +325,11 @@ export class Database {
     `);
     const insertEvent = this.db.prepare(`
       INSERT OR IGNORE INTO events(
-        event_id, parent_id, request_id, session_id, timestamp_ms, type, subtype, model,
+        event_id, parent_id, request_id, session_id, timestamp_ms, type, model,
         output_tokens, input_tokens, cache_read_tokens, cache_creation_tokens,
         synthetic, refusal_outcome, quality_flags
       ) VALUES (
-        @eventId, @parentId, @requestId, @sessionId, @timestampMs, @type, @subtype, @model,
+        @eventId, @parentId, @requestId, @sessionId, @timestampMs, @type, @model,
         @outputTokens, @inputTokens, @cacheReadTokens, @cacheCreationTokens,
         @synthetic, @refusalOutcome, @qualityFlags
       )
