@@ -48,7 +48,8 @@ directory, and makes no automatic network requests.
   local identifiers. They may show the selected day's aggregate explicit
   refusal counts, labeled as a lower bound, but never refusal categories or
   explanations. Every card includes the static `npx tokenenvy` install command;
-  social navigation is user-triggered.
+  user-triggered social navigation links to the public npm package page unless
+  a valid public HTTPS product URL is configured.
 
 ## Scanner correctness
 

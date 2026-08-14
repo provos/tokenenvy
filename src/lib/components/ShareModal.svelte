@@ -7,6 +7,7 @@
   import HistogramBackdrop from './HistogramBackdrop.svelte';
   import {
     buildShareCardData,
+    DEFAULT_SHARE_PRODUCT_URL,
     getShareCaption,
     getShareMoodLine,
     getShareRefusalLine,
@@ -46,7 +47,9 @@
   let clipboardImageAvailable = $state(false);
   let renderVersion = 0;
 
-  let productLink = $derived(safeShareProductLink(env.PUBLIC_TOKENENVY_URL));
+  let productLink = $derived(
+    safeShareProductLink(env.PUBLIC_TOKENENVY_URL ?? DEFAULT_SHARE_PRODUCT_URL),
+  );
   let card = $derived(
     buildShareCardData({
       date: detail.date,

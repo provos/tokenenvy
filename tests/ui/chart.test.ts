@@ -3,6 +3,7 @@ import type { DailyPoint } from '../../src/lib/types';
 import { areaPath, chartMaximum, dayLabel, linePath } from '../../src/lib/components/chart';
 import {
   buildShareCardData,
+  DEFAULT_SHARE_PRODUCT_URL,
   getShareCaption,
   getShareMoodLine,
   getShareRefusalLine,
@@ -69,6 +70,10 @@ describe('dashboard chart helpers', () => {
 
 describe('privacy-safe share-card data', () => {
   it('accepts only credential-free HTTPS product links', () => {
+    expect(safeShareProductLink(DEFAULT_SHARE_PRODUCT_URL)).toEqual({
+      href: 'https://www.npmjs.com/package/tokenenvy',
+      label: 'www.npmjs.com/package/tokenenvy'
+    });
     expect(safeShareProductLink('https://example.com/speedometer/')).toEqual({
       href: 'https://example.com/speedometer/',
       label: 'example.com/speedometer'

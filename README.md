@@ -104,13 +104,13 @@ Anyone able to read your local user account may be able to access the derived in
 
 Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, explicit refusal lower-bound counts, Token Envy attribution, and a **Run it yourself · npx tokenenvy** call-to-action; it contains no session IDs, project paths, prompts, refusal explanations, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
 
-Release builders can add a canonical product link to share cards and social composers at build time:
+Share actions use the public npm package page as their canonical product link. Release builders can override it at build time:
 
 ```bash
 PUBLIC_TOKENENVY_URL=https://example.com/tokenenvy npm run build
 ```
 
-The value must be a public `https://` URL. When it is unset or invalid, the card keeps the Token Envy name but omits the link. This checkout does not claim an npm URL before the package is published.
+The override must be a credential-free public `https://` URL. An invalid override is omitted rather than used.
 
 ## Development
 
