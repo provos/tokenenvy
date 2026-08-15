@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import type { QuotaWindow, ScanStatus } from '$lib/types';
+  import type { ModelFamily as SharedModelFamily, QuotaWindow, ScanStatus } from '$lib/types';
 
   const scanStates = new Set<ScanStatus['state']>(['idle', 'discovering', 'scanning', 'error']);
   const quotaFreshnessMs = 15 * 60_000;
@@ -65,6 +65,18 @@
     return availableDates.at(-1) ?? null;
   }
 
+  export function dashboardRefreshDate(
+    selectedDate: string | null,
+    today: string,
+    todayCount: number,
+    dates: string[],
+    reconcileAvailability: boolean,
+  ): string | null {
+    return reconcileAvailability
+      ? selectActiveDate(selectedDate, today, todayCount, dates)
+      : selectedDate;
+  }
+
   export function rangeButtonState(
     pendingRangeDays: number | null,
     days: number,
@@ -83,6 +95,14 @@
     return loading ? 'loading' : 'empty';
   }
 
+  export function selectedAvailableModelFamilies(
+    available: readonly SharedModelFamily[],
+    selected: readonly SharedModelFamily[],
+  ): SharedModelFamily[] {
+    const availableSet = new Set(available);
+    return selected.filter((family) => availableSet.has(family));
+  }
+
   function quotaWindowExpiresAt(window: QuotaWindow): number | null {
     const observedAt = Date.parse(window.observedAt);
     const resetsAt = Date.parse(window.resetsAt);
@@ -98,14 +118,21 @@
   import DayHero from '$lib/components/DayHero.svelte';
   import DailyChart from '$lib/components/DailyChart.svelte';
   import HistogramDrawer from '$lib/components/HistogramDrawer.svelte';
+  import LongitudinalShareModal from '$lib/components/LongitudinalShareModal.svelte';
   import ScanProgress from '$lib/components/ScanProgress.svelte';
   import ShareModal from '$lib/components/ShareModal.svelte';
   import WeeklyRecapModal from '$lib/components/WeeklyRecapModal.svelte';
   import { SECURITY_BLUEPRINTS_LEGAL_NAME, SECURITY_BLUEPRINTS_URL } from '$lib/components/brand';
-  import { compactNumber, dayLabel, FAMILY_COLORS } from '$lib/components/chart';
+  import {
+    compactNumber,
+    dayLabel,
+    FAMILY_COLORS,
+    filterRefusalTimeline,
+  } from '$lib/components/chart';
   import { DASHBOARD_SHARE_CTA, weeklyRecapReady } from '$lib/components/weekly-recap';
   import type {
     DayDetailResponse,
+    LongitudinalSummary,
     ModelFamily,
     OverviewResponse,
     QuotaResponse,
@@ -143,12 +170,17 @@
   let dayRequestRevision: number | null = null;
   let shareOpen = $state(false);
   let weeklyRecapOpen = $state(false);
+  let longitudinalShareOpen = $state(false);
+  let longitudinalShareSummary = $state<LongitudinalSummary | null>(null);
+  let longitudinalShareLoading = $state(false);
+  let longitudinalShareError = $state<string | null>(null);
   let eventSource: EventSource | null = null;
   let dashboardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let quotaRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let loadSequence = 0;
   let quotaLoadSequence = 0;
   let dayLoadSequence = 0;
+  let longitudinalShareSequence = 0;
   let analyticsRevision: number | null = null;
   let latestScanStatus: ScanStatus | null = null;
 
@@ -182,6 +214,19 @@
     quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false,
   );
   let displayedScanStatus = $derived(latestScanStatus ?? overview?.scan ?? null);
+  let availableFamilies = $derived(
+    allFamilies.filter(
+      (family) =>
+        overview?.models.some((model) => model.family === family) ||
+        series?.points.some((point) => point.family === family),
+    ),
+  );
+  let selectedVisibleFamilies = $derived(
+    selectedAvailableModelFamilies(availableFamilies, visibleFamilies),
+  );
+  let chartRefusals = $derived(
+    series ? filterRefusalTimeline(series.refusals, selectedVisibleFamilies) : [],
+  );
   let selectedDayRefusals = $derived.by(() => {
     const selected = overview?.refusals.byDay.find((item) => item.date === dayDetail?.date);
     return {
@@ -260,6 +305,7 @@
     const sequence = ++loadSequence;
     const quotaSequence = ++quotaLoadSequence;
     const rangeChange = requestedDays !== rangeDays;
+    const reconcileAvailability = rangeChange || !overview || !series || selectedDate === null;
     if (showLoading) loading = true;
     if (rangeChange) pendingRangeDays = requestedDays;
     if (!overview) error = null;
@@ -286,7 +332,7 @@
       rangeDays = requestedDays;
       if (rangeChange || !refreshError || refreshError.requestedDays === requestedDays)
         refreshError = null;
-      reconcileSelectedDay(nextOverview, nextSeries, nextRevision);
+      reconcileSelectedDay(nextOverview, nextSeries, nextRevision, reconcileAvailability);
       if (
         latestScanStatus &&
         analyticsRevision !== null &&
@@ -366,17 +412,19 @@
     nextOverview: OverviewResponse | null,
     nextSeries: SeriesResponse | null,
     revision: number | null,
+    reconcileAvailability: boolean,
   ) {
     if (!nextOverview || !nextSeries) return;
-    const target = selectActiveDate(
+    const target = dashboardRefreshDate(
       selectedDate,
       nextOverview.today,
       nextOverview.headline.count,
       nextSeries.points.map((point) => point.date),
+      reconcileAvailability,
     );
 
     if (!target) {
-      clearSelectedDay();
+      if (reconcileAvailability) clearSelectedDay();
       return;
     }
 
@@ -445,10 +493,37 @@
 
   function toggleFamily(family: ModelFamily) {
     if (visibleFamilies.includes(family)) {
-      if (visibleFamilies.length > 1)
+      if (selectedVisibleFamilies.length > 1)
         visibleFamilies = visibleFamilies.filter((item) => item !== family);
     } else {
       visibleFamilies = [...visibleFamilies, family];
+    }
+  }
+
+  async function openLongitudinalShare() {
+    if (longitudinalShareLoading || selectedVisibleFamilies.length === 0) return;
+    const sequence = ++longitudinalShareSequence;
+    const requestedDays = rangeDays;
+    const requestedFamilies = [...selectedVisibleFamilies];
+    longitudinalShareLoading = true;
+    longitudinalShareError = null;
+    try {
+      const params = new URLSearchParams({
+        days: String(requestedDays),
+        families: requestedFamilies.join(','),
+      });
+      const nextSummary = await getJson<LongitudinalSummary>(
+        `/api/v1/longitudinal?${params.toString()}`,
+      );
+      if (sequence !== longitudinalShareSequence) return;
+      longitudinalShareSummary = nextSummary;
+      longitudinalShareOpen = true;
+    } catch (cause) {
+      if (sequence !== longitudinalShareSequence) return;
+      longitudinalShareError =
+        cause instanceof Error ? cause.message : 'Could not prepare the Claude weather summary.';
+    } finally {
+      if (sequence === longitudinalShareSequence) longitudinalShareLoading = false;
     }
   }
 
@@ -469,6 +544,7 @@
 
   onDestroy(() => {
     dayLoadSequence += 1;
+    longitudinalShareSequence += 1;
     eventSource?.close();
     if (dashboardRefreshTimer) clearTimeout(dashboardRefreshTimer);
     if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
@@ -636,21 +712,36 @@
                   confidence interval when eligible.
                 </p>
               </div>
-              <span class="freshness">{latestUpdate}</span>
+              <div class="chart-heading-actions">
+                <span class="freshness">{latestUpdate}</span>
+                <button
+                  class="secondary-button compact-button"
+                  type="button"
+                  disabled={longitudinalShareLoading || pendingRangeDays !== null}
+                  aria-busy={longitudinalShareLoading}
+                  onclick={openLongitudinalShare}
+                >
+                  {longitudinalShareLoading ? 'Preparing forecast…' : 'Share this trend'}
+                </button>
+              </div>
             </div>
 
+            {#if longitudinalShareError}
+              <div class="inline-share-error" role="alert">
+                <span>{longitudinalShareError}</span>
+                <button type="button" onclick={openLongitudinalShare}>Try again</button>
+              </div>
+            {/if}
+
             <div class="family-filters" aria-label="Visible model families">
-              {#each allFamilies as family (family)}
-                {@const model = overview.models.find((item) => item.family === family)}
-                {#if model || series.points.some((point) => point.family === family)}
-                  <button
-                    class:inactive={!visibleFamilies.includes(family)}
-                    aria-pressed={visibleFamilies.includes(family)}
-                    onclick={() => toggleFamily(family)}
-                  >
-                    <i style={`--model-color:${FAMILY_COLORS[family]}`}></i>{family}
-                  </button>
-                {/if}
+              {#each availableFamilies as family (family)}
+                <button
+                  class:inactive={!visibleFamilies.includes(family)}
+                  aria-pressed={visibleFamilies.includes(family)}
+                  onclick={() => toggleFamily(family)}
+                >
+                  <i style={`--model-color:${FAMILY_COLORS[family]}`}></i>{family}
+                </button>
               {/each}
             </div>
 
@@ -687,7 +778,8 @@
                 points={series.points}
                 timezone={series.timezone}
                 today={overview.today}
-                {visibleFamilies}
+                visibleFamilies={selectedVisibleFamilies}
+                refusals={chartRefusals}
                 {selectedDate}
                 onselect={selectDay}
               />
@@ -862,7 +954,7 @@
           <p class="eyebrow">Privacy</p>
           <h2>Your work stays yours</h2>
           <p>
-            The scanner stores aggregate timing metadata—not prompts, responses, commands, project
+            The scanner stores aggregate timing metadata, not prompts, responses, commands, project
             names, paths, or refusal explanations.
           </p>
           <div class="trust-stat"><strong>0</strong><span>automatic network requests</span></div>
@@ -873,8 +965,8 @@
           <h2>An honest measure of felt speed</h2>
           <p>
             Effective output tokens/s divides output tokens by inferred end-to-end wall time. It
-            includes queueing, prompt processing, hidden reasoning, and first-token latency—not just
-            decoder speed.
+            includes queueing, prompt processing, hidden reasoning, and first-token latency, not
+            just decoder speed.
           </p>
           <details>
             <summary>What gets excluded?</summary>
@@ -917,6 +1009,14 @@
     refusals={selectedDayRefusals}
     isToday={dayDetail.date === overview.today}
     onclose={() => (shareOpen = false)}
+  />
+{/if}
+
+{#if longitudinalShareSummary}
+  <LongitudinalShareModal
+    open={longitudinalShareOpen}
+    summary={longitudinalShareSummary}
+    onclose={() => (longitudinalShareOpen = false)}
   />
 {/if}
 

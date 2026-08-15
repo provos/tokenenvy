@@ -185,7 +185,7 @@
                   class:hour-empty={hour.median === null}
                   class="hour-swatch"
                   style={`--hour-opacity:${hour.median === null ? 0.06 : Math.max(0.16, (hour.median / hourlyMax) * 0.92)}`}
-                  title={`${hour.hour}:00 — ${hour.median === null ? 'No data' : `${hour.median.toFixed(1)} tokens/s (${hour.count})`}`}
+                  title={`${hour.hour}:00 · ${hour.median === null ? 'No data' : `${hour.median.toFixed(1)} tokens/s (${hour.count})`}`}
                 ></span>
                 {#if hour.hour % 6 === 0}<span>{String(hour.hour).padStart(2, '0')}</span>{/if}
               </div>

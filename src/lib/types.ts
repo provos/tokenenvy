@@ -66,6 +66,7 @@ export interface WeeklyRecap {
   models: WeeklyModelMix[];
   fastestDay: { date: string; median: number } | null;
   slowestDay: { date: string; median: number } | null;
+  refusals: PeriodRefusalSummary;
 }
 
 export interface WeeklyModelMix {
@@ -79,6 +80,70 @@ export interface SeriesResponse {
   timezone: string;
   days: number;
   points: DailyPoint[];
+  refusals: RefusalTimeline;
+}
+
+export interface RefusalCounts {
+  attempted: number;
+  recovered: number;
+  userVisible: number;
+  unknown: number;
+}
+
+export interface DatedRefusalCounts extends RefusalCounts {
+  date: string;
+}
+
+export interface PeriodRefusalSummary extends RefusalCounts {
+  recorded: boolean;
+  affectedDates: DatedRefusalCounts[];
+}
+
+export interface RefusalFamilyCounts extends RefusalCounts {
+  family: ModelFamily;
+}
+
+export interface RefusalTimelineDay {
+  date: string;
+  families: RefusalFamilyCounts[];
+  unattributed: RefusalCounts;
+}
+
+export interface RefusalTimeline {
+  recorded: boolean;
+  days: RefusalTimelineDay[];
+}
+
+export interface LongitudinalRefusalDay {
+  date: string;
+  selected: RefusalCounts;
+  unattributed: RefusalCounts;
+}
+
+export interface LongitudinalPoint {
+  date: string;
+  index: number;
+  requestCount: number;
+  coverage: number;
+}
+
+export interface LongitudinalSummary {
+  timezone: string;
+  days: 28 | 90 | 365;
+  startDate: string;
+  throughDate: string;
+  families: ModelFamily[];
+  observedDays: number;
+  measuredRequests: number;
+  measuredOutputTokens: number;
+  qualifiedDays: number;
+  comparableRequestCoverage: number;
+  quality: 'robust' | 'directional' | 'insufficient';
+  variationPct: number | null;
+  trendPct: number | null;
+  points: LongitudinalPoint[];
+  refusalsRecorded: boolean;
+  refusals: LongitudinalRefusalDay[];
 }
 
 export interface HistogramBin {

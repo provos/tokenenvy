@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DailyPoint, ModelFamily } from '$lib/types';
+  import type { DailyPoint, LongitudinalRefusalDay, ModelFamily } from '$lib/types';
   import {
     areaPath,
     chartMaximum,
@@ -8,6 +8,7 @@
     dayLabel,
     FAMILY_COLORS,
     linePath,
+    refusalDayLabel,
   } from './chart';
 
   interface Props {
@@ -15,17 +16,32 @@
     timezone: string;
     today: string;
     visibleFamilies: ModelFamily[];
+    refusals?: LongitudinalRefusalDay[];
     selectedDate: string | null;
     onselect: (date: string) => void;
   }
 
-  let { points, timezone, today, visibleFamilies, selectedDate, onselect }: Props = $props();
+  let {
+    points,
+    timezone,
+    today,
+    visibleFamilies,
+    refusals = [],
+    selectedDate,
+    onselect,
+  }: Props = $props();
   const width = 820;
   const height = 286;
-  const pad = { top: 24, right: 18, bottom: 54, left: 52 };
+  const pad = { top: 40, right: 18, bottom: 54, left: 52 };
   let chart = $state<SVGSVGElement>();
   let keyboardDate = $state<string | null>(null);
-  let dates = $derived([...new Set(points.map((point) => point.date))].sort());
+  let measuredDates = $derived([...new Set(points.map((point) => point.date))].sort());
+  let dates = $derived(
+    [...new Set([...measuredDates, ...refusals.map((refusal) => refusal.date)])].sort(),
+  );
+  let refusalsByDate = $derived(
+    new Map(refusals.map((refusal) => [refusal.date, refusal] as const)),
+  );
   let filtered = $derived(points.filter((point) => visibleFamilies.includes(point.family)));
   let max = $derived(chartMaximum(filtered));
   let families = $derived(
@@ -40,12 +56,16 @@
   let tickIndices = $derived(chartTickIndices(dates.length));
 
   $effect(() => {
-    if (dates.length === 0) {
+    if (measuredDates.length === 0) {
       keyboardDate = null;
-    } else if (selectedDate && dates.includes(selectedDate) && keyboardDate !== selectedDate) {
+    } else if (
+      selectedDate &&
+      measuredDates.includes(selectedDate) &&
+      keyboardDate !== selectedDate
+    ) {
       keyboardDate = selectedDate;
-    } else if (!keyboardDate || !dates.includes(keyboardDate)) {
-      keyboardDate = dates.at(-1)!;
+    } else if (!keyboardDate || !measuredDates.includes(keyboardDate)) {
+      keyboardDate = measuredDates.at(-1)!;
     }
   });
 
@@ -59,18 +79,22 @@
       onselect(date);
       return;
     }
-    const current = dates.indexOf(date);
+    const current = measuredDates.indexOf(date);
     let target: number;
     if (event.key === 'ArrowLeft') target = Math.max(0, current - 1);
-    else if (event.key === 'ArrowRight') target = Math.min(dates.length - 1, current + 1);
+    else if (event.key === 'ArrowRight') target = Math.min(measuredDates.length - 1, current + 1);
     else if (event.key === 'Home') target = 0;
-    else if (event.key === 'End') target = dates.length - 1;
+    else if (event.key === 'End') target = measuredDates.length - 1;
     else return;
     event.preventDefault();
-    keyboardDate = dates[target];
+    keyboardDate = measuredDates[target];
     requestAnimationFrame(() =>
       chart?.querySelector<SVGRectElement>(`[data-date="${keyboardDate}"]`)?.focus(),
     );
+  }
+
+  function refusalFor(date: string): LongitudinalRefusalDay | undefined {
+    return refusalsByDate.get(date);
   }
 </script>
 
@@ -90,6 +114,38 @@
       days.
     </desc>
     <g transform={`translate(${pad.left} ${pad.top})`}>
+      {#each refusals as refusal (refusal.date)}
+        {@const x = xFor(refusal.date)}
+        {@const selectedVisible = refusal.selected.userVisible > 0}
+        {@const selectedAttempt = refusal.selected.attempted > 0}
+        {@const unattributedAttempt = refusal.unattributed.attempted > 0}
+        {@const markerInset = selectedAttempt && unattributedAttempt ? 13 : 7}
+        {@const markerX = Math.max(markerInset, Math.min(width - markerInset, x))}
+        {#if selectedAttempt}
+          <g
+            class="refusal-marker"
+            class:user-visible={selectedVisible}
+            class:recovered={!selectedVisible}
+            transform={`translate(${markerX + (unattributedAttempt ? -5 : 0)} -18)`}
+            aria-hidden="true"
+          >
+            <path d="M 0 -7 L 7 6 L -7 6 Z" />
+            <line x1="0" x2="0" y1="-3" y2="2" />
+            <circle cx="0" cy="4" r="0.8" />
+          </g>
+        {/if}
+        {#if unattributedAttempt}
+          <g
+            class="refusal-marker unattributed"
+            transform={`translate(${markerX + (selectedAttempt ? 5 : 0)} -18)`}
+            aria-hidden="true"
+          >
+            <path d="M 0 -7 L 7 6 L -7 6 Z" />
+            <line x1="0" x2="0" y1="-3" y2="2" />
+            <circle cx="0" cy="4" r="0.8" />
+          </g>
+        {/if}
+      {/each}
       {#each gridValues as value (value)}
         {@const y = height - (value / max) * height}
         <line class="grid-line" x1="0" x2={width} y1={y} y2={y} />
@@ -159,24 +215,27 @@
       {#each dates as date, index (date)}
         {@const x = xFor(date)}
         {@const tickLabel = chartTickLabel(date, today, timezone)}
-        <rect
-          class="day-target"
-          class:selected={selectedDate === date}
-          x={Math.max(0, x - Math.max(5, width / Math.max(1, dates.length) / 2))}
-          y="0"
-          width={Math.max(10, width / Math.max(1, dates.length))}
-          {height}
-          data-date={date}
-          tabindex={keyboardDate === date ? 0 : -1}
-          role="button"
-          aria-pressed={selectedDate === date}
-          aria-label={`Select ${tickLabel.accessible} for the daily summary`}
-          onclick={() => {
-            keyboardDate = date;
-            onselect(date);
-          }}
-          onkeydown={(event) => selectFromKey(event, date)}
-        />
+        {@const refusal = refusalFor(date)}
+        {#if measuredDates.includes(date)}
+          <rect
+            class="day-target"
+            class:selected={selectedDate === date}
+            x={Math.max(0, x - Math.max(5, width / Math.max(1, measuredDates.length) / 2))}
+            y="0"
+            width={Math.max(10, width / Math.max(1, measuredDates.length))}
+            {height}
+            data-date={date}
+            tabindex={keyboardDate === date ? 0 : -1}
+            role="button"
+            aria-pressed={selectedDate === date}
+            aria-label={`Select ${tickLabel.accessible} for the daily summary${refusal ? `. ${refusalDayLabel(refusal)}` : ''}`}
+            onclick={() => {
+              keyboardDate = date;
+              onselect(date);
+            }}
+            onkeydown={(event) => selectFromKey(event, date)}
+          />
+        {/if}
         {#if tickIndices.includes(index)}
           <text
             class="axis-label"
@@ -206,12 +265,31 @@
   </svg>
 </div>
 
+{#if refusals.length}
+  <div class="chart-refusal-legend">
+    <span class="refusal-legend-marker" aria-hidden="true">▲</span>
+    <span>Explicit classifier refusal signals by day</span>
+    {#if refusals.some((day) => day.unattributed.attempted > 0)}
+      <small>Gray outline means the model family was unavailable.</small>
+    {/if}
+  </div>
+  <ul class="sr-only" aria-label="Explicit classifier refusal signals by day">
+    {#each refusals as refusal (refusal.date)}
+      <li>{dayLabel(refusal.date, timezone)}: {refusalDayLabel(refusal)}</li>
+    {/each}
+  </ul>
+{/if}
+
 <details class="table-alternative">
   <summary>View as accessible table</summary>
   <div class="table-scroll">
     <table>
       <thead>
-        <tr><th>Date</th><th>Model</th><th>Median</th><th>Middle 50%</th><th>Requests</th></tr>
+        <tr
+          ><th>Date</th><th>Model</th><th>Median</th><th>Middle 50%</th><th>Requests</th><th
+            >Refusals</th
+          ></tr
+        >
       </thead>
       <tbody>
         {#each [...filtered].sort((a, b) => b.date.localeCompare(a.date) || a.family.localeCompare(b.family)) as point (`${point.date}:${point.family}`)}
@@ -230,6 +308,11 @@
             <td>{point.median.toFixed(1)}</td>
             <td>{point.q1.toFixed(1)}–{point.q3.toFixed(1)}</td>
             <td>{point.count.toLocaleString()}</td>
+            <td
+              >{refusalFor(point.date)
+                ? refusalDayLabel(refusalFor(point.date)!)
+                : 'No explicit signal recorded'}</td
+            >
           </tr>
         {/each}
       </tbody>

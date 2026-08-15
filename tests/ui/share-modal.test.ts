@@ -2,6 +2,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import ShareModal from '../../src/lib/components/ShareModal.svelte';
 import {
+  buildShareCardData,
   getShareSentimentDescription,
   type ShareRefusalCounts,
 } from '../../src/lib/components/share';
@@ -69,16 +70,18 @@ describe('share-card customization', () => {
     expect(body).toContain(
       'Brutal</span><span>Rough</span><span>Neutral</span><span>Good</span><span>Glorious',
     );
-    expect(body).toContain('2 refusals · 1 recovered · 1 user-visible');
-    expect(body).toContain('Run it yourself · npx tokenenvy');
+    expect(body).toContain('2 refusal signals · 1 recovered · 1 user-visible');
+    expect(body).toContain('explicit lower bound');
+    expect(normalizedBody.match(/explicit lower bound/g)).toHaveLength(2);
+    expect(body).toContain('Measure yours · npx tokenenvy');
     expect(body).toContain('A Security Blueprints, LLC project · securityblueprints.io');
     expect(body).toContain('class="share-preview-headline"');
     expect(body).toContain('class="share-metric-lockup"');
     expect(body).toContain('<span>tok/s</span>');
-    expect(body).toContain('effective output · end-to-end wall time');
+    expect(body).toContain('effective output · wait + think time included');
     expect(body).toContain('Copy text receipt');
     expect(normalizedBody).toContain(
-      'Starts from your adjusted comparable-day result. Move it anywhere. It changes the attitude, expression, and palette while your stats stay fixed.',
+      'Comparable days suggested Good. 1 user-visible refusal signal moved it to Rough. Pick the mood; the numbers stay put.',
     );
   });
 
@@ -103,21 +106,35 @@ describe('share-card customization', () => {
     );
 
     expect(body).toContain('class="share-preview-refusals"');
-    expect(body).toContain('Refusals: explicit signals unavailable');
+    expect(body).toContain('Explicit refusal signals unavailable');
   });
 
   it('explains why an ineligible comparison starts at Neutral', () => {
     expect(
-      getShareSentimentDescription({
-        value: 104.4,
-        ciLow: null,
-        ciHigh: null,
-        percentile: 66.7,
-        eligible: false,
-        reason: 'Not enough comparable model and output-size coverage',
-      }),
+      getShareSentimentDescription(
+        buildShareCardData({
+          date: detail.date,
+          median: detail.summary.median,
+          count: detail.summary.count,
+          sessions: detail.summary.sessions,
+          outputTokens: detail.summary.outputTokens,
+          isToday: true,
+          speedIndex: {
+            value: 104.4,
+            ciLow: null,
+            ciHigh: null,
+            percentile: 66.7,
+            eligible: false,
+            reason: 'Not enough comparable model and output-size coverage',
+          },
+          refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+          models: [],
+          histogram: [],
+        }),
+        'Not enough comparable model and output-size coverage',
+      ),
     ).toBe(
-      'Starts at Neutral. Not enough comparable model and output-size coverage. Move it anywhere. It changes the attitude, expression, and palette while your stats stay fixed.',
+      'Neutral for now. Not enough comparable model and output-size coverage. Pick the mood; the numbers stay put.',
     );
   });
 });

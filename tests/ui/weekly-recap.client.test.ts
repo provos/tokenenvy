@@ -26,6 +26,14 @@ const initialRecap: WeeklyRecapData = {
   models: [{ family: 'sonnet', requestCount: 60, outputTokens: 18_000, share: 0.72 }],
   fastestDay: { date: '2026-08-13', median: 91 },
   slowestDay: { date: '2026-08-11', median: 54 },
+  refusals: {
+    recorded: true,
+    attempted: 0,
+    recovered: 0,
+    userVisible: 0,
+    unknown: 0,
+    affectedDates: [],
+  },
 };
 
 const updatedRecap: WeeklyRecapData = {
@@ -37,6 +45,22 @@ const updatedRecap: WeeklyRecapData = {
   models: [{ family: 'opus', requestCount: 100, outputTokens: 41_000, share: 0.88 }],
   fastestDay: { date: '2026-08-14', median: 45 },
   slowestDay: { date: '2026-08-12', median: 21 },
+  refusals: {
+    recorded: true,
+    attempted: 2,
+    recovered: 1,
+    userVisible: 1,
+    unknown: 0,
+    affectedDates: [
+      {
+        date: '2026-08-14',
+        attempted: 2,
+        recovered: 1,
+        userVisible: 1,
+        unknown: 0,
+      },
+    ],
+  },
 };
 
 function click(target: ParentNode, selector: string) {
@@ -69,6 +93,13 @@ describe('weekly recap client state', () => {
       await tick();
       expect(weeklyMetric(target)).toBe('72');
       expect(target.textContent).toContain('25K output tokens');
+      const mood = target.querySelector<HTMLInputElement>('#weekly-sentiment');
+      expect(mood?.getAttribute('aria-valuetext')).toBe('Positive');
+      if (!mood) throw new Error('Missing weekly mood slider');
+      mood.value = '2';
+      flushSync(() => mood.dispatchEvent(new Event('input', { bubbles: true })));
+      await tick();
+      expect(mood.getAttribute('aria-valuetext')).toBe('Very positive');
       const renderCount = renderSpy.mock.calls.length;
       expect(renderCount).toBeGreaterThan(0);
 
@@ -77,6 +108,8 @@ describe('weekly recap client state', () => {
       expect(weeklyMetric(target)).toBe('72');
       expect(target.textContent).toContain('25K output tokens');
       expect(target.textContent).not.toContain('70K output tokens');
+      expect(target.textContent).not.toContain('2 refusal signals');
+      expect(mood.getAttribute('aria-valuetext')).toBe('Very positive');
       expect(renderSpy).toHaveBeenCalledTimes(renderCount);
 
       flushSync(() => click(target, '.weekly-recap-modal .icon-button'));
@@ -84,6 +117,19 @@ describe('weekly recap client state', () => {
       await tick();
       expect(weeklyMetric(target)).toBe('31');
       expect(target.textContent).toContain('70K output tokens');
+      const refreshedMood = target.querySelector<HTMLInputElement>('#weekly-sentiment');
+      expect(refreshedMood?.getAttribute('aria-valuetext')).toBe('Very negative');
+      expect(target.textContent).toContain('2 refusal signals · 1 recovered · 1 user-visible');
+      const marker = target.querySelector<HTMLElement>('[data-weekday="5"]');
+      expect(marker?.classList.contains('affected')).toBe(true);
+      expect(marker?.classList.contains('user-visible')).toBe(true);
+      if (!refreshedMood) throw new Error('Missing refreshed weekly mood slider');
+      refreshedMood.value = '2';
+      flushSync(() => refreshedMood.dispatchEvent(new Event('input', { bubbles: true })));
+      await tick();
+      expect(refreshedMood.getAttribute('aria-valuetext')).toBe('Very positive');
+      expect(target.textContent).toContain('2 refusal signals · 1 recovered · 1 user-visible');
+      expect(marker?.classList.contains('user-visible')).toBe(true);
       expect(renderSpy.mock.calls.length).toBeGreaterThan(renderCount);
     } finally {
       renderSpy.mockRestore();

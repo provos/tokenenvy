@@ -116,8 +116,16 @@
   let tagline = $derived(getShareTagline(tone, sentiment, card));
   let moodLine = $derived(getShareMoodLine(card));
   let refusalLine = $derived(getShareRefusalLine(card));
+  let refusalImageLine = $derived(refusalLine);
+  let refusalSeverity = $derived(
+    card.refusals.userVisible > 0
+      ? 'user-visible'
+      : card.refusals.attempted > 0
+        ? 'attempted'
+        : 'none',
+  );
   let sentimentDescription = $derived(
-    getShareSentimentDescription(inputSnapshot.detail.speedIndex),
+    getShareSentimentDescription(card, inputSnapshot.detail.speedIndex.reason),
   );
   let previewLabel = $derived(
     [
@@ -127,7 +135,7 @@
       tagline,
       `${Math.round(card.median)} effective output tokens per second`,
       moodLine,
-      refusalLine || null,
+      refusalImageLine || null,
       SHARE_INSTALL_CTA,
     ]
       .filter((line): line is string => Boolean(line))
@@ -182,7 +190,7 @@
       card,
       tagline,
       moodLine,
-      refusalLine,
+      refusalLine: refusalImageLine,
       sentiment,
       theme: sentimentTheme,
       tone,
@@ -367,15 +375,24 @@
 
     if (currentRefusals) {
       context.textAlign = 'center';
-      context.fillStyle = currentTheme.accent;
-      drawFittedText(context, currentRefusals, {
-        x: centerX,
-        baseline: 590,
-        maxWidth: 1040,
-        maxFontSize: 17,
-        minFontSize: 14,
-        weight: 600,
-      });
+      context.fillStyle =
+        currentCard.refusals.userVisible > 0
+          ? '#ff826f'
+          : currentCard.refusals.attempted > 0
+            ? '#f0bd68'
+            : currentTheme.mutedText;
+      drawFittedText(
+        context,
+        `${currentCard.refusals.attempted > 0 ? '▲ ' : ''}${currentRefusals}`,
+        {
+          x: centerX,
+          baseline: 590,
+          maxWidth: 1040,
+          maxFontSize: 17,
+          minFontSize: 14,
+          weight: 600,
+        },
+      );
     }
 
     context.save();
@@ -738,9 +755,9 @@
   >
     <header class="drawer-header">
       <div>
-        <p class="eyebrow">Share a daily card</p>
-        <h2 id="share-title">Make this day a little competitive</h2>
-        <p>Only aggregate speed statistics shown in the preview leave this browser.</p>
+        <p class="eyebrow">Daily receipt</p>
+        <h2 id="share-title">Put a number on the feeling</h2>
+        <p>Only the aggregate stats in this preview leave your browser.</p>
       </div>
       <button
         class="icon-button"
@@ -854,8 +871,13 @@
             <span>{getShareModelLine(card)}</span>
             <strong>{SHARE_INSTALL_CTA}</strong>
           </div>
-          {#if refusalLine}
-            <span class="share-preview-refusals">{refusalLine}</span>
+          {#if refusalImageLine}
+            <span
+              class="share-preview-refusals"
+              class:attempted={refusalSeverity === 'attempted'}
+              class:user-visible={refusalSeverity === 'user-visible'}
+              >{card.refusals.attempted > 0 ? '▲ ' : ''}{refusalImageLine}</span
+            >
           {/if}
         </div>
       </div>
@@ -886,9 +908,9 @@
 
       <section class="composer-guide" aria-labelledby="composer-title">
         <div>
-          <p class="eyebrow">Post it</p>
-          <h3 id="composer-title">Prepare the image, then open a composer</h3>
-          <p>X and Bluesky can prefill text, but browsers cannot attach this image for them.</p>
+          <p class="eyebrow">Compare notes</p>
+          <h3 id="composer-title">How did Claude Code treat everyone else?</h3>
+          <p>Post the card. Ask a friend to bring theirs.</p>
         </div>
         <div class="composer-buttons">
           <button class="secondary-button" type="button" onclick={() => openComposer('x')}

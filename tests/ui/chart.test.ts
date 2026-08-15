@@ -15,6 +15,7 @@ import {
   getShareImageFilename,
   getShareMoodLine,
   getShareRefusalLine,
+  getShareSentimentDescription,
   getShareSentimentTheme,
   getShareTagline,
   getShareTextReceipt,
@@ -149,29 +150,72 @@ describe('privacy-safe share-card data', () => {
     expect(card.models.map(({ family }) => family)).toEqual(['opus', 'sonnet']);
     expect(card.histogram).toHaveLength(40);
     expect(JSON.stringify(card)).not.toContain(privateMarker);
-    expect(suggestedShareSentiment(card)).toBe(1);
+    expect(suggestedShareSentiment(card)).toBe(-1);
     const spicyTaglines = (isToday: boolean) =>
       SHARE_SENTIMENTS.map((sentiment) =>
         getShareTagline('spicy', sentiment, { ...card, isToday }),
       );
+    const friendlyTaglines = (isToday: boolean) =>
+      SHARE_SENTIMENTS.map((sentiment) =>
+        getShareTagline('friendly', sentiment, { ...card, isToday }),
+      );
+    expect(friendlyTaglines(true)).toEqual([
+      'Claude Code made me wait today',
+      'Claude Code dragged its feet today',
+      'Claude Code kept pace today',
+      'Claude Code moved fast today',
+      'Claude Code flew today',
+    ]);
     expect(spicyTaglines(true)).toEqual([
       'Anthropic hates me today',
-      'Anthropic is testing me today',
-      'Anthropic and I are on speaking terms',
-      'Anthropic likes me today',
+      'Anthropic made me earn every token today',
+      'Anthropic and I called it even today',
+      'Anthropic was feeling generous today',
       'Anthropic loves me today',
+    ]);
+    expect(friendlyTaglines(false)).toEqual([
+      'Claude Code made me wait that day',
+      'Claude Code dragged its feet that day',
+      'Claude Code kept pace that day',
+      'Claude Code moved fast that day',
+      'Claude Code flew that day',
     ]);
     expect(spicyTaglines(false)).toEqual([
       'Anthropic hated me that day',
-      'Anthropic was testing me that day',
-      'Anthropic and I were on speaking terms',
-      'Anthropic liked me that day',
+      'Anthropic made me earn every token that day',
+      'Anthropic and I called it even that day',
+      'Anthropic was feeling generous that day',
       'Anthropic loved me that day',
     ]);
+    expect(getShareSentimentDescription(card)).toBe(
+      'Comparable days suggested Good. 1 user-visible refusal signal moved it to Rough. Pick the mood; the numbers stay put.',
+    );
     expect(getShareMoodLine(card)).toBe('Faster than 88% of my comparable days');
     expect(getShareRefusalLine(card)).toBe(
-      '3 refusals · 1 recovered · 1 user-visible · 1 unresolved',
+      '3 refusal signals · 1 recovered · 1 user-visible · 1 unresolved · explicit lower bound',
     );
+    const xCaption = getShareCaption('spicy', -1, card, 'x', null);
+    expect(xCaption).toContain(
+      '3 refusal signals: 1 recovered/1 visible/1 unresolved; lower bound.',
+    );
+    expect(xCaption).toContain('Local stats; prompts private.');
+    expect(xCaption).toContain('#TokenEnvy · securityblueprints.io');
+    expect(xCaption.startsWith('Anthropic made me earn every token today.')).toBe(true);
+    expect(xCaption.length).toBeLessThanOrEqual(250);
+
+    const blueskyCaption = getShareCaption(
+      'spicy',
+      -1,
+      card,
+      'bluesky',
+      'https://www.npmjs.com/package/tokenenvy',
+    );
+    expect(blueskyCaption.startsWith('Anthropic made me earn every token today.')).toBe(true);
+    expect(blueskyCaption).toContain(
+      '3 refusal signals: 1 recovered/1 visible/1 unresolved; lower bound.',
+    );
+    expect(blueskyCaption).toContain('#TokenEnvy · securityblueprints.io');
+    expect(blueskyCaption.length).toBeLessThanOrEqual(300);
     expect(normalizeHistogram(card.histogram, card.median).some((bar) => bar.containsMedian)).toBe(
       true,
     );
@@ -280,28 +324,31 @@ describe('privacy-safe share-card data', () => {
     });
 
     expect(suggestedShareSentiment(card)).toBe(0);
-    expect(getShareTagline('friendly', 0, card)).toBe('Claude Code kept it steady that day');
-    expect(getShareTagline('spicy', 0, card)).toBe('Anthropic and I were on speaking terms');
+    expect(getShareTagline('friendly', 0, card)).toBe('Claude Code kept pace that day');
+    expect(getShareTagline('spicy', 0, card)).toBe('Anthropic and I called it even that day');
     expect(getShareCaption('friendly', 0, card, 'bluesky', 'https://tokenenvy.example/')).toContain(
       'https://tokenenvy.example/',
     );
     expect(getShareCaption('friendly', 0, card, 'bluesky', null)).toContain(
-      'How does your Claude Code speed compare?',
+      'How did Claude treat you that day?',
     );
     expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
-      'Built by Security Blueprints, LLC: securityblueprints.io',
+      '#TokenEnvy · securityblueprints.io',
     );
     expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
-      'Measured locally. Prompts stay private.',
+      'Local stats; prompts private.',
     );
     expect(
       getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/'),
     ).not.toContain('https://tokenenvy.example/');
     expect(getShareCaption('friendly', 0, card, 'linkedin', null)).toContain(
-      '\n\nMy Token Envy receipt:',
+      '\n\nToken Envy receipt:',
     );
-    expect(getShareRefusalLine(card)).toBe('Refusals: explicit signals unavailable');
+    expect(getShareRefusalLine(card)).toBe('Explicit refusal signals unavailable');
     expect(getShareMoodLine(card)).toBe('Building a comparable baseline');
+    expect(getShareSentimentDescription(card, card.indexLabel)).toBe(
+      'Neutral for now. Building a comparable baseline. Pick the mood; the numbers stay put.',
+    );
   });
 
   it('omits a recorded zero refusal line from the compact card', () => {
@@ -364,12 +411,11 @@ describe('privacy-safe share-card data', () => {
       'https://www.npmjs.com/package/tokenenvy',
     );
     expect(receipt).toContain('Token Envy daily receipt\n2026-08-14');
-    expect(receipt).toContain('3 refusals · 1 recovered · 1 user-visible · 1 unresolved');
     expect(receipt).toContain(
-      'Refusals reflect explicit transcript signals and remain a lower bound.',
+      '3 refusal signals · 1 recovered · 1 user-visible · 1 unresolved · explicit lower bound',
     );
     expect(receipt).toContain('Measured locally. Prompts stay private.');
-    expect(receipt).toContain('Run it yourself · npx tokenenvy');
+    expect(receipt).toContain('Measure yours · npx tokenenvy');
     expect(receipt).toContain('Built by Security Blueprints, LLC: securityblueprints.io');
   });
 });

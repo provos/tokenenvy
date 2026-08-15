@@ -661,6 +661,39 @@ main {
   white-space: nowrap;
 }
 
+.chart-heading-actions {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+
+.compact-button {
+  min-height: 36px;
+  padding-inline: 13px;
+  white-space: nowrap;
+}
+
+.inline-share-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 13px;
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--line));
+  border-radius: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.inline-share-error button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .family-filters {
   display: flex;
   flex-wrap: wrap;
@@ -787,6 +820,57 @@ main {
   stroke-linejoin: round;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+}
+
+.refusal-marker path,
+.refusal-marker line,
+.refusal-marker circle {
+  stroke: var(--amber);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.refusal-marker path {
+  fill: color-mix(in srgb, var(--amber) 10%, var(--panel-solid));
+}
+
+.refusal-marker.user-visible path {
+  fill: color-mix(in srgb, var(--danger) 74%, var(--panel-solid));
+  stroke: var(--danger);
+}
+
+.refusal-marker.user-visible line,
+.refusal-marker.user-visible circle {
+  stroke: var(--panel-solid);
+}
+
+.refusal-marker.unattributed path {
+  fill: var(--panel-solid);
+  stroke: var(--text-faint);
+  stroke-dasharray: 2 2;
+}
+
+.refusal-marker.partially-unattributed path {
+  stroke-dasharray: 2 2;
+}
+
+.chart-refusal-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: -7px 0 9px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.chart-refusal-legend small {
+  color: var(--text-faint);
+}
+
+.refusal-legend-marker {
+  color: var(--amber);
+  font-size: 10px;
 }
 
 .ci-whisker {
@@ -2180,13 +2264,29 @@ td .model-dot {
 }
 
 .share-preview-refusals {
-  color: var(--share-accent);
+  color: var(--share-muted);
   font-size: clamp(7px, 1.2vw, 10px);
   font-weight: 620;
   text-align: center;
 }
 
+.share-preview-refusals.attempted {
+  color: #f0bd68;
+}
+
+.share-preview-refusals.user-visible {
+  color: #ff826f;
+}
+
 .weekly-recap-preview {
+  --weekly-bg-start: #07151c;
+  --weekly-bg-middle: #102a31;
+  --weekly-bg-end: #302a29;
+  --weekly-accent: #5fd6bd;
+  --weekly-secondary: #ff795f;
+  --weekly-text: #f2eee6;
+  --weekly-muted: rgba(242, 238, 230, 0.68);
+  --weekly-glow: rgba(95, 214, 189, 0.17);
   aspect-ratio: 1200 / 630;
   min-height: 360px;
   display: grid;
@@ -2198,9 +2298,15 @@ td .model-dot {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 19px;
   background:
-    radial-gradient(circle at 50% 45%, rgba(95, 214, 189, 0.17), transparent 46%),
-    linear-gradient(125deg, #07151c, #102a31 55%, #302a29);
-  color: #f2eee6;
+    radial-gradient(circle at 50% 45%, var(--weekly-glow), transparent 46%),
+    linear-gradient(
+      125deg,
+      var(--weekly-bg-start),
+      var(--weekly-bg-middle) 55%,
+      var(--weekly-bg-end)
+    );
+  color: var(--weekly-text);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.28);
 }
 
 .weekly-recap-preview::after {
@@ -2212,7 +2318,7 @@ td .model-dot {
   right: -80px;
   bottom: -150px;
   border-radius: 50%;
-  background: rgba(255, 121, 95, 0.17);
+  background: var(--weekly-glow);
   filter: blur(26px);
 }
 
@@ -2223,7 +2329,6 @@ td .model-dot {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   align-items: center;
-  opacity: 0.13;
 }
 
 .weekly-recap-signal::before {
@@ -2232,7 +2337,8 @@ td .model-dot {
   position: absolute;
   inset: 50% 4% auto;
   transform: translateY(-50%);
-  background: #ff795f;
+  background: var(--weekly-secondary);
+  opacity: 0.13;
 }
 
 .weekly-recap-signal i {
@@ -2241,13 +2347,32 @@ td .model-dot {
   position: relative;
   justify-self: center;
   border-radius: 50%;
-  background: #f2eee6;
+  background: color-mix(in srgb, var(--weekly-text) 13%, transparent);
 }
 
 .weekly-recap-signal i.observed {
   width: 20px;
   height: 20px;
-  background: #5fd6bd;
+  background: color-mix(in srgb, var(--weekly-accent) 13%, transparent);
+}
+
+.weekly-recap-signal i.affected::after {
+  content: '';
+  width: 0;
+  height: 0;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid #f0bd68;
+  border-left: 7px solid transparent;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.45));
+  opacity: 1;
+}
+
+.weekly-recap-signal i.user-visible::after {
+  border-bottom-color: #ff826f;
 }
 
 .weekly-recap-header,
@@ -2256,13 +2381,13 @@ td .model-dot {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  color: rgba(242, 238, 230, 0.68);
+  color: var(--weekly-muted);
   font-size: clamp(8px, 1.5vw, 12px);
 }
 
 .weekly-recap-header strong,
 .weekly-recap-footer > strong {
-  color: #ff795f;
+  color: var(--weekly-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 680;
 }
@@ -2279,7 +2404,7 @@ td .model-dot {
 }
 
 .weekly-recap-header .share-brand-lockup small {
-  color: rgba(242, 238, 230, 0.68);
+  color: var(--weekly-muted);
 }
 
 .weekly-recap-center {
@@ -2309,7 +2434,7 @@ td .model-dot {
 }
 
 .weekly-recap-center > span {
-  color: rgba(242, 238, 230, 0.65);
+  color: var(--weekly-muted);
   font-size: clamp(7px, 1.25vw, 10px);
   font-weight: 650;
   letter-spacing: 0.055em;
@@ -2318,7 +2443,7 @@ td .model-dot {
 
 .weekly-recap-center > em {
   margin-top: clamp(5px, 1.2vw, 10px);
-  color: #5fd6bd;
+  color: var(--weekly-accent);
   font-size: clamp(8px, 1.4vw, 12px);
   font-style: normal;
   font-weight: 650;
@@ -2345,7 +2470,7 @@ td .model-dot {
 }
 
 .weekly-recap-standouts small {
-  color: rgba(242, 238, 230, 0.55);
+  color: var(--weekly-muted);
   font-size: clamp(6px, 1.05vw, 8px);
   font-weight: 650;
   letter-spacing: 0.05em;
@@ -2357,7 +2482,7 @@ td .model-dot {
 }
 
 .weekly-recap-standouts em {
-  color: rgba(242, 238, 230, 0.68);
+  color: var(--weekly-muted);
   font-size: clamp(7px, 1.2vw, 9px);
   font-style: normal;
 }
@@ -2378,8 +2503,24 @@ td .model-dot {
 
 .weekly-recap-footer > small {
   grid-column: 1 / -1;
-  color: #5fd6bd;
+  color: var(--weekly-accent);
   text-align: center;
+}
+
+.weekly-recap-refusals {
+  grid-column: 1 / -1;
+  color: var(--weekly-muted);
+  font-size: clamp(6px, 1.2vw, 10px);
+  font-weight: 650;
+  text-align: center;
+}
+
+.weekly-recap-refusals.attempted {
+  color: #f0bd68;
+}
+
+.weekly-recap-refusals.user-visible {
+  color: #ff826f;
 }
 
 .weekly-context-note {
@@ -2488,6 +2629,208 @@ td .model-dot {
 .share-status {
   min-height: 15px;
   color: var(--mint);
+  text-align: center;
+}
+
+.longitudinal-share-modal {
+  width: min(1040px, calc(100vw - 32px));
+}
+
+.longitudinal-share-preview {
+  --weather-chart-grid: rgba(255, 255, 255, 0.11);
+  container-type: inline-size;
+  aspect-ratio: 1200 / 630;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 2px solid color-mix(in srgb, var(--weather-accent) 32%, transparent);
+  border-radius: 19px;
+  background: linear-gradient(
+    125deg,
+    var(--weather-start),
+    var(--weather-middle) 56%,
+    var(--weather-end)
+  );
+  color: var(--weather-text);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.28);
+}
+
+.longitudinal-share-preview > header {
+  position: absolute;
+  z-index: 3;
+  inset: 5.2% 5.1% auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  color: var(--weather-muted);
+  font-size: clamp(7px, 1.6cqw, 15px);
+  font-weight: 600;
+}
+
+.longitudinal-share-preview .share-brand-lockup strong {
+  color: var(--weather-accent);
+  font-size: clamp(8px, 2cqw, 19px);
+  letter-spacing: 0.1em;
+}
+
+.longitudinal-share-preview .share-brand-lockup small {
+  color: var(--weather-muted);
+  font-size: clamp(5px, 1.15cqw, 11px);
+}
+
+.longitudinal-weather-lines {
+  position: absolute;
+  z-index: -1;
+  inset: 14% -5% 18% 27%;
+  opacity: 0.14;
+}
+
+.longitudinal-weather-lines i {
+  height: 29%;
+  display: block;
+  border-top: clamp(2px, 0.65cqw, 7px) solid var(--weather-accent);
+  border-radius: 50%;
+  transform: rotate(-4deg) skewX(-20deg);
+}
+
+.longitudinal-share-copy {
+  position: absolute;
+  z-index: 2;
+  inset: 22% 66% auto 5.1%;
+  display: grid;
+  align-content: start;
+  gap: clamp(2px, 1cqw, 10px);
+}
+
+.longitudinal-share-copy p {
+  min-height: 2.2em;
+  margin: 0;
+  overflow: hidden;
+  color: var(--weather-text);
+  font-size: clamp(10px, 3.2cqw, 31px);
+  font-weight: 720;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.longitudinal-share-copy > strong {
+  color: var(--weather-text);
+  font-size: clamp(31px, 9.8cqw, 96px);
+  font-weight: 780;
+  line-height: 0.9;
+  letter-spacing: -0.075em;
+}
+
+.longitudinal-share-copy > span {
+  color: var(--weather-muted);
+  font-size: clamp(5px, 1.35cqw, 13px);
+  font-weight: 680;
+  line-height: 1.25;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.longitudinal-share-copy > em {
+  color: var(--weather-accent);
+  font-size: clamp(6px, 1.65cqw, 16px);
+  font-style: normal;
+  font-weight: 680;
+}
+
+.longitudinal-share-chart {
+  width: 60%;
+  height: 38%;
+  position: absolute;
+  z-index: 1;
+  inset: 24% 5.1% auto auto;
+  overflow: visible;
+}
+
+.longitudinal-share-chart line {
+  stroke: var(--weather-chart-grid);
+  stroke-width: 1;
+}
+
+.longitudinal-share-chart polyline {
+  fill: none;
+  stroke: var(--weather-accent);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--weather-accent) 45%, transparent));
+}
+
+.longitudinal-share-chart path {
+  fill: color-mix(in srgb, var(--amber) 20%, transparent);
+  stroke: var(--amber);
+  stroke-width: 2;
+}
+
+.longitudinal-share-chart path.user-visible {
+  fill: var(--danger);
+  stroke: var(--danger);
+}
+
+.longitudinal-share-chart path.unattributed {
+  fill: transparent;
+  stroke: var(--weather-muted);
+  stroke-dasharray: 3 2;
+}
+
+.longitudinal-refusal-copy {
+  position: absolute;
+  z-index: 2;
+  inset: 64.5% 5.1% auto 35%;
+  display: grid;
+  gap: 2px;
+  color: var(--weather-muted);
+  font-size: clamp(5px, 1.35cqw, 13px);
+  font-weight: 620;
+  text-align: right;
+}
+
+.longitudinal-refusal-copy span:first-child {
+  color: var(--weather-muted);
+}
+
+.longitudinal-refusal-copy.attempted span:first-child {
+  color: #f0bd68;
+}
+
+.longitudinal-refusal-copy.user-visible span:first-child {
+  color: #ff826f;
+}
+
+.longitudinal-share-preview > footer {
+  position: absolute;
+  z-index: 2;
+  inset: 78% 5.1% auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: clamp(3px, 0.9cqw, 9px) 20px;
+  padding-top: 2.3%;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--weather-muted);
+  font-size: clamp(6px, 1.55cqw, 15px);
+}
+
+.longitudinal-share-preview > footer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.longitudinal-share-preview > footer > strong {
+  color: var(--weather-accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.longitudinal-share-preview > footer > small {
+  grid-column: 1 / -1;
+  font-size: clamp(5px, 1.15cqw, 11px);
   text-align: center;
 }
 
@@ -2878,7 +3221,7 @@ td .model-dot {
     grid-template-rows: auto minmax(145px, 1fr) auto auto;
     padding: 16px;
   }
-  .weekly-recap-footer > span {
+  .weekly-recap-footer > span:not(.weekly-recap-refusals) {
     display: none;
   }
   .weekly-recap-footer {

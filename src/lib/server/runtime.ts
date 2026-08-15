@@ -3,6 +3,8 @@ import { Database } from '$lib/server/database';
 import { normalizeRoots, Scanner } from '$lib/server/scanner';
 import type {
   DayDetailResponse,
+  LongitudinalSummary,
+  ModelFamily,
   OverviewResponse,
   QuotaResponse,
   RefusalSummary,
@@ -132,6 +134,10 @@ export class DashboardRuntime {
 
   series(days: number): SeriesResponse {
     return this.analytics.series(days, this.timezone);
+  }
+
+  longitudinal(days: 28 | 90 | 365, families: ModelFamily[]): LongitudinalSummary {
+    return this.analytics.longitudinal(days, families, this.timezone);
   }
 
   day(date: string): DayDetailResponse | null {

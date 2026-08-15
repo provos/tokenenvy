@@ -398,6 +398,38 @@ describe('analytics', () => {
         });
       }
     }
+    const refusalInsert = database.db.prepare(`
+      INSERT INTO events(event_id, request_id, session_id, timestamp_ms, type, refusal_outcome)
+      VALUES (?, ?, ?, ?, 'system', ?)
+    `);
+    refusalInsert.run(
+      'weekly-recovered',
+      'weekly-current-1-0',
+      'weekly-current-session-0',
+      Date.parse('2026-08-11T12:00:00Z'),
+      'recovered',
+    );
+    refusalInsert.run(
+      'weekly-visible',
+      'weekly-current-3-0',
+      'weekly-current-session-0',
+      Date.parse('2026-08-13T12:00:00Z'),
+      'user_visible',
+    );
+    refusalInsert.run(
+      'weekly-unknown',
+      null,
+      'weekly-unknown-session',
+      Date.parse('2026-08-13T13:00:00Z'),
+      'unknown',
+    );
+    refusalInsert.run(
+      'prior-week-visible',
+      null,
+      'prior-week-session',
+      Date.parse('2026-08-09T12:00:00Z'),
+      'user_visible',
+    );
 
     const recap = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).weekly
       .recap;
@@ -418,10 +450,217 @@ describe('analytics', () => {
       },
       fastestDay: { date: '2026-08-14', median: 35 },
       slowestDay: { date: '2026-08-13', median: 15 },
+      refusals: {
+        recorded: true,
+        attempted: 3,
+        recovered: 1,
+        userVisible: 1,
+        unknown: 1,
+        affectedDates: [
+          {
+            date: '2026-08-11',
+            attempted: 1,
+            recovered: 1,
+            userVisible: 0,
+            unknown: 0,
+          },
+          {
+            date: '2026-08-13',
+            attempted: 2,
+            recovered: 0,
+            userVisible: 1,
+            unknown: 1,
+          },
+        ],
+      },
     });
     expect(recap.models).toMatchObject([
       { family: 'sonnet', requestCount: 25, outputTokens: 800, share: 1 },
     ]);
+    database.close();
+  });
+
+  it('uses local week boundaries while deduplicating archived refusal attribution', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'weekly-refusal-timezone-key' });
+    const sundayRefusalAt = Date.parse('2026-08-10T06:30:00Z'); // Sunday 23:30 PDT.
+    const mondayRefusalAt = Date.parse('2026-08-10T07:10:00Z'); // Monday 00:10 PDT.
+    const archivedAt = Date.parse('2026-08-11T12:00:00Z');
+
+    database.db
+      .prepare(
+        `
+        INSERT INTO request_history(
+          request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+          input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
+          tokens_per_second, provisional, quality_reason, archived_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, NULL, ?, ?)
+      `,
+      )
+      .run(
+        'archived-sonnet-request',
+        'archived-sonnet-session',
+        mondayRefusalAt - 1_000,
+        mondayRefusalAt,
+        1_000,
+        32,
+        'sonnet',
+        0,
+        32,
+        archivedAt,
+        archivedAt,
+      );
+    database.db
+      .prepare(
+        `
+        INSERT INTO events(event_id, request_id, session_id, timestamp_ms, type, refusal_outcome)
+        VALUES
+          ('sunday-refusal', NULL, 'sunday-session', ?, 'system', 'user_visible'),
+          ('monday-refusal', 'archived-sonnet-request', 'archived-sonnet-session', ?, 'system', 'recovered')
+      `,
+      )
+      .run(sundayRefusalAt, mondayRefusalAt);
+    database.db
+      .prepare(
+        `
+        INSERT INTO refusal_history(
+          event_id, request_id, session_id, timestamp_ms, refusal_outcome, archived_at, updated_at
+        ) VALUES (
+          'monday-refusal', 'archived-sonnet-request', 'archived-sonnet-session', ?,
+          'recovered', ?, ?
+        )
+      `,
+      )
+      .run(mondayRefusalAt, archivedAt, archivedAt);
+
+    const analytics = new Analytics(database);
+    const now = new Date('2026-08-10T18:00:00Z');
+    const overview = analytics.overview('America/Los_Angeles', now);
+    expect(overview.weekly.recap.refusals).toEqual({
+      recorded: true,
+      attempted: 1,
+      recovered: 1,
+      userVisible: 0,
+      unknown: 0,
+      affectedDates: [
+        {
+          date: '2026-08-10',
+          attempted: 1,
+          recovered: 1,
+          userVisible: 0,
+          unknown: 0,
+        },
+      ],
+    });
+    expect(overview.refusals).toMatchObject({
+      attempted: 2,
+      byDay: [
+        { date: '2026-08-09', attempted: 1 },
+        { date: '2026-08-10', attempted: 1 },
+      ],
+    });
+    expect(analytics.series(2, 'America/Los_Angeles', now).refusals.days).toMatchObject([
+      { date: '2026-08-09', unattributed: { attempted: 1 } },
+      {
+        date: '2026-08-10',
+        families: [{ family: 'sonnet', attempted: 1, recovered: 1 }],
+      },
+    ]);
+    database.close();
+  });
+
+  it('builds a filtered longitudinal weather summary with attributed refusal days', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'longitudinal-key' });
+    const dates = Array.from({ length: 30 }, (_, day) =>
+      new Date(Date.UTC(2026, 6, 16 + day)).toISOString().slice(0, 10),
+    );
+    for (const [dayIndex, date] of dates.entries()) {
+      for (let index = 0; index < 20; index += 1) {
+        insertRequest(database, {
+          id: `sonnet-${dayIndex}-${index}`,
+          sessionId: `sonnet-session-${index % 4}`,
+          date,
+          outputTokens: 32,
+          family: 'sonnet',
+          stratum: 0,
+          tokensPerSecond: 10,
+        });
+      }
+      for (let index = 0; index < 5; index += 1) {
+        insertRequest(database, {
+          id: `opus-${dayIndex}-${index}`,
+          sessionId: `opus-session-${index % 2}`,
+          date,
+          outputTokens: 128,
+          family: 'opus',
+          stratum: 1,
+          tokensPerSecond: 100,
+        });
+      }
+    }
+    const refusalInsert = database.db.prepare(`
+      INSERT INTO events(event_id, request_id, session_id, timestamp_ms, type, refusal_outcome)
+      VALUES (?, ?, ?, ?, 'system', ?)
+    `);
+    refusalInsert.run(
+      'sonnet-refusal',
+      'sonnet-25-0',
+      'sonnet-session-0',
+      Date.parse(`${dates[25]}T12:00:00Z`),
+      'user_visible',
+    );
+    refusalInsert.run(
+      'opus-refusal',
+      'opus-26-0',
+      'opus-session-0',
+      Date.parse(`${dates[26]}T12:00:00Z`),
+      'recovered',
+    );
+    refusalInsert.run(
+      'unattributed-refusal',
+      null,
+      'unknown-session',
+      Date.parse(`${dates[27]}T12:00:00Z`),
+      'unknown',
+    );
+
+    const analytics = new Analytics(database);
+    const now = new Date('2026-08-14T18:00:00Z');
+    const summary = analytics.longitudinal(90, ['sonnet'], 'UTC', now);
+    expect(summary).toMatchObject({
+      families: ['sonnet'],
+      observedDays: 30,
+      measuredRequests: 600,
+      measuredOutputTokens: 19_200,
+      qualifiedDays: 30,
+      comparableRequestCoverage: 1,
+      quality: 'robust',
+      variationPct: 0,
+      trendPct: 0,
+      refusalsRecorded: true,
+    });
+    expect(summary.points).toHaveLength(30);
+    expect(summary.refusals).toEqual([
+      {
+        date: dates[25],
+        selected: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
+        unattributed: { attempted: 0, recovered: 0, userVisible: 0, unknown: 0 },
+      },
+      {
+        date: dates[27],
+        selected: { attempted: 0, recovered: 0, userVisible: 0, unknown: 0 },
+        unattributed: { attempted: 1, recovered: 0, userVisible: 0, unknown: 1 },
+      },
+    ]);
+    expect(analytics.series(90, 'UTC', now).refusals.days).toMatchObject([
+      { date: dates[25], families: [{ family: 'sonnet', attempted: 1 }] },
+      { date: dates[26], families: [{ family: 'opus', attempted: 1 }] },
+      { date: dates[27], unattributed: { attempted: 1 } },
+    ]);
+    expect(analytics.longitudinal(28, ['sonnet'], 'UTC', now)).toMatchObject({
+      observedDays: 28,
+      qualifiedDays: 28,
+      quality: 'robust',
+    });
     database.close();
   });
 

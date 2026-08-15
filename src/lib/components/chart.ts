@@ -1,4 +1,11 @@
-import type { DailyPoint, ModelFamily, SpeedIndex } from '$lib/types';
+import type {
+  DailyPoint,
+  LongitudinalRefusalDay,
+  ModelFamily,
+  RefusalCounts,
+  RefusalTimeline,
+  SpeedIndex,
+} from '$lib/types';
 
 export const FAMILY_COLORS: Record<ModelFamily, string> = {
   opus: '#ff7359',
@@ -45,6 +52,45 @@ export function compactNumber(value: number): string {
     notation: value >= 10_000 ? 'compact' : 'standard',
     maximumFractionDigits: value >= 1_000 ? 1 : 0,
   }).format(value);
+}
+
+function emptyRefusalCounts(): RefusalCounts {
+  return { attempted: 0, recovered: 0, userVisible: 0, unknown: 0 };
+}
+
+function mergeRefusalCounts(target: RefusalCounts, source: RefusalCounts): void {
+  target.attempted += source.attempted;
+  target.recovered += source.recovered;
+  target.userVisible += source.userVisible;
+  target.unknown += source.unknown;
+}
+
+export function filterRefusalTimeline(
+  timeline: RefusalTimeline,
+  families: readonly ModelFamily[],
+): LongitudinalRefusalDay[] {
+  const selectedFamilies = new Set(families);
+  return timeline.days.flatMap((day) => {
+    const selected = emptyRefusalCounts();
+    for (const family of day.families) {
+      if (selectedFamilies.has(family.family)) mergeRefusalCounts(selected, family);
+    }
+    return selected.attempted > 0 || day.unattributed.attempted > 0
+      ? [{ date: day.date, selected, unattributed: { ...day.unattributed } }]
+      : [];
+  });
+}
+
+export function refusalDayLabel(day: LongitudinalRefusalDay): string {
+  const selected = day.selected;
+  const selectedLabel =
+    selected.attempted === 0
+      ? 'No refusal signals for selected models'
+      : `${selected.attempted} selected-model refusal ${selected.attempted === 1 ? 'signal' : 'signals'}: ${selected.recovered} recovered, ${selected.userVisible} user-visible, ${selected.unknown} unresolved`;
+  const unattributed = day.unattributed.attempted;
+  return unattributed > 0
+    ? `${selectedLabel}. ${unattributed} ${unattributed === 1 ? 'signal' : 'signals'} without a model match. Explicit signals only; lower bound.`
+    : `${selectedLabel}. Explicit signals only; lower bound.`;
 }
 
 export function speedIndexSummary(index: SpeedIndex): string {
