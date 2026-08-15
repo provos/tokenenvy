@@ -90,7 +90,7 @@
   let caption = $derived(longitudinalCaption(snapshot, tone, sentiment, productLink?.href ?? null));
   let plotPoints = $derived(plot(snapshot.points, snapshot.startDate, snapshot.throughDate));
   let previewLabel = $derived(
-    `Token Envy Claude weather. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${snapshot.variationPct === null ? metricLabel : `${Math.round(snapshot.variationPct)} percent ${metricLabel}`}. ${trendLabel}. ${snapshot.measuredOutputTokens} measured output tokens across ${snapshot.measuredRequests} requests and ${snapshot.observedDays} observed days.${refusalDescription ? ` ${refusalDescription}.` : ''} ${familyLabel}, ${rangeLabel} view. ${LONGITUDINAL_INSTALL_CTA}.`,
+    `Token Envy Claude weather. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${snapshot.variationPct === null ? metricLabel : `${Math.round(snapshot.variationPct)} percent ${metricLabel}`}. ${trendLabel}. ${snapshot.measuredOutputTokens.toLocaleString('en-US')} measured output tokens across ${snapshot.measuredRequests.toLocaleString('en-US')} requests and ${snapshot.observedDays.toLocaleString('en-US')} observed days.${refusalDescription ? ` ${refusalDescription}.` : ''} ${familyLabel}, ${rangeLabel} view. ${LONGITUDINAL_INSTALL_CTA}.`,
   );
   let canExport = $derived(preparedFile !== null && !preparing);
 
@@ -592,7 +592,7 @@
             max="2"
             step="1"
             value={sentiment}
-            aria-valuetext={theme.label}
+            aria-valuetext={theme.accessibleLabel}
             aria-describedby="longitudinal-sentiment-description"
             oninput={(event) =>
               (sentiment = normalizeShareSentiment(Number(event.currentTarget.value)))}

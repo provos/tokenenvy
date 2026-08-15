@@ -39,6 +39,9 @@
   let dates = $derived(
     [...new Set([...measuredDates, ...refusals.map((refusal) => refusal.date)])].sort(),
   );
+  let refusalsByDate = $derived(
+    new Map(refusals.map((refusal) => [refusal.date, refusal] as const)),
+  );
   let filtered = $derived(points.filter((point) => visibleFamilies.includes(point.family)));
   let max = $derived(chartMaximum(filtered));
   let families = $derived(
@@ -91,7 +94,7 @@
   }
 
   function refusalFor(date: string): LongitudinalRefusalDay | undefined {
-    return refusals.find((refusal) => refusal.date === date);
+    return refusalsByDate.get(date);
   }
 </script>
 

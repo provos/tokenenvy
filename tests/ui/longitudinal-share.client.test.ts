@@ -73,7 +73,7 @@ describe('longitudinal share client state', () => {
       expect(preview(target).textContent).toContain('90-day · Sonnet');
       expect(preview(target).textContent).toContain('18%');
       const mood = target.querySelector<HTMLInputElement>('#longitudinal-sentiment');
-      expect(mood?.getAttribute('aria-valuetext')).toBe('Good');
+      expect(mood?.getAttribute('aria-valuetext')).toBe('Positive');
       const renderCount = renderSpy.mock.calls.length;
 
       flushSync(() => click(target, '[data-testid="refresh-longitudinal"]'));
@@ -96,13 +96,13 @@ describe('longitudinal share client state', () => {
         target
           .querySelector<HTMLInputElement>('#longitudinal-sentiment')
           ?.getAttribute('aria-valuetext'),
-      ).toBe('Brutal');
+      ).toBe('Very negative');
       const refreshedMood = target.querySelector<HTMLInputElement>('#longitudinal-sentiment');
       if (!refreshedMood) throw new Error('Missing longitudinal mood slider');
       refreshedMood.value = '2';
       flushSync(() => refreshedMood.dispatchEvent(new Event('input', { bubbles: true })));
       await tick();
-      expect(refreshedMood.getAttribute('aria-valuetext')).toBe('Glorious');
+      expect(refreshedMood.getAttribute('aria-valuetext')).toBe('Very positive');
       expect(preview(target).textContent).toContain('Explicit signals only · lower bound');
       expect(preview(target).querySelector('path.user-visible')).not.toBeNull();
       expect(renderSpy.mock.calls.length).toBeGreaterThan(renderCount);

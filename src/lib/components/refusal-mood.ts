@@ -37,8 +37,8 @@ function normalizedCounts(input: RefusalMoodCounts): RefusalCounts {
   const attempted = nonNegativeInteger(input.attempted);
   const userVisible = Math.min(attempted, nonNegativeInteger(input.userVisible));
   const recovered = Math.min(attempted - userVisible, nonNegativeInteger(input.recovered));
-  const unclassified = attempted - userVisible - recovered;
-  const unknown = Math.min(unclassified, Math.max(unclassified, nonNegativeInteger(input.unknown)));
+  // Attempted is the authoritative total, so any remaining outcomes are unknown.
+  const unknown = attempted - userVisible - recovered;
   return { attempted, recovered, userVisible, unknown };
 }
 

@@ -178,6 +178,9 @@ describe('longitudinal share dialog', () => {
     expect(body).toContain('longitudinal-share-chart');
     expect(body).toContain('3 selected-model refusal signals · 2 recovered · 1 user-visible');
     expect(body).toContain('Chart yours · npx tokenenvy');
+    expect(body).toContain(
+      '23,400,000 measured output tokens across 8,240 requests and 61 observed days',
+    );
     for (const label of ['Brutal', 'Rough', 'Neutral', 'Good', 'Glorious']) {
       expect(body).toContain(`>${label}</span>`);
     }
