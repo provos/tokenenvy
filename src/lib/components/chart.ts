@@ -1,4 +1,4 @@
-import type { DailyPoint, ModelFamily } from '$lib/types';
+import type { DailyPoint, ModelFamily, SpeedIndex } from '$lib/types';
 
 export const FAMILY_COLORS: Record<ModelFamily, string> = {
   opus: '#ff7359',
@@ -45,6 +45,22 @@ export function compactNumber(value: number): string {
     notation: value >= 10_000 ? 'compact' : 'standard',
     maximumFractionDigits: value >= 1_000 ? 1 : 0,
   }).format(value);
+}
+
+export function speedIndexSummary(index: SpeedIndex): string {
+  if (!index.eligible || index.value === null) {
+    if (index.reason === 'At least 20 requests are required.') {
+      return 'More measurements needed';
+    }
+    if (index.reason === 'Not enough comparable model and output-size coverage.') {
+      return 'No reliable like-for-like comparison';
+    }
+    return 'Baseline warming up';
+  }
+
+  const delta = Math.round(index.value - 100);
+  if (delta === 0) return 'Right at your baseline';
+  return `${delta > 0 ? '+' : ''}${delta}% vs your baseline`;
 }
 
 export function chartMaximum(points: DailyPoint[]): number {

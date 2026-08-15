@@ -17,9 +17,10 @@ directory, and makes no automatic network requests.
 - The adjusted daily index compares the selected day with the preceding 28
   complete local days within model family and output-size strata. Fixed baseline
   weights prevent today's model mix from redefining the comparison.
-- Performance taglines require at least 20 requests, five sessions, seven
-  baseline days, 100 baseline requests, and sufficient stratum coverage.
-  Friendly is the default; spicy is an explicit choice for the current share. A five-stop valence slider defaults from the eligible mix-adjusted comparable-day result (neutral while a comparable baseline is unavailable) and lets the user vary editorial sentiment from strongly negative to strongly positive. The automatic extremes require a percentile at or beyond 10/90, an index at or beyond 90/110, and a confidence interval wholly below/above 100. Moderate suggestions require the 45th/55th percentile and an index on the matching side of 100. It changes the card's wording, vector expression, and palette, never its measurements, and resets when the dialog is reopened. The dialog snapshots the selected day's aggregates when it opens and holds them through background refreshes.
+- Performance taglines require at least 20 requests, seven baseline days, 100
+  baseline requests, and sufficient stratum coverage. Five sessions are
+  required only for clustered confidence intervals and automatic extreme moods.
+  Friendly is the default; spicy is an explicit choice for the current share. A five-stop valence slider defaults from the eligible mix-adjusted comparable-day result (neutral while a comparable baseline is unavailable) and lets the user vary editorial sentiment from strongly negative to strongly positive. The automatic extremes require a percentile at or beyond 10/90, an index at or beyond 90/110, and a confidence interval wholly below/above 100. Moderate suggestions require the 45th/55th percentile and an index on the matching side of 100. It changes the card's wording, vector expression, and palette, never its measurements, and resets when the dialog is reopened. The daily and weekly share dialogs snapshot all aggregate inputs when they open and hold them through background refreshes. Closing and reopening takes a fresh snapshot.
 - Classifier reporting uses explicit metadata only and distinguishes attempted,
   recovered-by-fallback, user-visible, and unknown outcomes.
 - Transcript-only weekly numbers are labelled observed usage, never quota.

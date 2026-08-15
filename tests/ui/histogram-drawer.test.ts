@@ -51,4 +51,23 @@ describe('daily detail refusals', () => {
     expect(body).toContain('>3<');
     expect(body).toContain('Explicit transcript signals only; these counts are a lower bound.');
   });
+
+  it('explains why an eligible point estimate has no confidence interval', () => {
+    const { body } = render(HistogramDrawer, {
+      props: {
+        open: true,
+        loading: false,
+        detail: {
+          ...detail,
+          speedIndex: { ...detail.speedIndex, ciLow: null, ciHigh: null },
+        },
+        refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+        onclose: () => undefined,
+      },
+    });
+
+    expect(body).toContain(
+      'Point estimate available. Confidence interval requires five independent sessions.',
+    );
+  });
 });

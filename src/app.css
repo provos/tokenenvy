@@ -1592,6 +1592,13 @@ td .model-dot {
   font-size: 10px;
 }
 
+.drawer-confidence-note {
+  margin: 12px 2px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .drawer-section {
   margin-top: 34px;
 }

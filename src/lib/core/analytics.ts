@@ -149,7 +149,6 @@ function speedIndex(
   const baselineDays = new Set(baseline.map(({ date }) => date)).size;
   let reason: string | null = null;
   if (current.length < 20) reason = 'At least 20 requests are required.';
-  else if (currentSessions < 5) reason = 'At least five sessions are required.';
   else if (baselineDays < 7) reason = 'At least seven baseline days are required.';
   else if (baseline.length < 100) reason = 'At least 100 baseline requests are required.';
   else if (currentCoverage < 0.7 || baselineCoverage < 0.7 || value == null) {
@@ -158,7 +157,7 @@ function speedIndex(
 
   let ciLow: number | null = null;
   let ciHigh: number | null = null;
-  if (!reason && options.confidence !== false) {
+  if (!reason && currentSessions >= 5 && options.confidence !== false) {
     const groups = new Map<string, DatedRequest[]>();
     for (const request of current) {
       const group = groups.get(request.sessionId) ?? [];

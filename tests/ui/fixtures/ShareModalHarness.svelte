@@ -15,17 +15,14 @@
   let open = $state(false);
   let detail = $state(untrack(() => initialDetail));
   let refusals = $state(untrack(() => initialRefusals));
-  let refreshing = $state(false);
 
   function updateInBackground() {
     detail = updatedDetail;
     refusals = updatedRefusals;
-    refreshing = true;
   }
 </script>
 
 <button data-testid="open-share" type="button" onclick={() => (open = true)}>Open</button>
 <button data-testid="refresh-day" type="button" onclick={updateInBackground}>Refresh</button>
-<button data-testid="settle-day" type="button" onclick={() => (refreshing = false)}>Settle</button>
 
-<ShareModal {open} {detail} {refusals} isToday={true} {refreshing} onclose={() => (open = false)} />
+<ShareModal {open} {detail} {refusals} isToday={true} onclose={() => (open = false)} />

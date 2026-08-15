@@ -90,6 +90,7 @@ function modalState(target: ParentNode) {
 
 describe('share modal client state', () => {
   it('selects the suggested mood and holds its snapshot through background refreshes', async () => {
+    const renderSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext');
     const target = document.createElement('div');
     document.body.append(target);
     const component = mount(ShareModalHarness, {
@@ -106,7 +107,9 @@ describe('share modal client state', () => {
       const mood = modalState(target).mood;
       mood.value = '0';
       flushSync(() => mood.dispatchEvent(new Event('input', { bubbles: true })));
+      await tick();
       expect(modalState(target).mood.getAttribute('aria-valuetext')).toBe('Neutral');
+      const renderCount = renderSpy.mock.calls.length;
 
       flushSync(() => click(target, '[data-testid="refresh-day"]'));
       await tick();
@@ -114,15 +117,16 @@ describe('share modal client state', () => {
       expect(modalState(target).mood.getAttribute('aria-valuetext')).toBe('Neutral');
       expect(target.textContent).not.toContain('Refreshing this day before sharing');
       expect(target.textContent).not.toContain('3 refusals');
+      expect(renderSpy).toHaveBeenCalledTimes(renderCount);
 
       flushSync(() => click(target, '.share-modal .icon-button'));
-      flushSync(() => click(target, '[data-testid="settle-day"]'));
       flushSync(() => click(target, '[data-testid="open-share"]'));
       await tick();
       expect(modalState(target)).toMatchObject({ metric: '20', busy: 'false' });
       expect(modalState(target).mood.getAttribute('aria-valuetext')).toBe('Very negative');
       expect(target.textContent).toContain('3 refusals · 1 recovered · 1 user-visible');
     } finally {
+      renderSpy.mockRestore();
       unmount(component);
       target.remove();
     }

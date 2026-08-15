@@ -97,6 +97,11 @@
             <strong>{detail.summary.sessions.toLocaleString()}</strong>
           </div>
         </section>
+        {#if detail.speedIndex.eligible && detail.speedIndex.ciLow === null && detail.speedIndex.ciHigh === null}
+          <p class="drawer-confidence-note">
+            Point estimate available. Confidence interval requires five independent sessions.
+          </p>
+        {/if}
 
         <section class="drawer-section drawer-refusal-section" aria-label="Refusals for this day">
           <div class="section-heading compact-heading">
