@@ -6,6 +6,10 @@ export type ShareSentiment = -2 | -1 | 0 | 1 | 2;
 export type SharePlatform = 'generic' | 'x' | 'bluesky' | 'linkedin';
 export const SHARE_INSTALL_CTA = 'Run it yourself · npx tokenenvy';
 export const DEFAULT_SHARE_PRODUCT_URL = 'https://www.npmjs.com/package/tokenenvy';
+export const SHARE_BASELINE_LINE = 'Building my personal baseline';
+export const SHARE_PRIVACY_NOTE = 'Measured locally. Prompts stay private.';
+export const SHARE_METRIC_UNIT = 'tok/s';
+export const SHARE_METRIC_CONTEXT = 'effective output · end-to-end wall time';
 
 export interface ShareSentimentTheme {
 	value: ShareSentiment;
@@ -187,7 +191,7 @@ export function speedIndexDelta(index: SpeedIndex): number | null {
 
 export function speedIndexLabel(index: SpeedIndex): string {
 	const delta = speedIndexDelta(index);
-	if (delta === null) return 'Building my personal baseline';
+	if (delta === null) return SHARE_BASELINE_LINE;
 	if (delta === 0) return 'Right at your baseline';
 	return `${delta > 0 ? '+' : ''}${delta}% vs your baseline`;
 }
@@ -312,9 +316,18 @@ function nonNegativeInteger(value: number | undefined): number {
 	return Number.isFinite(value) ? Math.max(0, Math.round(value as number)) : 0;
 }
 
+export function getShareActivityLine(data: ShareCardData): string {
+	return `${data.count.toLocaleString('en-US')} measured requests · ${data.sessions.toLocaleString('en-US')} sessions`;
+}
+
+export function getShareModelLine(data: ShareCardData): string {
+	const families = data.models.slice(0, 3).map((model) => model.family).join(' · ');
+	return families || 'All measured model families';
+}
+
 export function getShareMoodLine(data: ShareCardData): string {
 	if (!data.indexEligible || data.percentile === null) {
-		return 'Building my personal baseline';
+		return SHARE_BASELINE_LINE;
 	}
 
 	const percentile = Math.max(0, Math.min(100, Math.round(data.percentile)));
@@ -387,18 +400,17 @@ export function getShareCaption(
 	productLink: string | null,
 ): string {
 	const tagline = getShareTagline(tone, sentiment, data);
-	const result = `${Math.round(data.median)} effective output tok/s. ${getShareMoodLine(data)}.`;
+	const result = `${Math.round(data.median)} effective output ${SHARE_METRIC_UNIT}. ${getShareMoodLine(data)}.`;
 	const question = 'How does your Claude Code speed compare?';
-	const privacy = 'Measured locally. Prompts stay private.';
 	const attribution = `#TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}`;
 	const link = (platform === 'bluesky' || platform === 'generic') && productLink
 		? ` ${productLink}`
 		: '';
 
 	if (platform === 'linkedin') {
-		return `${tagline}.\n\nMy Token Envy receipt: ${result}\n\n${question}\n\n${privacy}\n${attribution}`;
+		return `${tagline}.\n\nMy Token Envy receipt: ${result}\n\n${question}\n\n${SHARE_PRIVACY_NOTE}\n${attribution}`;
 	}
-	return `${tagline}: ${result} ${question} ${privacy} ${attribution}${link}`;
+	return `${tagline}: ${result} ${question} ${SHARE_PRIVACY_NOTE} ${attribution}${link}`;
 }
 
 export function getShareTextReceipt(
@@ -414,12 +426,12 @@ export function getShareTextReceipt(
 		getShareTagline(tone, sentiment, data),
 		`${Math.round(data.median)} effective output tokens/s`,
 		getShareMoodLine(data),
-		`${data.count.toLocaleString('en-US')} measured requests · ${data.sessions.toLocaleString('en-US')} sessions`,
+		getShareActivityLine(data),
 		refusalLine || null,
 		refusalLine && data.refusals.recorded
 			? 'Refusals reflect explicit transcript signals and remain a lower bound.'
 			: null,
-		'Measured locally. Prompts stay private.',
+		SHARE_PRIVACY_NOTE,
 		SHARE_INSTALL_CTA,
 		SECURITY_BLUEPRINTS_CAPTION,
 		productLink,

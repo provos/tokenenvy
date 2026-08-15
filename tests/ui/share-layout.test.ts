@@ -6,6 +6,8 @@ import {
   shareCardLayoutStyle
 } from '../../src/lib/components/share-layout';
 
+const appCss = readFileSync(new URL('../../src/app.css', import.meta.url), 'utf8');
+
 describe('daily share-card layout', () => {
   it('keeps copy, comparison, activity, and footer in protected vertical bands', () => {
     const layout = DAILY_SHARE_CARD_LAYOUT;
@@ -54,19 +56,28 @@ describe('daily share-card layout', () => {
     expect(fitted.lines.every((line) => line.length * fitted.fontSize * 0.6 <= 180)).toBe(true);
   });
 
-  it('simplifies tertiary copy before the protected bands shrink on narrow cards', () => {
-    const css = readFileSync('src/app.css', 'utf8');
-    const narrowStyles = css.slice(css.indexOf('@media (max-width: 420px)'));
+  it('emits every card variable the preview stylesheet consumes', () => {
+    const consumed = new Set([...appCss.matchAll(/--card-[a-z-]+/g)].map((match) => match[0]));
+    const emitted = shareCardLayoutStyle();
 
-    expect(narrowStyles).toContain('.share-brand-lockup small,');
-    expect(narrowStyles).toContain('.share-metric-context,');
-    expect(narrowStyles).toContain('.share-preview-activity { display: none; }');
+    expect(consumed.size).toBeGreaterThan(0);
+    for (const name of consumed) {
+      expect(emitted).toContain(`${name}:`);
+    }
+  });
+
+  it('simplifies tertiary copy before the protected bands shrink on narrow cards', () => {
+    const narrowStyles = appCss.slice(appCss.indexOf('@media (max-width: 420px)'));
+
+    expect(narrowStyles).toMatch(
+      /\.share-brand-lockup small,\s*\.share-metric-context,\s*\.share-preview-activity\s*\{\s*display: none;\s*\}/
+    );
     expect(narrowStyles).toContain('.share-preview-headline { font-size: 10px; line-height: 1.02; }');
     expect(narrowStyles).not.toContain('.share-preview-headline { font-size: 13px; }');
     expect(narrowStyles).toContain('.share-metric-lockup strong { font-size: 38px; }');
-    expect(css).toContain(
+    expect(appCss).toContain(
       '.share-modal { width: calc(100% - 20px); max-width: 700px; max-height: calc(100vh - 20px); }'
     );
-    expect(css).toContain('.envy-callout-actions { width: 100%; flex-direction: column; }');
+    expect(appCss).toContain('.envy-callout-actions { width: 100%; flex-direction: column; }');
   });
 });

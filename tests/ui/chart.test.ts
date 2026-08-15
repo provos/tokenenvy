@@ -14,6 +14,7 @@ import {
   normalizeHistogram,
   safeShareProductLink,
   sentimentAfterCardChange,
+  SHARE_SENTIMENTS,
   suggestedShareSentiment,
 } from '../../src/lib/components/share';
 
@@ -142,19 +143,18 @@ describe('privacy-safe share-card data', () => {
     expect(card.histogram).toHaveLength(40);
     expect(JSON.stringify(card)).not.toContain(privateMarker);
     expect(suggestedShareSentiment(card)).toBe(1);
-    expect([-2, -1, 0, 1, 2].map((sentiment) =>
-      getShareTagline('spicy', sentiment as -2 | -1 | 0 | 1 | 2, card)
-    )).toEqual([
+    const spicyTaglines = (isToday: boolean) =>
+      SHARE_SENTIMENTS.map((sentiment) =>
+        getShareTagline('spicy', sentiment, { ...card, isToday })
+      );
+    expect(spicyTaglines(true)).toEqual([
       'Anthropic hates me today',
       'Anthropic is testing me today',
       'Anthropic and I are on speaking terms',
       'Anthropic likes me today',
       'Anthropic loves me today'
     ]);
-    const historicalCard = { ...card, isToday: false };
-    expect([-2, -1, 0, 1, 2].map((sentiment) =>
-      getShareTagline('spicy', sentiment as -2 | -1 | 0 | 1 | 2, historicalCard)
-    )).toEqual([
+    expect(spicyTaglines(false)).toEqual([
       'Anthropic hated me that day',
       'Anthropic was testing me that day',
       'Anthropic and I were on speaking terms',

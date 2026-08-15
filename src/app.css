@@ -1829,7 +1829,6 @@ td .model-dot {
 
 .share-preview {
   aspect-ratio: 1200 / 630;
-  min-height: 0;
   position: relative;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -1901,7 +1900,7 @@ td .model-dot {
 }
 
 .share-preview-header {
-  inset: var(--card-header-top) 5.833% auto;
+  inset: var(--card-header-top) var(--card-inset-x) auto;
   height: calc(var(--card-header-bottom) - var(--card-header-top));
 }
 
@@ -1938,7 +1937,7 @@ td .model-dot {
 }
 
 .share-preview-center .histogram-backdrop {
-  inset: var(--card-visual-top) 7.333% calc(100% - var(--card-visual-bottom));
+  inset: var(--card-visual-top) var(--card-visual-inset-x) calc(100% - var(--card-visual-bottom));
   opacity: 0.88;
   mask-image: linear-gradient(to bottom, transparent, #000 20%, #000);
 }
@@ -1959,8 +1958,8 @@ td .model-dot {
 .share-preview-activity {
   position: absolute;
   z-index: 2;
-  left: 5.833%;
-  right: 5.833%;
+  left: var(--card-inset-x);
+  right: var(--card-inset-x);
   margin: 0;
   text-shadow: 0 2px 18px var(--share-bg-start), 0 2px 7px var(--share-bg-start);
 }
@@ -2026,7 +2025,7 @@ td .model-dot {
 }
 
 .share-preview-footer {
-  inset: var(--card-footer-top) 5.833% auto;
+  inset: var(--card-footer-top) var(--card-inset-x) auto;
   height: calc(var(--card-footer-bottom) - var(--card-footer-top));
   display: grid;
   align-content: center;

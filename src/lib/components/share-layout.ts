@@ -2,6 +2,8 @@ export const DAILY_SHARE_CARD_LAYOUT = {
 	width: 1200,
 	height: 630,
 	inset: 12,
+	marginX: 70,
+	visualMarginX: 88,
 	header: { top: 38, bottom: 94 },
 	headline: { top: 106, bottom: 180 },
 	visual: { top: 174, bottom: 410 },
@@ -27,13 +29,16 @@ interface FitTextOptions {
 	measure: (fontSize: number, text: string) => number;
 }
 
+function tokenize(text: string): string[] {
+	return text.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+}
+
 function wrapWords(
-	text: string,
+	words: string[],
 	fontSize: number,
 	maxWidth: number,
 	measure: FitTextOptions['measure'],
 ): string[] {
-	const words = text.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
 	if (words.length === 0) return [''];
 
 	const lines: string[] = [];
@@ -78,9 +83,10 @@ export function fitTextLines(text: string, options: FitTextOptions): FittedText 
 				),
 			)
 		: requestedMinFontSize;
+	const words = tokenize(text);
 
 	for (let fontSize = maxFontSize; fontSize >= minFontSize; fontSize -= 1) {
-		const lines = wrapWords(text, fontSize, options.maxWidth, options.measure);
+		const lines = wrapWords(words, fontSize, options.maxWidth, options.measure);
 		if (
 			lines.length <= options.maxLines &&
 			lines.length * fontSize * lineHeightRatio <= (options.maxHeight ?? Number.POSITIVE_INFINITY) &&
@@ -90,7 +96,7 @@ export function fitTextLines(text: string, options: FitTextOptions): FittedText 
 		}
 	}
 
-	const wrapped = wrapWords(text, minFontSize, options.maxWidth, options.measure);
+	const wrapped = wrapWords(words, minFontSize, options.maxWidth, options.measure);
 	const lines = wrapped.slice(0, options.maxLines).map((line) =>
 		truncateToWidth(line, minFontSize, options.maxWidth, options.measure),
 	);
@@ -101,36 +107,26 @@ export function fitTextLines(text: string, options: FitTextOptions): FittedText 
 			options.maxWidth,
 			options.measure,
 		);
-	} else {
-		lines[lines.length - 1] = truncateToWidth(
-			lines.at(-1) ?? '',
-			minFontSize,
-			options.maxWidth,
-			options.measure,
-		);
 	}
 
 	return { fontSize: minFontSize, lineHeight: minFontSize * lineHeightRatio, lines };
 }
 
 export function shareCardLayoutStyle(): string {
-	const { height, header, headline, visual, metric, comparison, activity, footer } =
+	const { width, height, marginX, visualMarginX, header, headline, visual, metric, comparison, activity, footer } =
 		DAILY_SHARE_CARD_LAYOUT;
-	const percent = (value: number) => `${((value / height) * 100).toFixed(3)}%`;
+	const bands = { header, headline, visual, metric, comparison, activity, footer };
+	const percentOf = (total: number) => (value: number) => `${((value / total) * 100).toFixed(3)}%`;
+	const yPercent = percentOf(height);
+	const xPercent = percentOf(width);
 	return [
-		`--card-header-top:${percent(header.top)}`,
-		`--card-header-bottom:${percent(header.bottom)}`,
-		`--card-headline-top:${percent(headline.top)}`,
-		`--card-headline-bottom:${percent(headline.bottom)}`,
-		`--card-visual-top:${percent(visual.top)}`,
-		`--card-visual-bottom:${percent(visual.bottom)}`,
-		`--card-metric-top:${percent(metric.top)}`,
-		`--card-metric-bottom:${percent(metric.bottom)}`,
-		`--card-comparison-top:${percent(comparison.top)}`,
-		`--card-comparison-bottom:${percent(comparison.bottom)}`,
-		`--card-activity-top:${percent(activity.top)}`,
-		`--card-activity-bottom:${percent(activity.bottom)}`,
-		`--card-footer-top:${percent(footer.top)}`,
-		`--card-footer-bottom:${percent(footer.bottom)}`,
+		...Object.entries(bands).flatMap(([name, band]) => [
+			`--card-${name}-top:${yPercent(band.top)}`,
+			`--card-${name}-bottom:${yPercent(band.bottom)}`,
+		]),
+		`--card-inset-x:${xPercent(marginX)}`,
+		`--card-visual-inset-x:${xPercent(visualMarginX)}`,
 	].join(';');
 }
+
+export const SHARE_CARD_LAYOUT_STYLE = shareCardLayoutStyle();

@@ -1,6 +1,7 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import ShareModal from '../../src/lib/components/ShareModal.svelte';
+import type { ShareRefusalCounts } from '../../src/lib/components/share';
 import type { DayDetailResponse } from '../../src/lib/types';
 
 const detail: DayDetailResponse = {
@@ -36,17 +37,20 @@ const detail: DayDetailResponse = {
 };
 
 describe('share-card customization', () => {
-  it('renders an accessible five-stop sentiment slider and a non-color expression cue', () => {
-    const { body } = render(ShareModal, {
+  const renderShareCard = (refusals: ShareRefusalCounts, isToday = true) =>
+    render(ShareModal, {
       props: {
         open: true,
         detail,
-        refusals: { recorded: true, attempted: 2, recovered: 1, userVisible: 1 },
-        isToday: true,
+        refusals,
+        isToday,
         refreshing: false,
         onclose: () => undefined
       }
     });
+
+  it('renders an accessible five-stop sentiment slider and a non-color expression cue', () => {
+    const { body } = renderShareCard({ recorded: true, attempted: 2, recovered: 1, userVisible: 1 });
     const normalizedBody = body.replace(/\s+/g, ' ');
 
     expect(body).toContain('id="share-sentiment"');
@@ -70,16 +74,7 @@ describe('share-card customization', () => {
   });
 
   it('omits an empty refusal row from the protected card footer', () => {
-    const { body } = render(ShareModal, {
-      props: {
-        open: true,
-        detail,
-        refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
-        isToday: true,
-        refreshing: false,
-        onclose: () => undefined
-      }
-    });
+    const { body } = renderShareCard({ recorded: true, attempted: 0, recovered: 0, userVisible: 0 });
 
     expect(body).not.toContain('share-preview-refusals');
     expect(body).not.toContain('0 refusals');
@@ -88,16 +83,10 @@ describe('share-card customization', () => {
   });
 
   it('keeps unavailable refusal signals explicit without exposing details', () => {
-    const { body } = render(ShareModal, {
-      props: {
-        open: true,
-        detail,
-        refusals: { recorded: false, attempted: 0, recovered: 0, userVisible: 0 },
-        isToday: false,
-        refreshing: false,
-        onclose: () => undefined
-      }
-    });
+    const { body } = renderShareCard(
+      { recorded: false, attempted: 0, recovered: 0, userVisible: 0 },
+      false
+    );
 
     expect(body).toContain('class="share-preview-refusals"');
     expect(body).toContain('Refusals: explicit signals unavailable');
