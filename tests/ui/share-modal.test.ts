@@ -55,11 +55,51 @@ describe('share-card customization', () => {
     expect(body).toContain('max="2"');
     expect(body).toContain('aria-valuetext="Neutral"');
     expect(body).toContain('share-sentiment-face');
-    expect(body).toContain('Refusals (explicit lower bound): 2 · 1 recovered · 1 user-visible');
+    expect(body).toContain('Brutal</span><span>Rough</span><span>Neutral</span><span>Good</span><span>Glorious');
+    expect(body).toContain('2 refusals · 1 recovered · 1 user-visible');
     expect(body).toContain('Run it yourself · npx tokenenvy');
     expect(body).toContain('A Security Blueprints, LLC project · securityblueprints.io');
+    expect(body).toContain('class="share-preview-headline"');
+    expect(body).toContain('class="share-metric-lockup"');
+    expect(body).toContain('<span>tok/s</span>');
+    expect(body).toContain('effective output · end-to-end wall time');
+    expect(body).toContain('Copy text receipt');
     expect(normalizedBody).toContain(
-      'Starts from your adjusted comparable-day result. Move it anywhere; it changes the attitude, expression, and palette—not your stats.'
+      'Starts from your adjusted comparable-day result. Move it anywhere. It changes the attitude, expression, and palette while your stats stay fixed.'
     );
+  });
+
+  it('omits an empty refusal row from the protected card footer', () => {
+    const { body } = render(ShareModal, {
+      props: {
+        open: true,
+        detail,
+        refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+        isToday: true,
+        refreshing: false,
+        onclose: () => undefined
+      }
+    });
+
+    expect(body).not.toContain('share-preview-refusals');
+    expect(body).not.toContain('0 refusals');
+    expect(body).toContain('--card-headline-top:');
+    expect(body).toContain('--card-footer-top:');
+  });
+
+  it('keeps unavailable refusal signals explicit without exposing details', () => {
+    const { body } = render(ShareModal, {
+      props: {
+        open: true,
+        detail,
+        refusals: { recorded: false, attempted: 0, recovered: 0, userVisible: 0 },
+        isToday: false,
+        refreshing: false,
+        onclose: () => undefined
+      }
+    });
+
+    expect(body).toContain('class="share-preview-refusals"');
+    expect(body).toContain('Refusals: explicit signals unavailable');
   });
 });
