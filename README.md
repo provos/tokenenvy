@@ -1,49 +1,37 @@
 # Token Envy
 
-Token Envy is a private, local-first performance dashboard for Claude Code. It continuously indexes performance metadata from Claude Code JSONL transcripts and turns it into model-by-model throughput trends, daily distributions, refusal outcomes, observed usage, and privacy-safe share cards.
+Token Envy turns local Claude Code transcripts into a private performance dashboard. It charts experienced output speed, model trends, daily distributions, refusal outcomes, and observed usage.
 
-Token Envy is a [Security Blueprints](https://securityblueprints.io/) project created by Niels Provos.
+Everything runs locally with Node.js. Prompts stay on your computer.
 
-It does not need an LLM, an Anthropic API key, telemetry, or an internet connection. The web server listens only on the loopback interface and the transcript directory is always read-only.
+Token Envy is a [Security Blueprints](https://securityblueprints.io/) project by Niels Provos.
+
+![Token Envy share card showing Claude Code effective output throughput](docs/assets/tokenenvy-share-card.png)
+
+[Watch the 23-second demo](docs/assets/tokenenvy-demo.mp4)
 
 ## What it shows
 
-- Effective output tokens/s for Opus, Sonnet, Fable, Haiku, and other models
-- Daily medians, interquartile ranges, sample sizes, and statistically eligible confidence intervals
-- A 28-day mix-adjusted speed index that does not let today's model mix redefine its own baseline
-- Drill-down histograms, hourly medians, selected-day refusal outcomes, exclusions, and data-quality counts
-- Explicit classifier refusals split into attempted, recovered by fallback, user-visible, and unknown
-- Observed weekly output and a projection based on the current week
-- A separate Week so far recap with a personal Speed Index, observed high and low days, and aggregate activity
-- Optional five-hour and seven-day rate-limit percentages from Claude Code's local status-line payload
-- Downloadable selected-day histogram share images with friendly or user-enabled spicy taglines and an adjustable five-stop mood
-
-The spicy share voice is an explicit choice in the share dialog. Each dialog opens in the friendly default. A five-stop negative-to-positive mood slider changes the card's editorial tagline, vector expression, and palette without changing its measurements. The initial mood follows a conservative, mix-adjusted comparable-day recommendation when available and stays neutral while the baseline is warming up. Extreme moods require an unusual percentile, a material adjusted difference, and a confidence interval entirely on the same side of baseline; users can always move the slider elsewhere.
+- Effective output tokens per second by model
+- Daily medians, interquartile ranges, sample sizes, and eligible confidence intervals
+- A 28-day, mix-adjusted Speed Index based on a stable model baseline
+- Daily histograms, hourly medians, exclusions, and data-quality counts
+- Classifier refusals grouped as attempted, recovered, user-visible, or unknown
+- Weekly output, projected usage, and fastest and slowest measured days
+- Optional five-hour and seven-day rate-limit percentages
+- Privacy-safe daily and weekly share cards
 
 ## Install and run
 
-Token Envy requires Node.js 22.13 or newer.
-
-The CLI checks the runtime before loading the server or SQLite. Older versions receive a clear upgrade message and exit before startup.
-
-Run it directly from npm with:
+Token Envy requires Node.js 22.13 or newer. Older runtimes exit with upgrade instructions.
 
 ```bash
 npx tokenenvy
 ```
 
-From this checkout:
+The CLI prints the loopback address and opens the dashboard in your default browser. Each launch creates a one-time access token. After redemption, the browser uses a `SameSite=Strict`, HTTP-only cookie.
 
-```bash
-npm install
-npm run build
-npm link
-tokenenvy
-```
-
-The CLI prints the loopback address and normally opens it in the default browser. The initial browser URL has a one-time random access token; a `SameSite=Strict`, HTTP-only cookie is used after that token is redeemed. A fresh token is created on every server launch.
-
-By default, the scanner reads `~/.claude/projects/**/*.jsonl`. One or more `--logs` options replace that default. Repeat the option to monitor multiple transcript roots; Token Envy deduplicates roots and removes nested overlaps rather than scanning the same file twice. It never broadens an explicit path into a crawl of the whole Claude directory.
+The scanner reads `~/.claude/projects/**/*.jsonl` by default. One or more `--logs` options replace that path. Token Envy deduplicates roots and removes nested overlaps. Explicit roots define the complete scan boundary.
 
 ```bash
 tokenenvy \
@@ -56,22 +44,24 @@ tokenenvy \
 
 ### CLI options
 
-| Option | Meaning |
-| --- | --- |
-| `--logs PATH` | Replace the default transcript root; repeat for additional roots |
-| `--port PORT` | Listen on this loopback port; default is `4173` |
-| `--timezone ZONE` | Use this IANA timezone for calendar-day boundaries |
-| `--no-open` | Start without opening a browser |
-| `--rescan` | Re-read live transcripts while preserving archived history and usage samples |
-| `-h`, `--help` | Print CLI help |
+| Option            | Meaning                                                                      |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `--logs PATH`     | Replace the transcript root; repeat for multiple roots                       |
+| `--port PORT`     | Listen on this loopback port; default is `4173`                              |
+| `--timezone ZONE` | Set calendar-day boundaries with an IANA timezone                            |
+| `--no-open`       | Suppress the automatic browser launch                                        |
+| `--rescan`        | Re-read live transcripts while preserving archived history and usage samples |
+| `-h`, `--help`    | Print CLI help                                                               |
 
-The watcher remains active while the server process runs. Stop it with Ctrl-C. The derived SQLite index, its pseudonymization key, and a compact content-free history of stable requests and refusal outcomes live in `~/.tokenenvy`. Stable summaries are archived after 24 hours so statistics survive upstream transcript cleanup. Set `TOKENENVY_DATA_DIR` to override that location. When launching the built server without the CLI, `TOKENENVY_LOGS` must be a JSON array of transcript-root paths.
+The watcher updates the index until you stop the server with Ctrl-C. The derived SQLite index, pseudonymization key, and content-free history live in `~/.tokenenvy`. After 24 hours, stable summaries enter the archive and survive upstream transcript cleanup. Set `TOKENENVY_DATA_DIR` to change this location.
 
-## Optional rate-limit display
+A direct launch of the built server requires `TOKENENVY_LOGS`, formatted as a JSON array of transcript-root paths.
 
-Transcript totals are not an account quota: Claude web, Desktop, and Code may share limits, and the service decides the actual allowance. Token Envy therefore labels transcript-only totals as **observed usage**.
+## Optional rate limits
 
-Claude Code can provide current five-hour and seven-day percentages to a status-line command. To opt in, add a status-line command to your own Claude settings:
+Transcript output measures observed usage. Anthropic sets account quota across Claude web, Desktop, and Code.
+
+Claude Code can send current five-hour and seven-day percentages to a status-line command. Add this command to your Claude settings:
 
 ```json
 {
@@ -82,60 +72,71 @@ Claude Code can provide current five-hour and seven-day percentages to a status-
 }
 ```
 
-Token Envy never creates or overwrites `~/.claude/settings.json`. If you already use a status-line command, integrate the helper into that command rather than replacing it blindly.
+Token Envy leaves `~/.claude/settings.json` unchanged. If another status-line command already exists, call the helper from that command.
 
-The companion reads the JSON Claude supplies on stdin, immediately discards everything except valid `five_hour` and `seven_day` rate-limit fields, and posts that small projection to the active loopback server with a per-launch secret. Its network timeout is 150 ms, and a stopped dashboard never delays or breaks Claude Code. The latest sample becomes stale after 15 minutes or after its reset time.
+The helper extracts valid `five_hour` and `seven_day` fields from Claude's JSON and posts them to the loopback server with a per-launch secret. A 150 ms timeout protects the Claude Code process. Samples expire after 15 minutes or at their reset time.
 
-## Understanding the metric
+## Effective output speed
 
-The dashboard deliberately calls its primary metric **effective output tokens/s**. It divides reported output tokens by the wall-clock interval inferred from linked transcript events. That interval can include queueing, prompt processing, hidden reasoning, time to first output, and local timestamp effects. It is useful for comparing experienced performance, but it is not raw decoder speed.
+**Effective output tokens/s** divides reported output tokens by the wall-clock interval between linked transcript events. The interval covers queueing, prompt processing, hidden reasoning, time to first output, generation, and local timestamp effects. The result measures experienced performance. Raw decoder speed covers generation alone.
 
-Distributions are typically skewed, so the dashboard leads with medians and interquartile ranges rather than averages. Very short, hour-scale, missing-parent, invalid-time, synthetic, and non-positive-token observations are excluded and counted by reason. A request can be provisional while its transcript is still being appended and may be recomputed later; provisional requests are counted separately and excluded from displayed analytics until they settle.
+Skewed distributions call for medians and interquartile ranges rather than averages. Analytics exclude very short, hour-scale, missing-parent, invalid-time, synthetic, and non-positive-token observations. The dashboard reports each exclusion count.
 
-Changing `--timezone` changes calendar boundaries and daily aggregates. Copied or forked transcript history is deduplicated by event identity, and incremental scans are designed to converge with a clean scan.
+Requests remain provisional while their transcripts grow. They enter the analytics after settling. The selected timezone controls calendar boundaries and daily aggregates. Event identity deduplicates copied or forked transcript history.
 
 ## Privacy and security
 
-- Transcript files are opened read-only. Prompts, responses, commands, tool data, project names, raw paths, refusal categories or explanations, and raw identifiers are neither persisted nor returned by the API.
-- Source, session, request, and event identifiers in the derived database are locally keyed HMAC digests. This is pseudonymization, not encryption.
-- The server binds to `127.0.0.1`; Host and Origin values must also be explicit loopback names. CORS is not enabled.
-- Production browser sessions require the one-time launch token. Status-line ingestion uses a different per-launch bearer secret.
-- The app makes no automatic outbound requests and includes no analytics or telemetry.
-- Share cards are created from an allowlisted aggregate object. Review the preview, then explicitly download, copy, or invoke the browser's share sheet. Social sites are never contacted merely by opening the dashboard.
+- Read-only file handles protect source transcripts.
+- The database and API contain aggregate metadata. Prompts, responses, commands, tool data, project names, raw paths, refusal explanations, and raw identifiers stay in the source transcripts.
+- Locally keyed HMAC digests pseudonymize source, session, request, and event identifiers. Pseudonymization differs from encryption.
+- The server binds to `127.0.0.1` and accepts explicit loopback Host and Origin values. It omits CORS headers.
+- Browser sessions use a one-time launch token. Status-line ingestion uses a separate per-launch bearer secret.
+- Automatic traffic stays on loopback. The app collects zero analytics and telemetry.
+- Share exports use an allowlisted aggregate record and require an explicit user action.
 
-Anyone able to read your local user account may be able to access the derived index, so normal workstation security still matters.
+Anyone with access to your local account may read the derived index. Standard workstation security still applies.
 
-## Social sharing
+## Share your results
 
-Open any measured day, choose **Share this day**, select the friendly or spicy voice, adjust the mood from negative through neutral to positive, and export the generated PNG. Mood changes only the editorial wording and visual treatment; the displayed statistics remain unchanged. The card contains that day's aggregate statistics, model mix, selected-day histogram, explicit refusal lower-bound counts, Token Envy attribution, Security Blueprints attribution, and a **Run it yourself · npx tokenenvy** call-to-action; it contains no session IDs, project paths, prompts, refusal explanations, or other transcript content. Browser support determines whether **Share** can attach the image directly. **Copy image** and **Download PNG** remain available, with guided X, Bluesky, and LinkedIn composer fallbacks for manual posting.
+Choose a measured day, select **Share this day**, and export a PNG. Friendly and spicy voices control the tagline. The mood slider changes wording, expression, and palette while measurements stay fixed.
 
-Choose **Recap my week** for a separate **Week so far** image. It compares the current calendar week with your prior 28 days through a mix-adjusted personal Speed Index. It also shows the fastest and slowest measured days, aggregate request and session activity, output tokens, and the leading model family. The recap contains aggregate statistics only and carries Security Blueprints attribution alongside **Run your week · npx tokenenvy**.
+Daily cards contain aggregate statistics, model mix, a histogram, explicit refusal lower bounds, project attribution, and the `npx tokenenvy` command. Weekly recaps add a mix-adjusted Speed Index, the fastest and slowest days, request and session activity, output tokens, and the leading model family.
 
-Share actions use the public npm package page as their canonical product link. Release builders can override it at build time:
+Browser support controls native sharing. **Copy image** and **Download PNG** work as fallbacks, with composer shortcuts for X, Bluesky, and LinkedIn.
+
+Share actions link to the public npm package page. Release builders can set another public product URL:
 
 ```bash
 PUBLIC_TOKENENVY_URL=https://example.com/tokenenvy npm run build
 ```
 
-The override must be a credential-free public `https://` URL. An invalid override is omitted rather than used.
+The URL must use `https://` and exclude credentials. Invalid values omit the product link.
 
 ## Development
 
+Build and link a local checkout:
+
 ```bash
 npm install
-npm run dev
+npm run build
+npm link
+tokenenvy
 ```
 
-Useful checks:
+Start the development server with `npm run dev`.
+
+Run the checks before publishing:
 
 ```bash
+npm run format:check
+npm run lint
 npm run check
 npm test
 npm run build
 npm run test:package
 ```
 
-`test:package` builds the npm tarball, installs it into a temporary empty project, exercises the installed `.bin`, scans fixtures from two transcript roots, and verifies authenticated access plus clean shutdown. The development server is loopback-only. Production access controls are enabled in the built Node server launched by the CLI. Tests and fixtures should use temporary transcript and state directories; do not point mutating test helpers at a real `~/.claude` directory.
+Use `npm run format` to apply formatting. The package test builds the npm tarball, installs it in a temporary project, scans fixtures from two transcript roots, verifies authenticated access, and checks clean shutdown. Keep tests and fixtures in temporary transcript and state directories.
 
 ## License
 
