@@ -19,7 +19,7 @@ function run(command, args, options = {}) {
     cwd: projectRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    ...options
+    ...options,
   });
 }
 
@@ -29,7 +29,8 @@ async function unusedPort() {
     probe.once('error', reject);
     probe.listen(0, '127.0.0.1', () => {
       const address = probe.address();
-      if (!address || typeof address === 'string') return reject(new Error('Could not reserve a test port'));
+      if (!address || typeof address === 'string')
+        return reject(new Error('Could not reserve a test port'));
       probe.close(() => resolvePort(address.port));
     });
   });
@@ -38,7 +39,8 @@ async function unusedPort() {
 async function waitForHealth(url, child) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    if (child.exitCode != null) throw new Error(`Installed server exited early with status ${child.exitCode}`);
+    if (child.exitCode != null)
+      throw new Error(`Installed server exited early with status ${child.exitCode}`);
     try {
       const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(500) });
       if (response.ok && (await response.json()).service === 'tokenenvy') return;
@@ -53,11 +55,12 @@ async function waitForHealth(url, child) {
 async function waitForScanner(url, cookie, child) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    if (child.exitCode != null) throw new Error(`Installed server exited early with status ${child.exitCode}`);
+    if (child.exitCode != null)
+      throw new Error(`Installed server exited early with status ${child.exitCode}`);
     try {
       const response = await fetch(`${url}/api/v1/overview`, {
         headers: { cookie },
-        signal: AbortSignal.timeout(500)
+        signal: AbortSignal.timeout(500),
       });
       if (response.ok) {
         const overview = await response.json();
@@ -68,7 +71,9 @@ async function waitForScanner(url, cookie, child) {
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  throw new Error('Installed server did not scan both configured transcript roots within 15 seconds');
+  throw new Error(
+    'Installed server did not scan both configured transcript roots within 15 seconds',
+  );
 }
 
 async function waitForExit(child, timeoutMs) {
@@ -107,7 +112,9 @@ writeFileSync(join(secondLogsDirectory, 'second.jsonl'), '{}\n');
 let server;
 try {
   run('npm', ['run', 'build']);
-  const packResult = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', work]));
+  const packResult = JSON.parse(
+    run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', work]),
+  );
   const packed = packResult[0];
   const names = packed.files.map(({ path }) => path);
   for (const required of [
@@ -118,29 +125,45 @@ try {
     'bin/launch.js',
     'bin/node-version.js',
     'bin/tokenenvy.js',
-    'build/index.js'
+    'build/index.js',
   ]) {
     if (!names.includes(required)) throw new Error(`Packed package is missing ${required}`);
   }
-  for (const privateOrLegacy of ['REPORT.md', 'analyze-claude-logs.mjs', 'throughput-histogram.csv']) {
-    if (names.includes(privateOrLegacy)) throw new Error(`Packed package unexpectedly contains ${privateOrLegacy}`);
+  for (const privateOrLegacy of [
+    'REPORT.md',
+    'analyze-claude-logs.mjs',
+    'throughput-histogram.csv',
+  ]) {
+    if (names.includes(privateOrLegacy))
+      throw new Error(`Packed package unexpectedly contains ${privateOrLegacy}`);
   }
 
   const tarball = join(work, packed.filename);
   run('npm', ['init', '--yes'], { cwd: packageDirectory });
-  run('npm', ['install', tarball, '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: packageDirectory });
+  run('npm', ['install', tarball, '--ignore-scripts', '--no-audit', '--no-fund'], {
+    cwd: packageDirectory,
+  });
 
   const installedRoot = join(packageDirectory, 'node_modules', 'tokenenvy');
   const manifest = JSON.parse(readFileSync(join(installedRoot, 'package.json'), 'utf8'));
   if (manifest.license !== 'Apache-2.0' || manifest.author !== 'Niels Provos') {
-    throw new Error('Packed package metadata does not identify the Apache license and copyright owner');
+    throw new Error(
+      'Packed package metadata does not identify the Apache license and copyright owner',
+    );
   }
   const license = readFileSync(join(installedRoot, 'LICENSE'), 'utf8');
-  if (!license.includes('Grant of Patent License') || license.includes('% Total') || license.includes('\r')) {
+  if (
+    !license.includes('Grant of Patent License') ||
+    license.includes('% Total') ||
+    license.includes('\r')
+  ) {
     throw new Error('Packed Apache license is incomplete or contains transfer output');
   }
   const notice = readFileSync(join(installedRoot, 'NOTICE'), 'utf8');
-  if (!notice.includes('Copyright 2026 Niels Provos') || !notice.includes('Security Blueprints, LLC')) {
+  if (
+    !notice.includes('Copyright 2026 Niels Provos') ||
+    !notice.includes('Security Blueprints, LLC')
+  ) {
     throw new Error('Packed NOTICE is missing the copyright or project attribution');
   }
 
@@ -149,12 +172,12 @@ try {
   const unsupportedScript = [
     "Object.defineProperty(process.versions, 'node', { value: '20.19.0' });",
     `process.argv = [process.execPath, ${JSON.stringify(executable)}, '--help'];`,
-    `await import(${JSON.stringify(pathToFileURL(installedLauncher).href)});`
+    `await import(${JSON.stringify(pathToFileURL(installedLauncher).href)});`,
   ].join('\n');
   const unsupported = spawnSync(
     process.execPath,
     ['--input-type=module', '--eval', unsupportedScript],
-    { cwd: packageDirectory, encoding: 'utf8' }
+    { cwd: packageDirectory, encoding: 'utf8' },
   );
   if (
     unsupported.status !== 1 ||
@@ -162,11 +185,14 @@ try {
     !unsupported.stderr.includes('requires Node.js 22.13 or newer') ||
     unsupported.stderr.includes('Token Envy is running')
   ) {
-    throw new Error(`Installed CLI did not reject Node.js 20 before startup:\n${unsupported.stderr}`);
+    throw new Error(
+      `Installed CLI did not reject Node.js 20 before startup:\n${unsupported.stderr}`,
+    );
   }
 
   const help = run(executable, ['--help'], { cwd: packageDirectory });
-  if (!help.includes('--logs PATH') || !help.includes('statusline')) throw new Error('Installed CLI help is incomplete');
+  if (!help.includes('--logs PATH') || !help.includes('statusline'))
+    throw new Error('Installed CLI help is incomplete');
 
   const port = await unusedPort();
   const url = `http://127.0.0.1:${port}`;
@@ -181,13 +207,13 @@ try {
       String(port),
       '--timezone',
       'UTC',
-      '--no-open'
+      '--no-open',
     ],
     {
       cwd: packageDirectory,
       env: { ...process.env, TOKENENVY_DATA_DIR: stateDirectory },
-      stdio: ['ignore', 'pipe', 'pipe']
-    }
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
   );
   let serverOutput = '';
   server.stdout.on('data', (chunk) => (serverOutput += chunk.toString('utf8')));
@@ -195,7 +221,8 @@ try {
   await waitForHealth(url, server);
 
   const privateUrl = serverOutput.match(/Private dashboard URL: (\S+)/)?.[1];
-  if (!privateUrl) throw new Error(`Installed CLI did not print its private dashboard URL:\n${serverOutput}`);
+  if (!privateUrl)
+    throw new Error(`Installed CLI did not print its private dashboard URL:\n${serverOutput}`);
   const bootstrap = await fetch(privateUrl, { redirect: 'manual' });
   const cookie = bootstrap.headers.get('set-cookie')?.split(';', 1)[0];
   if (bootstrap.status !== 303 || !cookie || bootstrap.headers.get('location') !== '/') {
@@ -219,11 +246,13 @@ try {
     throw new Error('Installed server did not exit within 5 seconds of SIGTERM');
   }
   if (shutdown.code !== 0) {
-    throw new Error(`Installed server exited uncleanly after SIGTERM (${shutdown.signal ?? shutdown.code})`);
+    throw new Error(
+      `Installed server exited uncleanly after SIGTERM (${shutdown.signal ?? shutdown.code})`,
+    );
   }
 
   process.stdout.write(
-    `Packed ${packed.filename}, installed its bin, scanned two roots, and shut it down cleanly.\n`
+    `Packed ${packed.filename}, installed its bin, scanned two roots, and shut it down cleanly.\n`,
   );
 } finally {
   if (server) await forceStop(server);

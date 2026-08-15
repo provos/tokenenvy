@@ -4,7 +4,7 @@ import { createSecurityHandle, isAllowedOrigin, isLoopbackAuthority } from '../.
 describe('loopback request boundary', () => {
   it.each(['localhost', 'localhost:4173', '127.0.0.1', '127.0.0.1:65535', '[::1]', '[::1]:4173'])(
     'accepts %s',
-    (host) => expect(isLoopbackAuthority(host)).toBe(true)
+    (host) => expect(isLoopbackAuthority(host)).toBe(true),
   );
 
   it.each([
@@ -16,7 +16,7 @@ describe('loopback request boundary', () => {
     '0.0.0.0',
     'localhost@evil.example',
     'localhost/evil',
-    'localhost\\evil'
+    'localhost\\evil',
   ])('rejects %s', (host) => expect(isLoopbackAuthority(host)).toBe(false));
 
   it('allows absent or loopback origins and rejects non-loopback origins', () => {
@@ -42,11 +42,11 @@ function eventFor(url: string, cookie?: string, headers: Record<string, string> 
           `${name}=${value}`,
           options.path ? `Path=${options.path}` : '',
           options.httpOnly ? 'HttpOnly' : '',
-          options.sameSite === 'strict' ? 'SameSite=Strict' : ''
+          options.sameSite === 'strict' ? 'SameSite=Strict' : '',
         ].filter(Boolean);
         return attributes.join('; ');
-      }
-    }
+      },
+    },
   };
 }
 
@@ -56,13 +56,13 @@ describe('production browser handshake', () => {
       production: true,
       bootstrapToken: 'one-time-bootstrap',
       statuslineSecret: 'statusline-secret',
-      sessionToken: 'browser-session'
+      sessionToken: 'browser-session',
     });
     const resolve = async () => new Response('dashboard');
 
     const bootstrap = await gate({
       event: eventFor('http://127.0.0.1:4173/?view=week&token=one-time-bootstrap') as never,
-      resolve
+      resolve,
     });
     expect(bootstrap.status).toBe(303);
     expect(bootstrap.headers.get('location')).toBe('/?view=week');
@@ -73,13 +73,13 @@ describe('production browser handshake', () => {
 
     const replay = await gate({
       event: eventFor('http://127.0.0.1:4173/?token=one-time-bootstrap') as never,
-      resolve
+      resolve,
     });
     expect(replay.status).toBe(401);
 
     const authenticated = await gate({
       event: eventFor('http://127.0.0.1:4173/', 'browser-session') as never,
-      resolve
+      resolve,
     });
     expect(authenticated.status).toBe(200);
     expect(authenticated.headers.get('x-content-type-options')).toBe('nosniff');
@@ -90,7 +90,7 @@ describe('production browser handshake', () => {
       production: true,
       bootstrapToken: 'bootstrap',
       statuslineSecret: 'statusline-secret',
-      sessionToken: 'session'
+      sessionToken: 'session',
     });
     const resolve = async () => new Response('ok');
 
@@ -98,27 +98,27 @@ describe('production browser handshake', () => {
       (
         await gate({
           event: eventFor('http://127.0.0.1:4173/health') as never,
-          resolve
+          resolve,
         })
-      ).status
+      ).status,
     ).toBe(200);
     expect(
       (
         await gate({
           event: eventFor('http://127.0.0.1:4173/api/v1/statusline') as never,
-          resolve
+          resolve,
         })
-      ).status
+      ).status,
     ).toBe(401);
     expect(
       (
         await gate({
           event: eventFor('http://127.0.0.1:4173/api/v1/statusline', undefined, {
-            authorization: 'Bearer statusline-secret'
+            authorization: 'Bearer statusline-secret',
           }) as never,
-          resolve
+          resolve,
         })
-      ).status
+      ).status,
     ).toBe(200);
   });
 });

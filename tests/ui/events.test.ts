@@ -5,7 +5,7 @@ import {
   quotaWindowIsStale,
   rangeButtonState,
   scanRefreshTarget,
-  selectActiveDate
+  selectActiveDate,
 } from '../../src/routes/+page.svelte';
 
 const status = {
@@ -17,7 +17,7 @@ const status = {
   invalidRows: 1,
   updatedAt: '2026-08-14T12:00:00.000Z',
   lastError: null,
-  revision: 7
+  revision: 7,
 };
 
 describe('dashboard event parsing', () => {
@@ -44,12 +44,14 @@ describe('dashboard event parsing', () => {
       usedPercentage: 70,
       observedAt: '2026-08-14T12:00:00.000Z',
       resetsAt: '2026-08-14T13:00:00.000Z',
-      stale: false
+      stale: false,
     };
     expect(quotaWindowIsStale(window, Date.parse('2026-08-14T12:15:00.000Z'))).toBe(false);
     expect(quotaWindowIsStale(window, Date.parse('2026-08-14T12:15:00.001Z'))).toBe(true);
     expect(quotaWindowIsStale(window, Date.parse('2026-08-14T13:00:00.000Z'))).toBe(true);
-    expect(quotaWindowIsStale({ ...window, stale: true }, Date.parse('2026-08-14T12:01:00.000Z'))).toBe(true);
+    expect(
+      quotaWindowIsStale({ ...window, stale: true }, Date.parse('2026-08-14T12:01:00.000Z')),
+    ).toBe(true);
   });
 
   it('preserves an available selected day and otherwise chooses the newest useful day', () => {

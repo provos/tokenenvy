@@ -10,7 +10,7 @@ import {
   weeklyRecapObservedWeekdays,
   weeklyRecapPeriod,
   weeklyRecapReady,
-  type WeeklyRecapData
+  type WeeklyRecapData,
 } from '../../src/lib/components/weekly-recap';
 
 const recap: WeeklyRecapData = {
@@ -27,18 +27,18 @@ const recap: WeeklyRecapData = {
     ciHigh: 114,
     percentile: 93,
     eligible: true,
-    reason: null
+    reason: null,
   },
   models: [
     {
       family: 'sonnet',
       requestCount: 60,
       outputTokens: 18_000,
-      share: 0.72
-    }
+      share: 0.72,
+    },
   ],
   fastestDay: { date: '2026-08-13', median: 91 },
-  slowestDay: { date: '2026-08-11', median: 54 }
+  slowestDay: { date: '2026-08-11', median: 54 },
 };
 
 describe('weekly Token Envy recap', () => {
@@ -62,8 +62,8 @@ describe('weekly Token Envy recap', () => {
         open: true,
         recap,
         outputTokens: 25_000,
-        onclose: () => undefined
-      }
+        onclose: () => undefined,
+      },
     });
     const normalized = body.replace(/\s+/g, ' ');
 
@@ -75,7 +75,9 @@ describe('weekly Token Envy recap', () => {
     expect(normalized).toContain('54 effective tok/s');
     expect(normalized).toContain('Run your week · npx tokenenvy');
     expect(normalized).toContain('A Security Blueprints, LLC project · securityblueprints.io');
-    expect(normalized).toContain('Each Speed Index compares one person with their own local history.');
+    expect(normalized).toContain(
+      'Each Speed Index compares one person with their own local history.',
+    );
     expect(normalized).toContain('Prompts stayed local');
   });
 
@@ -84,13 +86,13 @@ describe('weekly Token Envy recap', () => {
       eyebrow: 'Your private speed receipt',
       title: 'Claude Code feels slow? Bring receipts.',
       body: 'Share this day or recap your week. Ask friends to bring their own receipts.',
-      note: 'Your prompts stay on this device. Model mix, output length, and workload shape effective TPS.'
+      note: 'Your prompts stay on this device. Model mix, output length, and workload shape effective TPS.',
     });
   });
 
   it('accepts only safe HTTPS product links', () => {
     expect(safeWeeklyRecapProductLink('https://www.npmjs.com/package/tokenenvy')).toMatchObject({
-      href: 'https://www.npmjs.com/package/tokenenvy'
+      href: 'https://www.npmjs.com/package/tokenenvy',
     });
     expect(safeWeeklyRecapProductLink('http://example.com')).toBeNull();
     expect(safeWeeklyRecapProductLink('https://user:secret@example.com')).toBeNull();
@@ -100,12 +102,12 @@ describe('weekly Token Envy recap', () => {
     const sparse = {
       ...recap,
       daysObserved: 2,
-      observedDates: ['2026-08-10', '2026-08-14']
+      observedDates: ['2026-08-10', '2026-08-14'],
     };
     expect([...weeklyRecapObservedWeekdays(sparse)]).toEqual([0, 4]);
 
     const { body } = render(WeeklyRecapModal, {
-      props: { open: true, recap: sparse, outputTokens: 4_200, onclose: () => undefined }
+      props: { open: true, recap: sparse, outputTokens: 4_200, onclose: () => undefined },
     });
     expect(body).toContain('data-weekday="1" data-observed="true"');
     expect(body).toContain('data-weekday="2" data-observed="false"');

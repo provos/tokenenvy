@@ -2,7 +2,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import ScanProgress, {
   formatScanBytes,
-  scanPercent
+  scanPercent,
 } from '../../src/lib/components/ScanProgress.svelte';
 import type { ScanStatus } from '../../src/lib/types';
 
@@ -15,7 +15,7 @@ const scanning: ScanStatus = {
   invalidRows: 2,
   updatedAt: '2026-08-14T18:00:00.000Z',
   lastError: null,
-  revision: 0
+  revision: 0,
 };
 
 describe('startup scan progress', () => {
@@ -32,7 +32,7 @@ describe('startup scan progress', () => {
 
   it('uses an indeterminate meter during discovery', () => {
     const { body } = render(ScanProgress, {
-      props: { status: { ...scanning, state: 'discovering', filesScanned: 0 } }
+      props: { status: { ...scanning, state: 'discovering', filesScanned: 0 } },
     });
 
     expect(scanPercent({ ...scanning, state: 'discovering' })).toBeNull();

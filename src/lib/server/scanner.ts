@@ -69,7 +69,7 @@ export class Scanner {
     invalidRows: 0,
     updatedAt: null,
     lastError: null,
-    revision: 0
+    revision: 0,
   };
 
   constructor(options: ScannerOptions) {
@@ -132,7 +132,7 @@ export class Scanner {
       bytesRead: 0,
       rowsRead: 0,
       invalidRows: 0,
-      lastError: null
+      lastError: null,
     });
     try {
       const activeRootIds = new Set(this.roots.map((root) => this.database.rootId(root)));
@@ -151,7 +151,7 @@ export class Scanner {
         } catch (error) {
           const code = filesystemErrorCode(error) ?? 'IO';
           const hasIndexedSources = sourceRecords.some(
-            (source) => source.rootId === rootId || source.rootId === ''
+            (source) => source.rootId === rootId || source.rootId === '',
           );
           if (code === 'ENOENT' && !hasIndexedSources) {
             successfulRootIds.add(rootId);
@@ -193,18 +193,22 @@ export class Scanner {
         analyticsChanged = this.database.archiveStable(Date.now());
       }
       const state = failures.length > 0 ? 'error' : 'idle';
-      const lastError = failures.length > 0
-        ? `Unable to scan ${failures.length} monitored root${failures.length === 1 ? '' : 's'} (${[...new Set(failures)].join(', ')})`
-        : null;
+      const lastError =
+        failures.length > 0
+          ? `Unable to scan ${failures.length} monitored root${failures.length === 1 ? '' : 's'} (${[...new Set(failures)].join(', ')})`
+          : null;
       this.publish({
         state,
         lastError,
-        ...(analyticsChanged ? { revision: this.#status.revision + 1 } : {})
+        ...(analyticsChanged ? { revision: this.#status.revision + 1 } : {}),
       });
       if (databaseChanged) this.scheduleSettledRebuild();
       return this.getStatus();
     } catch (error) {
-      this.publish({ state: 'error', lastError: filesystemErrorCode(error) ?? 'Scanner database failure' });
+      this.publish({
+        state: 'error',
+        lastError: filesystemErrorCode(error) ?? 'Scanner database failure',
+      });
       throw error;
     }
   }
@@ -213,7 +217,11 @@ export class Scanner {
     await this.scanFileInternal(filePath, true);
   }
 
-  private async scanFileInternal(filePath: string, rebuild: boolean, knownRoot?: string): Promise<boolean> {
+  private async scanFileInternal(
+    filePath: string,
+    rebuild: boolean,
+    knownRoot?: string,
+  ): Promise<boolean> {
     const root = knownRoot ?? this.rootFor(filePath);
     if (!root) return false;
     const metadata = await lstat(filePath);
@@ -229,7 +237,8 @@ export class Scanner {
         (metadata.size === previous.size && metadata.mtimeMs !== previous.mtimeMs));
 
     if (previous && previous.rootId !== rootId) this.database.assignSourceRoot(sourceId, rootId);
-    if (previous && metadata.size === previous.size && metadata.mtimeMs === previous.mtimeMs) return false;
+    if (previous && metadata.size === previous.size && metadata.mtimeMs === previous.mtimeMs)
+      return false;
 
     if (!replace && previous && previous.offset > 0) {
       const actualTail = await this.hashTail(filePath, previous.offset);
@@ -239,13 +248,13 @@ export class Scanner {
     const progressBase = {
       bytesRead: this.#status.bytesRead,
       rowsRead: this.#status.rowsRead,
-      invalidRows: this.#status.invalidRows
+      invalidRows: this.#status.invalidRows,
     };
     const result = await this.readCompleteLines(filePath, sourceId, startOffset, (progress) => {
       this.publish({
         bytesRead: progressBase.bytesRead + progress.bytesRead,
         rowsRead: progressBase.rowsRead + progress.rows,
-        invalidRows: progressBase.invalidRows + progress.invalidRows
+        invalidRows: progressBase.invalidRows + progress.invalidRows,
       });
     });
     const rowsRead = (replace ? 0 : (previous?.rowsRead ?? 0)) + result.rows;
@@ -259,14 +268,14 @@ export class Scanner {
       mtimeMs: metadata.mtimeMs,
       tailHash: await this.hashTail(filePath, result.completeOffset),
       rowsRead,
-      invalidRows
+      invalidRows,
     };
     this.database.applyFileScan({ checkpoint, events: result.events, replace });
     this.publish({
       filesScanned: this.#status.filesScanned + 1,
       bytesRead: progressBase.bytesRead + result.bytesRead,
       rowsRead: progressBase.rowsRead + result.rows,
-      invalidRows: progressBase.invalidRows + result.invalidRows
+      invalidRows: progressBase.invalidRows + result.invalidRows,
     });
     if (rebuild) {
       this.database.rebuildRequests(Date.now(), this.idleMs);
@@ -280,7 +289,7 @@ export class Scanner {
     filePath: string,
     sourceId: string,
     startOffset: number,
-    onProgress?: (progress: { bytesRead: number; rows: number; invalidRows: number }) => void
+    onProgress?: (progress: { bytesRead: number; rows: number; invalidRows: number }) => void,
   ): Promise<{
     events: ScannedEvent[];
     rows: number;
@@ -324,11 +333,14 @@ export class Scanner {
           lineParts = [];
           lineLength = 0;
           rows += 1;
-          const line = rawBuffer.length > 0 && rawBuffer[rawBuffer.length - 1] === 0x0d
-            ? rawBuffer.subarray(0, -1).toString('utf8')
-            : rawBuffer.toString('utf8');
+          const line =
+            rawBuffer.length > 0 && rawBuffer[rawBuffer.length - 1] === 0x0d
+              ? rawBuffer.subarray(0, -1).toString('utf8')
+              : rawBuffer.toString('utf8');
           if (!line) continue;
-          const event = parseTranscriptEvent(line, sourceId, lineOffset, (value) => this.database.digest(value));
+          const event = parseTranscriptEvent(line, sourceId, lineOffset, (value) =>
+            this.database.digest(value),
+          );
           if (event) events.push({ lineOffset, event });
           else invalidRows += 1;
           segmentStart = newline + 1;
@@ -376,7 +388,10 @@ export class Scanner {
   private enqueue(task: () => Promise<void>): Promise<void> {
     const result = this.#queue.then(task);
     this.#queue = result.catch((error: unknown) => {
-      this.publish({ state: 'error', lastError: filesystemErrorCode(error) ?? 'Scanner task failure' });
+      this.publish({
+        state: 'error',
+        lastError: filesystemErrorCode(error) ?? 'Scanner task failure',
+      });
     });
     return result;
   }
@@ -403,9 +418,7 @@ export class Scanner {
         if (this.#stopped) return;
         await this.scanAll(false);
       });
-      void reconciliation
-        .catch(() => {})
-        .finally(() => this.scheduleReconciliation());
+      void reconciliation.catch(() => {}).finally(() => this.scheduleReconciliation());
     }, this.reconciliationMs);
     this.#reconciliationTimer.unref?.();
   }
@@ -485,7 +498,7 @@ export class Scanner {
       if (unavailableRoots.size > 0 && !this.#stopped) {
         this.publish({
           state: 'error',
-          lastError: `Unable to scan ${unavailableRoots.size} monitored root${unavailableRoots.size === 1 ? '' : 's'} (ENOENT)`
+          lastError: `Unable to scan ${unavailableRoots.size} monitored root${unavailableRoots.size === 1 ? '' : 's'} (ENOENT)`,
         });
       }
       return;
@@ -494,9 +507,10 @@ export class Scanner {
     this.publish({
       state: unavailableRoots.size > 0 ? 'error' : 'idle',
       revision: this.#status.revision + 1,
-      lastError: unavailableRoots.size > 0
-        ? `Unable to scan ${unavailableRoots.size} monitored root${unavailableRoots.size === 1 ? '' : 's'} (ENOENT)`
-        : null
+      lastError:
+        unavailableRoots.size > 0
+          ? `Unable to scan ${unavailableRoots.size} monitored root${unavailableRoots.size === 1 ? '' : 's'} (ENOENT)`
+          : null,
     });
     this.scheduleSettledRebuild();
   }
@@ -507,7 +521,7 @@ export class Scanner {
       ignored: (candidate, stats) => Boolean(stats?.isFile() && !candidate.endsWith('.jsonl')),
       ignoreInitial: true,
       followSymlinks: false,
-      persistent: true
+      persistent: true,
     });
     this.#watcher.on('add', (file) => this.queueWatchAction(file, 'scan'));
     this.#watcher.on('change', (file) => this.queueWatchAction(file, 'scan'));

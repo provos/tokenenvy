@@ -35,7 +35,7 @@
 
   export function scanRefreshTarget(
     analyticsRevision: number | null,
-    statusRevision: number
+    statusRevision: number,
   ): 'none' | 'quota' | 'dashboard' {
     if (analyticsRevision === null || statusRevision < analyticsRevision) return 'none';
     return statusRevision === analyticsRevision ? 'quota' : 'dashboard';
@@ -57,7 +57,7 @@
     selectedDate: string | null,
     today: string,
     todayCount: number,
-    dates: string[]
+    dates: string[],
   ): string | null {
     const availableDates = [...new Set(dates)].sort();
     if (selectedDate && availableDates.includes(selectedDate)) return selectedDate;
@@ -67,17 +67,17 @@
 
   export function rangeButtonState(
     pendingRangeDays: number | null,
-    days: number
+    days: number,
   ): { disabled: boolean; busy: boolean } {
     return {
       disabled: pendingRangeDays !== null,
-      busy: pendingRangeDays === days
+      busy: pendingRangeDays === days,
     };
   }
 
   export function modelFamilyRailState(
     modelCount: number,
-    loading: boolean
+    loading: boolean,
   ): 'models' | 'loading' | 'empty' {
     if (modelCount > 0) return 'models';
     return loading ? 'loading' : 'empty';
@@ -93,6 +93,7 @@
 
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { resolve } from '$app/paths';
   import { onDestroy, onMount } from 'svelte';
   import DayHero from '$lib/components/DayHero.svelte';
   import DailyChart from '$lib/components/DailyChart.svelte';
@@ -100,10 +101,7 @@
   import ScanProgress from '$lib/components/ScanProgress.svelte';
   import ShareModal from '$lib/components/ShareModal.svelte';
   import WeeklyRecapModal from '$lib/components/WeeklyRecapModal.svelte';
-  import {
-    SECURITY_BLUEPRINTS_LEGAL_NAME,
-    SECURITY_BLUEPRINTS_URL
-  } from '$lib/components/brand';
+  import { SECURITY_BLUEPRINTS_LEGAL_NAME, SECURITY_BLUEPRINTS_URL } from '$lib/components/brand';
   import { compactNumber, dayLabel, FAMILY_COLORS } from '$lib/components/chart';
   import { DASHBOARD_SHARE_CTA, weeklyRecapReady } from '$lib/components/weekly-recap';
   import type {
@@ -111,7 +109,7 @@
     ModelFamily,
     OverviewResponse,
     QuotaResponse,
-    SeriesResponse
+    SeriesResponse,
   } from '$lib/types';
 
   const ranges = [28, 90, 365] as const;
@@ -129,7 +127,9 @@
   let dataQuality = $state<DataQualityResponse | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
-  let refreshError = $state<{ message: string; requestedDays: (typeof ranges)[number] } | null>(null);
+  let refreshError = $state<{ message: string; requestedDays: (typeof ranges)[number] } | null>(
+    null,
+  );
   let rangeDays = $state<(typeof ranges)[number]>(28);
   let pendingRangeDays = $state<(typeof ranges)[number] | null>(null);
   let visibleFamilies = $state<ModelFamily[]>([...allFamilies]);
@@ -156,11 +156,13 @@
   let latestUpdate = $derived(formatUpdate(overview?.generatedAt));
   let shareReady = $derived(Boolean(dayDetail && !dayLoading && !dayError));
   let recapReady = $derived(overview ? weeklyRecapReady(overview.weekly.recap) : false);
-  let modelRailState = $derived(
-    modelFamilyRailState(dayDetail?.models.length ?? 0, dayLoading)
-  );
+  let modelRailState = $derived(modelFamilyRailState(dayDetail?.models.length ?? 0, dayLoading));
   let selectedDayLabel = $derived(
-    selectedDate ? (selectedDate === overview?.today ? 'Today' : dayLabel(selectedDate)) : 'Selected day'
+    selectedDate
+      ? selectedDate === overview?.today
+        ? 'Today'
+        : dayLabel(selectedDate)
+      : 'Selected day',
   );
   let selectedAnnouncement = $derived(
     dayDetail
@@ -169,15 +171,15 @@
         ? `Loading ${selectedDayLabel.toLowerCase()}.`
         : dayError && selectedDate
           ? `${selectedDayLabel} could not be loaded.`
-          : ''
+          : '',
   );
   let qualityRatio = $derived(
     dataQuality && dataQuality.rows > 0
       ? Math.max(0, 1 - dataQuality.invalidRows / dataQuality.rows)
-      : null
+      : null,
   );
   let sevenDayQuotaStale = $derived(
-    quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false
+    quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false,
   );
   let displayedScanStatus = $derived(latestScanStatus ?? overview?.scan ?? null);
   let selectedDayRefusals = $derived.by(() => {
@@ -186,7 +188,7 @@
       recorded: overview?.refusals.recorded === true,
       attempted: selected?.attempted ?? 0,
       recovered: selected?.recovered ?? 0,
-      userVisible: selected?.userVisible ?? 0
+      userVisible: selected?.userVisible ?? 0,
     };
   });
 
@@ -195,9 +197,12 @@
     if (!window || quotaWindowIsStale(window, quotaClock)) return;
     const expiresAt = quotaWindowExpiresAt(window);
     if (expiresAt === null) return;
-    const timer = setTimeout(() => {
-      quotaClock = Date.now();
-    }, Math.max(0, expiresAt - Date.now()));
+    const timer = setTimeout(
+      () => {
+        quotaClock = Date.now();
+      },
+      Math.max(0, expiresAt - Date.now()),
+    );
     return () => clearTimeout(timer);
   });
 
@@ -218,7 +223,7 @@
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
-      minute: '2-digit'
+      minute: '2-digit',
     }).format(timestamp);
   }
 
@@ -228,14 +233,14 @@
     try {
       const response = await fetch(url, {
         headers: { accept: 'application/json' },
-        signal: controller.signal
+        signal: controller.signal,
       });
       if (optional && response.status === 404) return null;
       if (!response.ok) throw new Error(`The local service returned ${response.status}`);
       return (await response.json()) as T;
     } catch (cause) {
       if (controller.signal.aborted) {
-        throw new Error('The local service took more than 30 seconds to respond.');
+        throw new Error('The local service took more than 30 seconds to respond.', { cause });
       }
       throw cause;
     } finally {
@@ -263,14 +268,15 @@
         getJson<OverviewResponse>('/api/v1/overview'),
         getJson<SeriesResponse>(`/api/v1/series?days=${requestedDays}`),
         getJson<QuotaResponse>('/api/v1/quota', true).catch(() => null),
-        getJson<DataQualityResponse>('/api/v1/data-quality')
+        getJson<DataQualityResponse>('/api/v1/data-quality'),
       ]);
       if (sequence !== loadSequence) return;
       const nextRevision = nextOverview?.scan.revision ?? null;
       analyticsRevision = nextRevision;
-      overview = nextOverview && latestScanStatus && latestScanStatus.revision >= nextOverview.scan.revision
-        ? { ...nextOverview, scan: latestScanStatus }
-        : nextOverview;
+      overview =
+        nextOverview && latestScanStatus && latestScanStatus.revision >= nextOverview.scan.revision
+          ? { ...nextOverview, scan: latestScanStatus }
+          : nextOverview;
       series = nextSeries;
       if (quotaSequence === quotaLoadSequence) {
         quota = nextQuota;
@@ -278,9 +284,14 @@
       }
       dataQuality = nextDataQuality;
       rangeDays = requestedDays;
-      if (rangeChange || !refreshError || refreshError.requestedDays === requestedDays) refreshError = null;
+      if (rangeChange || !refreshError || refreshError.requestedDays === requestedDays)
+        refreshError = null;
       reconcileSelectedDay(nextOverview, nextSeries, nextRevision);
-      if (latestScanStatus && analyticsRevision !== null && latestScanStatus.revision > analyticsRevision) {
+      if (
+        latestScanStatus &&
+        analyticsRevision !== null &&
+        latestScanStatus.revision > analyticsRevision
+      ) {
         scheduleDashboardRefresh();
       }
     } catch (cause) {
@@ -354,14 +365,14 @@
   function reconcileSelectedDay(
     nextOverview: OverviewResponse | null,
     nextSeries: SeriesResponse | null,
-    revision: number | null
+    revision: number | null,
   ) {
     if (!nextOverview || !nextSeries) return;
     const target = selectActiveDate(
       selectedDate,
       nextOverview.today,
       nextOverview.headline.count,
-      nextSeries.points.map((point) => point.date)
+      nextSeries.points.map((point) => point.date),
     );
 
     if (!target) {
@@ -379,7 +390,8 @@
   async function selectDay(date: string, force = false) {
     const revision = analyticsRevision;
     const dateChanged = selectedDate !== date;
-    if (!force && !dateChanged && dayDetail?.date === date && dayDetailRevision === revision) return;
+    if (!force && !dateChanged && dayDetail?.date === date && dayDetailRevision === revision)
+      return;
     const sequence = ++dayLoadSequence;
     if (dateChanged) {
       drawerOpen = false;
@@ -433,7 +445,8 @@
 
   function toggleFamily(family: ModelFamily) {
     if (visibleFamilies.includes(family)) {
-      if (visibleFamilies.length > 1) visibleFamilies = visibleFamilies.filter((item) => item !== family);
+      if (visibleFamilies.length > 1)
+        visibleFamilies = visibleFamilies.filter((item) => item !== family);
     } else {
       visibleFamilies = [...visibleFamilies, family];
     }
@@ -468,20 +481,26 @@
 
 <div class="app-shell">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Token Envy home">
+    <a class="brand" href={resolve('/')} aria-label="Token Envy home">
       <span class="brand-mark" aria-hidden="true">T</span>
       <span>Token Envy</span>
     </a>
 
     <div class="topbar-meta">
       {#if overview}
-        <span class:scanning={overview.scan.state === 'scanning' || overview.scan.state === 'discovering'} class="live-status">
+        <span
+          class:scanning={overview.scan.state === 'scanning' ||
+            overview.scan.state === 'discovering'}
+          class="live-status"
+        >
           <i></i>{overview.scan.state === 'idle' ? 'Live' : overview.scan.state}
         </span>
-        <span class="privacy-pill" title="No prompt or response content leaves this device">Private · local only</span>
+        <span class="privacy-pill" title="No prompt or response content leaves this device"
+          >Private · local only</span
+        >
       {/if}
       <div class="range-control" aria-label="Chart range">
-        {#each ranges as days}
+        {#each ranges as days (days)}
           {@const rangeState = rangeButtonState(pendingRangeDays, days)}
           <button
             class:active={rangeDays === days}
@@ -498,11 +517,14 @@
         class="icon-button theme-toggle"
         aria-label={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}
         onclick={() => applyTheme(theme === 'dark' ? 'light' : 'dark')}
-      >{theme === 'dark' ? '☼' : '◐'}</button>
+        >{theme === 'dark' ? '☼' : '◐'}</button
+      >
       <button
         class="share-button"
         disabled={!shareReady}
-        title={shareReady ? `Share ${selectedDayLabel.toLowerCase()}` : 'Select a measured day to create a share card'}
+        title={shareReady
+          ? `Share ${selectedDayLabel.toLowerCase()}`
+          : 'Select a measured day to create a share card'}
         onclick={() => (shareOpen = true)}
       >
         <span aria-hidden="true">↗</span> Share
@@ -516,7 +538,9 @@
         <div class="loading-orbit"><span></span></div>
         <p class="eyebrow">Reading private metadata</p>
         <h1>Warming up Token Envy</h1>
-        <p>The first scan may take a moment. The dashboard is already listening for new sessions.</p>
+        <p>
+          The first scan may take a moment. The dashboard is already listening for new sessions.
+        </p>
         <ScanProgress status={displayedScanStatus} />
         <div class="skeleton-grid" aria-hidden="true">
           <i></i><i></i><i></i>
@@ -534,15 +558,30 @@
       <section class="empty-state">
         {#if displayedScanStatus?.state === 'discovering' || displayedScanStatus?.state === 'scanning' || displayedScanStatus?.state === 'error'}
           <div class="loading-orbit"><span></span></div>
-          <p class="eyebrow">{displayedScanStatus.state === 'error' ? 'Scanner needs attention' : 'Building your private index'}</p>
-          <h1>{displayedScanStatus.state === 'error' ? 'We couldn’t finish the first scan' : 'Reading your Claude Code history'}</h1>
-          <p>{displayedScanStatus.state === 'error' ? 'Your existing local data is safe. The scanner details are shown below.' : 'The dashboard will appear as soon as the first complete scan is ready.'}</p>
+          <p class="eyebrow">
+            {displayedScanStatus.state === 'error'
+              ? 'Scanner needs attention'
+              : 'Building your private index'}
+          </p>
+          <h1>
+            {displayedScanStatus.state === 'error'
+              ? 'We couldn’t finish the first scan'
+              : 'Reading your Claude Code history'}
+          </h1>
+          <p>
+            {displayedScanStatus.state === 'error'
+              ? 'Your existing local data is safe. The scanner details are shown below.'
+              : 'The dashboard will appear as soon as the first complete scan is ready.'}
+          </p>
           <ScanProgress status={displayedScanStatus} />
         {:else}
           <div class="empty-gauge" aria-hidden="true"><span></span></div>
           <p class="eyebrow">Live scanner ready</p>
           <h1>Your first reading will appear here</h1>
-          <p>Use Claude Code as usual. Eligible requests are summarized locally as soon as a session log is completed.</p>
+          <p>
+            Use Claude Code as usual. Eligible requests are summarized locally as soon as a session
+            log is completed.
+          </p>
           <div class="empty-details">
             <span><b>{overview.scan.filesDiscovered}</b> log files found</span>
             <span><b>{overview.scan.rowsRead.toLocaleString()}</b> events inspected</span>
@@ -576,14 +615,14 @@
                 class="secondary-button"
                 type="button"
                 disabled={!shareReady}
-                onclick={() => (shareOpen = true)}
-              >Share {selectedDayLabel.toLowerCase()}</button>
+                onclick={() => (shareOpen = true)}>Share {selectedDayLabel.toLowerCase()}</button
+              >
               <button
                 class="primary-button"
                 type="button"
                 disabled={!recapReady}
-                onclick={() => (weeklyRecapOpen = true)}
-              >Recap my week</button>
+                onclick={() => (weeklyRecapOpen = true)}>Recap my week</button
+              >
             </div>
           </section>
 
@@ -592,13 +631,16 @@
               <div>
                 <p class="eyebrow">Longitudinal view</p>
                 <h2>How fast has Claude Code felt?</h2>
-                <p>Daily median with the middle 50% shaded. Whiskers show the clustered 95% confidence interval when eligible.</p>
+                <p>
+                  Daily median with the middle 50% shaded. Whiskers show the clustered 95%
+                  confidence interval when eligible.
+                </p>
               </div>
               <span class="freshness">{latestUpdate}</span>
             </div>
 
             <div class="family-filters" aria-label="Visible model families">
-              {#each allFamilies as family}
+              {#each allFamilies as family (family)}
                 {@const model = overview.models.find((item) => item.family === family)}
                 {#if model || series.points.some((point) => point.family === family)}
                   <button
@@ -614,8 +656,12 @@
 
             {#if refreshError}
               <div class="refresh-error" role="alert">
-                <span>{refreshError.message} Showing the last successful {rangeDays}-day view.</span>
-                <button onclick={() => loadDashboard(false, refreshError?.requestedDays ?? rangeDays)}>Retry</button>
+                <span>{refreshError.message} Showing the last successful {rangeDays}-day view.</span
+                >
+                <button
+                  onclick={() => loadDashboard(false, refreshError?.requestedDays ?? rangeDays)}
+                  >Retry</button
+                >
               </div>
             {/if}
 
@@ -623,8 +669,15 @@
               <div class="range-loading" role="status" aria-live="polite">
                 <span class="range-loading-spinner" aria-hidden="true"></span>
                 <span>
-                  <strong>Loading {pendingRangeDays === 365 ? 'the 1-year' : `the ${pendingRangeDays}-day`} view…</strong>
-                  <small>Keeping the current {rangeDays === 365 ? '1-year' : `${rangeDays}-day`} chart visible until it is ready.</small>
+                  <strong
+                    >Loading {pendingRangeDays === 365
+                      ? 'the 1-year'
+                      : `the ${pendingRangeDays}-day`} view…</strong
+                  >
+                  <small
+                    >Keeping the current {rangeDays === 365 ? '1-year' : `${rangeDays}-day`} chart visible
+                    until it is ready.</small
+                  >
                 </span>
               </div>
             {/if}
@@ -638,7 +691,9 @@
                 {selectedDate}
                 onselect={selectDay}
               />
-              <p class="chart-hint">Select a day to update the summary. Use “More info” for its full distribution.</p>
+              <p class="chart-hint">
+                Select a day to update the summary. Use “More info” for its full distribution.
+              </p>
             {:else}
               <div class="subtle-empty">No eligible daily measurements in this range yet.</div>
             {/if}
@@ -648,21 +703,36 @@
         <aside class="dashboard-rail" aria-label="Usage and performance at a glance">
           <section class="panel rail-panel" aria-busy={dayLoading}>
             <div class="section-heading compact-heading">
-              <div><p class="eyebrow">Model families</p><h2>{selectedDayLabel} mix</h2></div>
+              <div>
+                <p class="eyebrow">Model families</p>
+                <h2>{selectedDayLabel} mix</h2>
+              </div>
             </div>
             <div class="model-list">
               {#if modelRailState === 'models' && dayDetail}
                 {#if dayLoading}
-                  <span class="sr-only" role="status">Updating the model mix in the background.</span>
+                  <span class="sr-only" role="status"
+                    >Updating the model mix in the background.</span
+                  >
                 {/if}
-                {#each dayDetail.models as model}
+                {#each dayDetail.models as model (model.family)}
                   <div class="rail-model">
                     <div class="rail-model-name">
                       <i style={`--model-color:${FAMILY_COLORS[model.family]}`}></i>
-                      <span><strong>{model.family}</strong><small>{model.count.toLocaleString()} requests</small></span>
+                      <span
+                        ><strong>{model.family}</strong><small
+                          >{model.count.toLocaleString()} requests</small
+                        ></span
+                      >
                     </div>
-                    <div class="rail-model-value"><strong>{model.median.toFixed(1)}</strong><small>tok/s</small></div>
-                    <span class="mix-track"><i style={`--model-color:${FAMILY_COLORS[model.family]};--model-share:${model.share * 100}%`}></i></span>
+                    <div class="rail-model-value">
+                      <strong>{model.median.toFixed(1)}</strong><small>tok/s</small>
+                    </div>
+                    <span class="mix-track"
+                      ><i
+                        style={`--model-color:${FAMILY_COLORS[model.family]};--model-share:${model.share * 100}%`}
+                      ></i></span
+                    >
                   </div>
                 {/each}
               {:else if modelRailState === 'loading'}
@@ -675,29 +745,55 @@
 
           <section class="panel rail-panel weekly-panel">
             <div class="section-heading compact-heading">
-              <div><p class="eyebrow">This calendar week</p><h2>Observed usage</h2></div>
+              <div>
+                <p class="eyebrow">This calendar week</p>
+                <h2>Observed usage</h2>
+              </div>
             </div>
             <strong class="large-rail-number">{compactNumber(overview.weekly.outputTokens)}</strong>
             <span class="large-rail-label">output tokens recorded</span>
-            <div class="week-progress"><i style={`--week-progress:${Math.min(100, overview.weekly.elapsedFraction * 100)}%`}></i></div>
+            <div class="week-progress">
+              <i style={`--week-progress:${Math.min(100, overview.weekly.elapsedFraction * 100)}%`}
+              ></i>
+            </div>
             <div class="weekly-grid">
-              <span><small>Projected</small><strong>{overview.weekly.projectedOutputTokens === null ? '—' : compactNumber(overview.weekly.projectedOutputTokens)}</strong></span>
-              <span><small>4-week median</small><strong>{overview.weekly.previousFourWeekMedian === null ? '—' : compactNumber(overview.weekly.previousFourWeekMedian)}</strong></span>
+              <span
+                ><small>Projected</small><strong
+                  >{overview.weekly.projectedOutputTokens === null
+                    ? '—'
+                    : compactNumber(overview.weekly.projectedOutputTokens)}</strong
+                ></span
+              >
+              <span
+                ><small>4-week median</small><strong
+                  >{overview.weekly.previousFourWeekMedian === null
+                    ? '—'
+                    : compactNumber(overview.weekly.previousFourWeekMedian)}</strong
+                ></span
+              >
             </div>
             <p>This is locally observed usage, not an account quota.</p>
             <button
               class="secondary-button weekly-recap-button"
               type="button"
               disabled={!recapReady}
-              title={recapReady ? 'Open your private weekly recap' : 'A recap appears after the first measured request this week'}
-              onclick={() => (weeklyRecapOpen = true)}
-            >Open weekly recap</button>
+              title={recapReady
+                ? 'Open your private weekly recap'
+                : 'A recap appears after the first measured request this week'}
+              onclick={() => (weeklyRecapOpen = true)}>Open weekly recap</button
+            >
             {#if quota?.available && quota.sevenDay}
               <div class="quota-reading" class:stale={sevenDayQuotaStale}>
                 {#if sevenDayQuotaStale}
-                  <span><strong>Stale</strong> status-line sample from {formatQuotaObservation(quota.sevenDay.observedAt)}</span>
+                  <span
+                    ><strong>Stale</strong> status-line sample from {formatQuotaObservation(
+                      quota.sevenDay.observedAt,
+                    )}</span
+                  >
                 {:else}
-                  <span><strong>{quota.sevenDay.usedPercentage.toFixed(0)}%</strong> of reported 7-day window</span>
+                  <span
+                    ><strong>{quota.sevenDay.usedPercentage.toFixed(0)}%</strong> of reported 7-day window</span
+                  >
                   <div><i style={`--quota-progress:${quota.sevenDay.usedPercentage}%`}></i></div>
                 {/if}
               </div>
@@ -706,19 +802,42 @@
 
           <section class="panel rail-panel refusal-panel">
             <div class="section-heading compact-heading">
-              <div><p class="eyebrow">All recorded history</p><h2>Classifier refusals</h2></div>
+              <div>
+                <p class="eyebrow">All recorded history</p>
+                <h2>Classifier refusals</h2>
+              </div>
               {#if overview.refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
             </div>
             {#if overview.refusals.recorded}
-              <div class="refusal-total"><strong>{overview.refusals.attempted}</strong><span>attempted</span></div>
-              <div class="refusal-grid">
-                <span><i class="recovered"></i><strong>{overview.refusals.recovered}</strong><small>recovered by fallback</small></span>
-                <span><i class="visible"></i><strong>{overview.refusals.userVisible}</strong><small>user-visible</small></span>
-                <span><i class="unknown"></i><strong>{overview.refusals.unknown}</strong><small>unknown outcome</small></span>
+              <div class="refusal-total">
+                <strong>{overview.refusals.attempted}</strong><span>attempted</span>
               </div>
-              <p>{overview.refusals.perThousand === null ? 'Rate unavailable' : `${overview.refusals.perThousand.toFixed(2)} attempts per 1,000 measured requests`}.</p>
+              <div class="refusal-grid">
+                <span
+                  ><i class="recovered"></i><strong>{overview.refusals.recovered}</strong><small
+                    >recovered by fallback</small
+                  ></span
+                >
+                <span
+                  ><i class="visible"></i><strong>{overview.refusals.userVisible}</strong><small
+                    >user-visible</small
+                  ></span
+                >
+                <span
+                  ><i class="unknown"></i><strong>{overview.refusals.unknown}</strong><small
+                    >unknown outcome</small
+                  ></span
+                >
+              </div>
+              <p>
+                {overview.refusals.perThousand === null
+                  ? 'Rate unavailable'
+                  : `${overview.refusals.perThousand.toFixed(2)} attempts per 1,000 measured requests`}.
+              </p>
             {:else}
-              <p class="subtle-empty rail-empty">This log format does not expose explicit classifier outcomes.</p>
+              <p class="subtle-empty rail-empty">
+                This log format does not expose explicit classifier outcomes.
+              </p>
             {/if}
           </section>
         </aside>
@@ -729,7 +848,10 @@
           <span class="trust-index">01</span>
           <p class="eyebrow">Reliability</p>
           <h2>Built for messy, living logs</h2>
-          <p>Copied history is deduplicated. Partial lines wait. Late events reopen provisional requests. Truncated files are reconciled.</p>
+          <p>
+            Copied history is deduplicated. Partial lines wait. Late events reopen provisional
+            requests. Truncated files are reconciled.
+          </p>
           <div class="trust-stat">
             <strong>{qualityRatio === null ? '—' : `${(qualityRatio * 100).toFixed(2)}%`}</strong>
             <span>rows parsed cleanly</span>
@@ -739,17 +861,28 @@
           <span class="trust-index">02</span>
           <p class="eyebrow">Privacy</p>
           <h2>Your work stays yours</h2>
-          <p>The scanner stores aggregate timing metadata—not prompts, responses, commands, project names, paths, or refusal explanations.</p>
+          <p>
+            The scanner stores aggregate timing metadata—not prompts, responses, commands, project
+            names, paths, or refusal explanations.
+          </p>
           <div class="trust-stat"><strong>0</strong><span>automatic network requests</span></div>
         </article>
         <article class="trust-card methodology-card">
           <span class="trust-index">03</span>
           <p class="eyebrow">Methodology</p>
           <h2>An honest measure of felt speed</h2>
-          <p>Effective output tokens/s divides output tokens by inferred end-to-end wall time. It includes queueing, prompt processing, hidden reasoning, and first-token latency—not just decoder speed.</p>
+          <p>
+            Effective output tokens/s divides output tokens by inferred end-to-end wall time. It
+            includes queueing, prompt processing, hidden reasoning, and first-token latency—not just
+            decoder speed.
+          </p>
           <details>
             <summary>What gets excluded?</summary>
-            <p>Synthetic events, non-positive token counts, missing parents, invalid timestamps, sub-100ms intervals, and hour-scale gaps. Confidence intervals require 20 requests across five sessions.</p>
+            <p>
+              Synthetic events, non-positive token counts, missing parents, invalid timestamps,
+              sub-100ms intervals, and hour-scale gaps. Confidence intervals require 20 requests
+              across five sessions.
+            </p>
           </details>
         </article>
       </section>
@@ -760,6 +893,7 @@
     <span>Token Envy</span>
     <span>
       Private by default · Open source · Local-first ·
+      <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- This is an external brand link. -->
       <a href={SECURITY_BLUEPRINTS_URL} target="_blank" rel="noopener noreferrer">
         A {SECURITY_BLUEPRINTS_LEGAL_NAME} project · securityblueprints.io
       </a>

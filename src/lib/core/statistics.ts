@@ -15,7 +15,10 @@ function sortedQuantile(sorted: readonly number[], probability: number): number 
 }
 
 export function quantile(values: readonly number[], probability: number): number {
-  return sortedQuantile([...values].sort((left, right) => left - right), probability);
+  return sortedQuantile(
+    [...values].sort((left, right) => left - right),
+    probability,
+  );
 }
 
 function seededRandom(seed: number): () => number {
@@ -33,7 +36,7 @@ function seededRandom(seed: number): () => number {
 export function clusteredMedianInterval(
   samples: readonly MetricSample[],
   iterations = 500,
-  seed = 0x5eed1234
+  seed = 0x5eed1234,
 ): [number, number] | null {
   const groups = new Map<string, number[]>();
   for (const sample of samples) {
@@ -69,6 +72,6 @@ export function summarize(samples: readonly MetricSample[]): QuantileSummary {
     p10: sortedQuantile(values, 0.1),
     p90: sortedQuantile(values, 0.9),
     ciLow: interval?.[0] ?? null,
-    ciHigh: interval?.[1] ?? null
+    ciHigh: interval?.[1] ?? null,
   };
 }

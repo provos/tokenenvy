@@ -34,17 +34,19 @@ function insertRequest(
     stratum: number;
     tokensPerSecond: number;
     provisional?: boolean;
-  }
+  },
 ) {
   const finishedAt = Date.parse(`${options.date}T12:00:00Z`);
   database.db
-    .prepare(`
+    .prepare(
+      `
       INSERT INTO requests(
         request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
         input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
         tokens_per_second, provisional, quality_reason
       ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?, NULL)
-    `)
+    `,
+    )
     .run(
       options.id,
       options.sessionId,
@@ -55,7 +57,7 @@ function insertRequest(
       options.family,
       options.stratum,
       options.tokensPerSecond,
-      options.provisional ? 1 : 0
+      options.provisional ? 1 : 0,
     );
 }
 
@@ -64,14 +66,24 @@ describe('analytics', () => {
     const { database, analytics } = await fixture([
       { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2024-03-10T09:29:59.000Z' },
       {
-        type: 'assistant', uuid: 'a1', parentUuid: 'u1', requestId: 'r1', sessionId: 's1',
-        timestamp: '2024-03-10T09:30:00.000Z', message: { model: 'sonnet', usage: { output_tokens: 10 } }
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        requestId: 'r1',
+        sessionId: 's1',
+        timestamp: '2024-03-10T09:30:00.000Z',
+        message: { model: 'sonnet', usage: { output_tokens: 10 } },
       },
       { type: 'user', uuid: 'u2', sessionId: 's2', timestamp: '2024-03-10T10:29:59.000Z' },
       {
-        type: 'assistant', uuid: 'a2', parentUuid: 'u2', requestId: 'r2', sessionId: 's2',
-        timestamp: '2024-03-10T10:30:00.000Z', message: { model: 'opus', usage: { output_tokens: 20 } }
-      }
+        type: 'assistant',
+        uuid: 'a2',
+        parentUuid: 'u2',
+        requestId: 'r2',
+        sessionId: 's2',
+        timestamp: '2024-03-10T10:30:00.000Z',
+        message: { model: 'opus', usage: { output_tokens: 20 } },
+      },
     ]);
     const detail = analytics.day('2024-03-10', 'America/Los_Angeles');
     expect(detail?.summary.count).toBe(2);
@@ -84,21 +96,42 @@ describe('analytics', () => {
   it('reports explicit classifier outcomes without explanations', async () => {
     const { database, analytics } = await fixture([
       {
-        type: 'system', subtype: 'model_refusal_fallback', uuid: 'f1', requestId: 'r1', sessionId: 's1',
-        timestamp: '2026-08-12T02:02:34.379Z', apiRefusalCategory: 'cyber', apiRefusalExplanation: 'PRIVATE',
-        fallbackModel: 'claude-opus-5'
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'f1',
+        requestId: 'r1',
+        sessionId: 's1',
+        timestamp: '2026-08-12T02:02:34.379Z',
+        apiRefusalCategory: 'cyber',
+        apiRefusalExplanation: 'PRIVATE',
+        fallbackModel: 'claude-opus-5',
       },
       {
-        type: 'system', subtype: 'model_refusal_no_fallback', uuid: 'f2', requestId: 'r2', sessionId: 's2',
-        timestamp: '2026-08-13T02:02:34.379Z', apiRefusalCategory: 'cyber', apiRefusalExplanation: 'PRIVATE'
+        type: 'system',
+        subtype: 'model_refusal_no_fallback',
+        uuid: 'f2',
+        requestId: 'r2',
+        sessionId: 's2',
+        timestamp: '2026-08-13T02:02:34.379Z',
+        apiRefusalCategory: 'cyber',
+        apiRefusalExplanation: 'PRIVATE',
       },
       {
-        type: 'system', uuid: 'f3', requestId: 'r3', sessionId: 's3', timestamp: '2026-08-13T03:00:00Z',
-        apiRefusalCategory: 'policy', apiRefusalExplanation: 'PRIVATE'
-      }
+        type: 'system',
+        uuid: 'f3',
+        requestId: 'r3',
+        sessionId: 's3',
+        timestamp: '2026-08-13T03:00:00Z',
+        apiRefusalCategory: 'policy',
+        apiRefusalExplanation: 'PRIVATE',
+      },
     ]);
     expect(analytics.refusals('UTC')).toMatchObject({
-      recorded: true, attempted: 3, recovered: 1, userVisible: 1, unknown: 1
+      recorded: true,
+      attempted: 3,
+      recovered: 1,
+      userVisible: 1,
+      unknown: 1,
     });
     database.close();
   });
@@ -109,10 +142,14 @@ describe('analytics', () => {
     database.recordQuotaSample({
       observedAt: '2026-08-14T12:00:00Z',
       fiveHour: { usedPercentage: 31.5, resetsAt: '2026-08-14T15:00:00Z' },
-      sevenDay: { usedPercentage: 70, resetsAt: '2026-08-18T00:00:00Z' }
+      sevenDay: { usedPercentage: 70, resetsAt: '2026-08-18T00:00:00Z' },
     });
     const fresh = analytics.quota(new Date('2026-08-14T12:10:00Z'));
-    expect(fresh).toMatchObject({ available: true, source: 'statusline', fiveHour: { stale: false } });
+    expect(fresh).toMatchObject({
+      available: true,
+      source: 'statusline',
+      fiveHour: { stale: false },
+    });
     expect(analytics.quota(new Date('2026-08-14T15:00:00Z')).fiveHour?.stale).toBe(true);
     database.close();
   });
@@ -120,11 +157,20 @@ describe('analytics', () => {
   it('exposes explicit quality reasons for excluded requests', async () => {
     const { database, analytics } = await fixture([
       {
-        type: 'assistant', uuid: 'a1', parentUuid: 'missing', requestId: 'r1', sessionId: 's1',
-        timestamp: '2026-08-14T12:00:01Z', message: { model: 'sonnet', usage: { output_tokens: 10 } }
-      }
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'missing',
+        requestId: 'r1',
+        sessionId: 's1',
+        timestamp: '2026-08-14T12:00:01Z',
+        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+      },
     ]);
-    expect(analytics.dataQuality()).toMatchObject({ requests: 1, includedRequests: 0, exclusions: { missing_parent: 1 } });
+    expect(analytics.dataQuality()).toMatchObject({
+      requests: 1,
+      includedRequests: 0,
+      exclusions: { missing_parent: 1 },
+    });
     database.close();
   });
 
@@ -138,9 +184,14 @@ describe('analytics', () => {
     const { database, analytics } = await fixture([
       { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T11:59:59.000Z' },
       {
-        type: 'assistant', uuid: 'a1', parentUuid: 'u1', requestId: 'r1', sessionId: 's1',
-        timestamp: '2026-08-14T12:00:00.000Z', message: { model: 'sonnet', usage: { output_tokens: 10 } }
-      }
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        requestId: 'r1',
+        sessionId: 's1',
+        timestamp: '2026-08-14T12:00:00.000Z',
+        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+      },
     ]);
     const getRequests = vi.spyOn(database, 'getRequests');
     analytics.overview('UTC', new Date('2026-08-14T18:00:00Z'));
@@ -161,24 +212,40 @@ describe('analytics', () => {
   it('excludes provisional requests from analytics while reporting their count', () => {
     const database = new Database({ path: ':memory:', hmacKey: 'provisional-key' });
     insertRequest(database, {
-      id: 'complete', sessionId: 'complete-session', date: '2026-08-14', outputTokens: 20,
-      family: 'sonnet', stratum: 0, tokensPerSecond: 10
+      id: 'complete',
+      sessionId: 'complete-session',
+      date: '2026-08-14',
+      outputTokens: 20,
+      family: 'sonnet',
+      stratum: 0,
+      tokensPerSecond: 10,
     });
     insertRequest(database, {
-      id: 'provisional', sessionId: 'provisional-session', date: '2026-08-14', outputTokens: 100,
-      family: 'sonnet', stratum: 1, tokensPerSecond: 100, provisional: true
+      id: 'provisional',
+      sessionId: 'provisional-session',
+      date: '2026-08-14',
+      outputTokens: 100,
+      family: 'sonnet',
+      stratum: 1,
+      tokensPerSecond: 100,
+      provisional: true,
     });
 
     const analytics = new Analytics(database);
     const overview = analytics.overview('UTC', new Date('2026-08-14T18:00:00Z'));
-    expect(overview.headline).toMatchObject({ count: 1, median: 10, outputTokens: 20, provisional: 1 });
+    expect(overview.headline).toMatchObject({
+      count: 1,
+      median: 10,
+      outputTokens: 20,
+      provisional: 1,
+    });
     expect(analytics.series(28, 'UTC', new Date('2026-08-14T18:00:00Z')).points).toMatchObject([
-      { count: 1, median: 10, outputTokens: 20, provisional: 1 }
+      { count: 1, median: 10, outputTokens: 20, provisional: 1 },
     ]);
     expect(analytics.dataQuality()).toMatchObject({
       requests: 2,
       includedRequests: 1,
-      exclusions: { provisional: 1 }
+      exclusions: { provisional: 1 },
     });
     database.close();
   });
@@ -193,7 +260,7 @@ describe('analytics', () => {
         outputTokens: 32,
         family: 'sonnet',
         stratum: 0,
-        tokensPerSecond: 10
+        tokensPerSecond: 10,
       });
     }
     for (let index = 0; index < 20; index += 1) {
@@ -205,14 +272,17 @@ describe('analytics', () => {
         outputTokens: comparable ? 32 : 2_048,
         family: comparable ? 'sonnet' : 'opus',
         stratum: comparable ? 0 : 3,
-        tokensPerSecond: 20
+        tokensPerSecond: 20,
       });
     }
 
-    const index = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).speedIndex;
+    const index = new Analytics(database).overview(
+      'UTC',
+      new Date('2026-08-14T18:00:00Z'),
+    ).speedIndex;
     expect(index).toMatchObject({
       eligible: false,
-      reason: 'Not enough comparable model and output-size coverage.'
+      reason: 'Not enough comparable model and output-size coverage.',
     });
     database.close();
   });
@@ -228,7 +298,7 @@ describe('analytics', () => {
         outputTokens: firstStratum ? 32 : 128,
         family: firstStratum ? 'sonnet' : 'opus',
         stratum: firstStratum ? 0 : 1,
-        tokensPerSecond: 10
+        tokensPerSecond: 10,
       });
     }
     for (let index = 0; index < 20; index += 1) {
@@ -240,11 +310,14 @@ describe('analytics', () => {
         outputTokens: firstStratum ? 32 : 128,
         family: firstStratum ? 'sonnet' : 'opus',
         stratum: firstStratum ? 0 : 1,
-        tokensPerSecond: firstStratum ? 20 : 5
+        tokensPerSecond: firstStratum ? 20 : 5,
       });
     }
 
-    const index = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).speedIndex;
+    const index = new Analytics(database).overview(
+      'UTC',
+      new Date('2026-08-14T18:00:00Z'),
+    ).speedIndex;
     expect(index.eligible).toBe(true);
     expect(index.value).toBeCloseTo(100, 8);
     database.close();
@@ -260,7 +333,7 @@ describe('analytics', () => {
         outputTokens: 32,
         family: 'sonnet',
         stratum: 0,
-        tokensPerSecond: 10
+        tokensPerSecond: 10,
       });
     }
     const days = [
@@ -268,7 +341,7 @@ describe('analytics', () => {
       { date: '2026-08-11', tokensPerSecond: 25 },
       { date: '2026-08-12', tokensPerSecond: 30 },
       { date: '2026-08-13', tokensPerSecond: 15 },
-      { date: '2026-08-14', tokensPerSecond: 35 }
+      { date: '2026-08-14', tokensPerSecond: 35 },
     ];
     for (const [dayIndex, day] of days.entries()) {
       for (let index = 0; index < 5; index += 1) {
@@ -279,26 +352,18 @@ describe('analytics', () => {
           outputTokens: 32,
           family: 'sonnet',
           stratum: 0,
-          tokensPerSecond: day.tokensPerSecond
+          tokensPerSecond: day.tokensPerSecond,
         });
       }
     }
 
-    const recap = new Analytics(database).overview(
-      'UTC',
-      new Date('2026-08-14T18:00:00Z')
-    ).weekly.recap;
+    const recap = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).weekly
+      .recap;
     expect(recap).toMatchObject({
       weekStart: '2026-08-10',
       throughDate: '2026-08-14',
       daysObserved: 5,
-      observedDates: [
-        '2026-08-10',
-        '2026-08-11',
-        '2026-08-12',
-        '2026-08-13',
-        '2026-08-14'
-      ],
+      observedDates: ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'],
       requestCount: 25,
       sessions: 5,
       median: 25,
@@ -307,13 +372,13 @@ describe('analytics', () => {
         value: 250,
         ciLow: null,
         ciHigh: null,
-        percentile: null
+        percentile: null,
       },
       fastestDay: { date: '2026-08-14', median: 35 },
-      slowestDay: { date: '2026-08-13', median: 15 }
+      slowestDay: { date: '2026-08-13', median: 15 },
     });
     expect(recap.models).toMatchObject([
-      { family: 'sonnet', requestCount: 25, outputTokens: 800, share: 1 }
+      { family: 'sonnet', requestCount: 25, outputTokens: 800, share: 1 },
     ]);
     database.close();
   });
@@ -328,7 +393,7 @@ describe('analytics', () => {
         outputTokens: 32,
         family: 'sonnet',
         stratum: 0,
-        tokensPerSecond: 10
+        tokensPerSecond: 10,
       });
     }
     for (let index = 0; index < 20; index += 1) {
@@ -339,7 +404,7 @@ describe('analytics', () => {
         outputTokens: 32,
         family: 'sonnet',
         stratum: 0,
-        tokensPerSecond: 20
+        tokensPerSecond: 20,
       });
     }
 

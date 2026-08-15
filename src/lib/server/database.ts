@@ -90,11 +90,12 @@ const EMPTY_SCAN_STATUS: ScanStatus = {
   invalidRows: 0,
   updatedAt: null,
   lastError: null,
-  revision: 0
+  revision: 0,
 };
 
 function keyFor(options: DatabaseOptions): Buffer {
-  if (options.hmacKey) return Buffer.isBuffer(options.hmacKey) ? options.hmacKey : Buffer.from(options.hmacKey);
+  if (options.hmacKey)
+    return Buffer.isBuffer(options.hmacKey) ? options.hmacKey : Buffer.from(options.hmacKey);
   if (options.path === ':memory:') return randomBytes(32);
 
   const keyPath = `${options.path}.key`;
@@ -120,7 +121,8 @@ export class Database {
   constructor(options: DatabaseOptions | string) {
     const normalized = typeof options === 'string' ? { path: options } : options;
     this.#key = keyFor(normalized);
-    if (normalized.path !== ':memory:') mkdirSync(dirname(normalized.path), { recursive: true, mode: 0o700 });
+    if (normalized.path !== ':memory:')
+      mkdirSync(dirname(normalized.path), { recursive: true, mode: 0o700 });
     this.db = new BetterSqlite3(normalized.path);
     if (normalized.path !== ':memory:') chmodSync(normalized.path, 0o600);
     this.db.pragma('journal_mode = WAL');
@@ -276,8 +278,7 @@ export class Database {
 
   getFileCheckpoint(sourceId: string): FileCheckpoint | null {
     const row = this.db.prepare('SELECT * FROM files WHERE source_id = ?').get(sourceId) as
-      | Record<string, number | string>
-      | undefined;
+      Record<string, number | string> | undefined;
     if (!row) return null;
     return {
       sourceId: String(row.source_id),
@@ -288,26 +289,31 @@ export class Database {
       mtimeMs: Number(row.mtime_ms),
       tailHash: String(row.tail_hash),
       rowsRead: Number(row.rows_read),
-      invalidRows: Number(row.invalid_rows)
+      invalidRows: Number(row.invalid_rows),
     };
   }
 
   listSourceIds(): string[] {
-    return (this.db.prepare('SELECT source_id FROM files').all() as Array<{ source_id: string }>).map(
-      ({ source_id }) => source_id
-    );
+    return (
+      this.db.prepare('SELECT source_id FROM files').all() as Array<{ source_id: string }>
+    ).map(({ source_id }) => source_id);
   }
 
   listSources(): StoredSource[] {
-    return (this.db.prepare('SELECT source_id, root_id FROM files').all() as Array<{
-      source_id: string;
-      root_id: string;
-    }>).map((row) => ({ sourceId: row.source_id, rootId: row.root_id }));
+    return (
+      this.db.prepare('SELECT source_id, root_id FROM files').all() as Array<{
+        source_id: string;
+        root_id: string;
+      }>
+    ).map((row) => ({ sourceId: row.source_id, rootId: row.root_id }));
   }
 
   assignSourceRoot(sourceId: string, rootId: string): boolean {
-    return this.db.prepare('UPDATE files SET root_id = ? WHERE source_id = ? AND root_id <> ?')
-      .run(rootId, sourceId, rootId).changes > 0;
+    return (
+      this.db
+        .prepare('UPDATE files SET root_id = ? WHERE source_id = ? AND root_id <> ?')
+        .run(rootId, sourceId, rootId).changes > 0
+    );
   }
 
   applyFileScan(options: {
@@ -335,7 +341,7 @@ export class Database {
       )
     `);
     const insertOccurrence = this.db.prepare(
-      'INSERT OR REPLACE INTO occurrences(source_id, line_offset, event_id) VALUES (?, ?, ?)'
+      'INSERT OR REPLACE INTO occurrences(source_id, line_offset, event_id) VALUES (?, ?, ?)',
     );
 
     this.db.transaction(() => {
@@ -343,12 +349,18 @@ export class Database {
       // The FK requires the file row to exist before occurrences are inserted.
       insertFile.run(options.checkpoint);
       if (options.replace) {
-        this.db.prepare('DELETE FROM occurrences WHERE source_id = ?').run(options.checkpoint.sourceId);
+        this.db
+          .prepare('DELETE FROM occurrences WHERE source_id = ?')
+          .run(options.checkpoint.sourceId);
         this.deleteOrphanEvents();
       }
       for (const scanned of options.events) {
         insertEvent.run({ ...scanned.event, synthetic: scanned.event.synthetic ? 1 : 0 });
-        insertOccurrence.run(options.checkpoint.sourceId, scanned.lineOffset, scanned.event.eventId);
+        insertOccurrence.run(
+          options.checkpoint.sourceId,
+          scanned.lineOffset,
+          scanned.event.eventId,
+        );
       }
     })();
   }
@@ -367,7 +379,8 @@ export class Database {
       if (changes > 0) this.deleteOrphanEvents();
       return { sources: changes, archived };
     })();
-    const changed = result.sources > 0 || result.archived.requests > 0 || result.archived.refusals > 0;
+    const changed =
+      result.sources > 0 || result.archived.requests > 0 || result.archived.refusals > 0;
     if (result.sources > 0 || result.archived.requests > 0) this.#requestRevision += 1;
     return changed;
   }
@@ -384,15 +397,21 @@ export class Database {
   }
 
   private deleteOrphanEvents(): void {
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       DELETE FROM events
       WHERE NOT EXISTS (SELECT 1 FROM occurrences WHERE occurrences.event_id = events.event_id)
-    `).run();
+    `,
+      )
+      .run();
   }
 
   private archiveStableInternal(nowMs: number): { requests: number; refusals: number } {
     const cutoff = nowMs - HISTORY_STABILITY_MS;
-    const requestResult = this.db.prepare(`
+    const requestResult = this.db
+      .prepare(
+        `
       INSERT INTO request_history(
         request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
         input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
@@ -425,8 +444,12 @@ export class Database {
         OR request_history.tokens_per_second IS NOT excluded.tokens_per_second
         OR request_history.provisional IS NOT 0
         OR request_history.quality_reason IS NOT excluded.quality_reason
-    `).run({ nowMs, cutoff });
-    const removedRefusals = this.db.prepare(`
+    `,
+      )
+      .run({ nowMs, cutoff });
+    const removedRefusals = this.db
+      .prepare(
+        `
       DELETE FROM refusal_history
       WHERE EXISTS (
         SELECT 1 FROM events live
@@ -435,8 +458,12 @@ export class Database {
           AND live.timestamp_ms IS NOT NULL
           AND live.timestamp_ms <= @cutoff
       )
-    `).run({ cutoff });
-    const refusalResult = this.db.prepare(`
+    `,
+      )
+      .run({ cutoff });
+    const refusalResult = this.db
+      .prepare(
+        `
       INSERT INTO refusal_history(
         event_id, request_id, session_id, timestamp_ms, refusal_outcome, archived_at, updated_at
       )
@@ -451,10 +478,12 @@ export class Database {
         OR refusal_history.session_id IS NOT excluded.session_id
         OR refusal_history.timestamp_ms IS NOT excluded.timestamp_ms
         OR refusal_history.refusal_outcome IS NOT excluded.refusal_outcome
-    `).run({ nowMs, cutoff });
+    `,
+      )
+      .run({ nowMs, cutoff });
     return {
       requests: requestResult.changes,
-      refusals: removedRefusals.changes + refusalResult.changes
+      refusals: removedRefusals.changes + refusalResult.changes,
     };
   }
 
@@ -480,7 +509,8 @@ export class Database {
       synthetic: number;
     };
     const assistantRows = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT event.event_id, event.parent_id, event.request_id, event.session_id,
           event.timestamp_ms, parent.timestamp_ms parent_timestamp_ms, event.model,
           event.output_tokens, event.input_tokens, event.cache_read_tokens,
@@ -489,7 +519,8 @@ export class Database {
         LEFT JOIN events parent ON parent.event_id = event.parent_id
         WHERE event.type = 'assistant' AND event.request_id IS NOT NULL
         ORDER BY event.request_id, event.timestamp_ms, event.event_id
-      `)
+      `,
+      )
       .all() as EventRow[];
     const grouped = new Map<string, EventRow[]>();
     for (const row of assistantRows) {
@@ -513,7 +544,9 @@ export class Database {
         const timestamps = events
           .map(({ timestamp_ms }) => timestamp_ms)
           .filter((value): value is number => value != null && Number.isFinite(value));
-        const roots = events.filter(({ parent_id }) => parent_id == null || !itemIds.has(parent_id));
+        const roots = events.filter(
+          ({ parent_id }) => parent_id == null || !itemIds.has(parent_id),
+        );
         const starts = roots
           .map(({ parent_timestamp_ms }) => parent_timestamp_ms)
           .filter((value): value is number => value != null && Number.isFinite(value));
@@ -522,10 +555,13 @@ export class Database {
         const durationMs = startedAt == null || finishedAt == null ? null : finishedAt - startedAt;
         const outputTokens = Math.max(...events.map(({ output_tokens }) => output_tokens), 0);
         const inputTokens = Math.max(...events.map(({ input_tokens }) => input_tokens), 0);
-        const cacheReadTokens = Math.max(...events.map(({ cache_read_tokens }) => cache_read_tokens), 0);
+        const cacheReadTokens = Math.max(
+          ...events.map(({ cache_read_tokens }) => cache_read_tokens),
+          0,
+        );
         const cacheCreationTokens = Math.max(
           ...events.map(({ cache_creation_tokens }) => cache_creation_tokens),
-          0
+          0,
         );
         const family = normalizeModelFamily(events.find(({ model }) => model)?.model);
         let qualityReason: string | null = null;
@@ -554,7 +590,7 @@ export class Database {
           outputSizeStratum(outputTokens),
           tokensPerSecond,
           provisional ? 1 : 0,
-          qualityReason
+          qualityReason,
         );
       }
       this.archiveStableInternal(nowMs);
@@ -583,7 +619,10 @@ export class Database {
       provisional: number;
       quality_reason: string | null;
     };
-    return (this.db.prepare(`
+    return (
+      this.db
+        .prepare(
+          `
       SELECT request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
         input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
         tokens_per_second, provisional, quality_reason
@@ -596,7 +635,10 @@ export class Database {
       FROM request_history history
       WHERE NOT EXISTS (SELECT 1 FROM requests live WHERE live.request_id = history.request_id)
       ORDER BY finished_at
-    `).all() as Row[]).map((row) => ({
+    `,
+        )
+        .all() as Row[]
+    ).map((row) => ({
       requestId: row.request_id,
       sessionId: row.session_id,
       startedAt: row.started_at,
@@ -610,7 +652,7 @@ export class Database {
       stratum: row.stratum,
       tokensPerSecond: row.tokens_per_second,
       provisional: row.provisional !== 0,
-      qualityReason: row.quality_reason
+      qualityReason: row.quality_reason,
     }));
   }
 
@@ -624,7 +666,8 @@ export class Database {
     };
     return (
       this.db
-        .prepare(`
+        .prepare(
+          `
           SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome
           FROM events WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL
           UNION ALL
@@ -633,31 +676,39 @@ export class Database {
           FROM refusal_history history
           WHERE NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
           ORDER BY timestamp_ms
-        `)
+        `,
+        )
         .all() as Row[]
     ).map((row) => ({
       eventId: row.event_id,
       requestId: row.request_id,
       sessionId: row.session_id,
       timestampMs: row.timestamp_ms,
-      outcome: row.refusal_outcome
+      outcome: row.refusal_outcome,
     }));
   }
 
   getDataQuality(): DataQualitySummary {
     const files = this.db
-      .prepare('SELECT COUNT(*) files, COALESCE(SUM(rows_read), 0) rows, COALESCE(SUM(invalid_rows), 0) invalid FROM files')
+      .prepare(
+        'SELECT COUNT(*) files, COALESCE(SUM(rows_read), 0) rows, COALESCE(SUM(invalid_rows), 0) invalid FROM files',
+      )
       .get() as { files: number; rows: number; invalid: number };
     const events = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT COUNT(*) events,
           COALESCE(SUM(CASE WHEN quality_flags = 'uuid_missing' THEN 1 ELSE 0 END), 0) uuid_missing
         FROM events
-      `)
+      `,
+      )
       .get() as { events: number; uuid_missing: number };
-    const occurrences = this.db.prepare('SELECT COUNT(*) count FROM occurrences').get() as { count: number };
+    const occurrences = this.db.prepare('SELECT COUNT(*) count FROM occurrences').get() as {
+      count: number;
+    };
     const requests = this.db
-      .prepare(`
+      .prepare(
+        `
         WITH effective AS (
           SELECT request_id, quality_reason, provisional FROM requests
           UNION ALL
@@ -667,12 +718,13 @@ export class Database {
         )
         SELECT quality_reason, provisional, COUNT(*) count
         FROM effective GROUP BY quality_reason, provisional
-      `)
+      `,
+      )
       .all() as Array<{
-        quality_reason: string | null;
-        provisional: number;
-        count: number;
-      }>;
+      quality_reason: string | null;
+      provisional: number;
+      count: number;
+    }>;
     const exclusions: Record<string, number> = {};
     let includedRequests = 0;
     let requestCount = 0;
@@ -686,8 +738,12 @@ export class Database {
         includedRequests += row.count;
       }
     }
-    const archivedRequests = (this.db.prepare('SELECT COUNT(*) count FROM request_history').get() as { count: number }).count;
-    const archivedRefusals = (this.db.prepare('SELECT COUNT(*) count FROM refusal_history').get() as { count: number }).count;
+    const archivedRequests = (
+      this.db.prepare('SELECT COUNT(*) count FROM request_history').get() as { count: number }
+    ).count;
+    const archivedRefusals = (
+      this.db.prepare('SELECT COUNT(*) count FROM refusal_history').get() as { count: number }
+    ).count;
     return {
       files: files.files,
       rows: files.rows,
@@ -699,7 +755,7 @@ export class Database {
       includedRequests,
       archivedRequests,
       archivedRefusals,
-      exclusions
+      exclusions,
     };
   }
 
@@ -715,12 +771,12 @@ export class Database {
     const observedAt = toMillis(sample.observedAt ?? Date.now());
     if (!Number.isFinite(observedAt)) throw new TypeError('Invalid quota observation time');
     const insert = this.db.prepare(
-      'INSERT OR REPLACE INTO quota_samples(window, observed_at, used_percentage, resets_at) VALUES (?, ?, ?, ?)'
+      'INSERT OR REPLACE INTO quota_samples(window, observed_at, used_percentage, resets_at) VALUES (?, ?, ?, ?)',
     );
     this.db.transaction(() => {
       for (const [window, value] of [
         ['five_hour', sample.fiveHour],
-        ['seven_day', sample.sevenDay]
+        ['seven_day', sample.sevenDay],
       ] as const) {
         if (!value) continue;
         const resetsAt = toMillis(value.resetsAt);
@@ -728,19 +784,28 @@ export class Database {
         insert.run(window, observedAt, Math.max(0, Math.min(100, value.usedPercentage)), resetsAt);
       }
       // Retain enough history for reset-boundary diagnostics without unbounded growth.
-      this.db.prepare('DELETE FROM quota_samples WHERE observed_at < ?').run(observedAt - 90 * 86_400_000);
+      this.db
+        .prepare('DELETE FROM quota_samples WHERE observed_at < ?')
+        .run(observedAt - 90 * 86_400_000);
     })();
   }
 
   getQuota(now: Date = new Date()): QuotaResponse {
-    type Row = { window: 'five_hour' | 'seven_day'; observed_at: number; used_percentage: number; resets_at: number };
+    type Row = {
+      window: 'five_hour' | 'seven_day';
+      observed_at: number;
+      used_percentage: number;
+      resets_at: number;
+    };
     const rows = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT q.window, q.observed_at, q.used_percentage, q.resets_at
         FROM quota_samples q
         JOIN (SELECT window, MAX(observed_at) latest FROM quota_samples GROUP BY window) latest
           ON latest.window = q.window AND latest.latest = q.observed_at
-      `)
+      `,
+      )
       .all() as Row[];
     const map = new Map(rows.map((row) => [row.window, row]));
     const format = (row: Row | undefined) =>
@@ -749,7 +814,7 @@ export class Database {
             usedPercentage: row.used_percentage,
             resetsAt: new Date(row.resets_at).toISOString(),
             observedAt: new Date(row.observed_at).toISOString(),
-            stale: now.getTime() - row.observed_at > 15 * 60_000 || now.getTime() >= row.resets_at
+            stale: now.getTime() - row.observed_at > 15 * 60_000 || now.getTime() >= row.resets_at,
           }
         : null;
     const fiveHour = format(map.get('five_hour'));
@@ -758,7 +823,7 @@ export class Database {
       available: fiveHour != null || sevenDay != null,
       source: fiveHour != null || sevenDay != null ? 'statusline' : null,
       fiveHour,
-      sevenDay
+      sevenDay,
     };
   }
 }

@@ -14,7 +14,7 @@ export const DASHBOARD_SHARE_CTA = {
   eyebrow: 'Your private speed receipt',
   title: 'Claude Code feels slow? Bring receipts.',
   body: 'Share this day or recap your week. Ask friends to bring their own receipts.',
-  note: 'Your prompts stay on this device. Model mix, output length, and workload shape effective TPS.'
+  note: 'Your prompts stay on this device. Model mix, output length, and workload shape effective TPS.',
 } as const;
 
 export function weeklyRecapReady(recap: WeeklyRecapData): boolean {
@@ -22,7 +22,8 @@ export function weeklyRecapReady(recap: WeeklyRecapData): boolean {
 }
 
 export function weeklyRecapHeadline(recap: WeeklyRecapData): string {
-  if (!recap.speedIndex.eligible || recap.speedIndex.value === null) return 'My Claude Code week, measured';
+  if (!recap.speedIndex.eligible || recap.speedIndex.value === null)
+    return 'My Claude Code week, measured';
   if (recap.speedIndex.value >= 105) return 'Claude Code had a fast week';
   if (recap.speedIndex.value <= 95) return 'Claude Code took its time';
   return 'Claude Code held steady';
@@ -30,7 +31,8 @@ export function weeklyRecapHeadline(recap: WeeklyRecapData): string {
 
 export function weeklyRecapIndexLine(recap: WeeklyRecapData): string {
   const { speedIndex } = recap;
-  if (!speedIndex.eligible || speedIndex.value === null) return 'Personal baseline still warming up';
+  if (!speedIndex.eligible || speedIndex.value === null)
+    return 'Personal baseline still warming up';
   return `Speed Index ${Math.round(speedIndex.value)} · vs my prior 28 days`;
 }
 
@@ -45,7 +47,7 @@ export function weeklyRecapDayLabel(date: string): string {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
-    timeZone: 'UTC'
+    timeZone: 'UTC',
   }).format(parseLocalDate(date));
 }
 
@@ -66,20 +68,18 @@ export function weeklyRecapObservedWeekdays(recap: WeeklyRecapData): Set<number>
   return weekdays;
 }
 
-export function weeklyRecapCaption(
-  recap: WeeklyRecapData,
-  productUrl: string | null
-): string {
+export function weeklyRecapCaption(recap: WeeklyRecapData, productUrl: string | null): string {
   const headline = weeklyRecapHeadline(recap);
-  const result = recap.speedIndex.eligible && recap.speedIndex.value !== null
-    ? weeklyRecapIndexLine(recap)
-    : `${Math.round(recap.median ?? 0)} median effective output tokens/s across ${recap.requestCount.toLocaleString('en-US')} requests`;
+  const result =
+    recap.speedIndex.eligible && recap.speedIndex.value !== null
+      ? weeklyRecapIndexLine(recap)
+      : `${Math.round(recap.median ?? 0)} median effective output tokens/s across ${recap.requestCount.toLocaleString('en-US')} requests`;
   const link = productUrl ? ` ${productUrl}` : '';
   return `${headline}. ${result}. How did your week compare with your own baseline? #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
 }
 
 export function safeWeeklyRecapProductLink(
-  value: string | undefined
+  value: string | undefined,
 ): WeeklyRecapProductLink | null {
   if (!value) return null;
   try {
@@ -100,7 +100,7 @@ function shortDate(date: string): string {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    timeZone: 'UTC'
+    timeZone: 'UTC',
   }).format(parseLocalDate(date));
 }
 

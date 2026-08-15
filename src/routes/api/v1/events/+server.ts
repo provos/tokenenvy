@@ -30,20 +30,20 @@ export function GET({ request }) {
             // The transport may already have closed the stream.
           }
         },
-        { once: true }
+        { once: true },
       );
     },
     cancel() {
       unsubscribe();
       if (heartbeat) clearInterval(heartbeat);
-    }
+    },
   });
 
   return new Response(stream, {
     headers: {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive'
-    }
+      connection: 'keep-alive',
+    },
   });
 }

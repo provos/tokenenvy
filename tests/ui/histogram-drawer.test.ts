@@ -16,7 +16,7 @@ const detail: DayDetailResponse = {
     p90: 90,
     ciLow: 58,
     ciHigh: 70,
-    outputTokens: 4_200
+    outputTokens: 4_200,
   },
   speedIndex: {
     value: 108,
@@ -24,12 +24,12 @@ const detail: DayDetailResponse = {
     ciHigh: 114,
     percentile: 70,
     eligible: true,
-    reason: null
+    reason: null,
   },
   models: [],
   histogram: [],
   hourly: [],
-  exclusions: {}
+  exclusions: {},
 };
 
 describe('daily detail refusals', () => {
@@ -40,8 +40,8 @@ describe('daily detail refusals', () => {
         loading: false,
         detail,
         refusals: { recorded: true, attempted: 6, recovered: 2, userVisible: 1 },
-        onclose: () => undefined
-      }
+        onclose: () => undefined,
+      },
     });
 
     expect(body).toContain('Refusals for this day');

@@ -8,7 +8,7 @@ import type {
   QuotaResponse,
   RefusalSummary,
   SeriesResponse,
-  SpeedIndex
+  SpeedIndex,
 } from '../types';
 import { MODEL_FAMILIES } from '../types';
 import { Database, type DataQualitySummary, type StoredRequest } from '../server/database';
@@ -19,7 +19,7 @@ import {
   localDate,
   validateTimezone,
   zonedMidnight,
-  zonedParts
+  zonedParts,
 } from './time';
 
 interface DatedRequest extends StoredRequest {
@@ -33,7 +33,9 @@ interface DatedSnapshot {
 
 function metrics(requests: readonly StoredRequest[]): MetricSample[] {
   return requests
-    .filter((request) => request.tokensPerSecond != null && Number.isFinite(request.tokensPerSecond))
+    .filter(
+      (request) => request.tokensPerSecond != null && Number.isFinite(request.tokensPerSecond),
+    )
     .map((request) => ({ value: request.tokensPerSecond as number, sessionId: request.sessionId }));
 }
 
@@ -50,16 +52,20 @@ function modelSummaries(requests: readonly StoredRequest[]): ModelSummary[] {
     const selected = byFamily.get(family) ?? [];
     if (selected.length === 0) return [];
     const outputTokens = selected.reduce((total, request) => total + request.outputTokens, 0);
-    return [{
-      family,
-      ...summarize(metrics(selected)),
-      outputTokens,
-      share: totalOutput > 0 ? outputTokens / totalOutput : 0
-    }];
+    return [
+      {
+        family,
+        ...summarize(metrics(selected)),
+        outputTokens,
+        share: totalOutput > 0 ? outputTokens / totalOutput : 0,
+      },
+    ];
   });
 }
 
-function weeklyModelMix(requests: readonly StoredRequest[]): OverviewResponse['weekly']['recap']['models'] {
+function weeklyModelMix(
+  requests: readonly StoredRequest[],
+): OverviewResponse['weekly']['recap']['models'] {
   const byFamily = new Map<ModelFamily, { requestCount: number; outputTokens: number }>();
   let totalOutput = 0;
   for (const request of requests) {
@@ -72,11 +78,13 @@ function weeklyModelMix(requests: readonly StoredRequest[]): OverviewResponse['w
   return MODEL_FAMILIES.flatMap((family) => {
     const summary = byFamily.get(family);
     return summary
-      ? [{
-          family,
-          ...summary,
-          share: totalOutput > 0 ? summary.outputTokens / totalOutput : 0
-        }]
+      ? [
+          {
+            family,
+            ...summary,
+            share: totalOutput > 0 ? summary.outputTokens / totalOutput : 0,
+          },
+        ]
       : [];
   });
 }
@@ -88,7 +96,7 @@ function median(values: readonly number[]): number | null {
 function speedIndex(
   current: readonly DatedRequest[],
   baseline: readonly DatedRequest[],
-  options: { confidence?: boolean; percentile?: boolean } = {}
+  options: { confidence?: boolean; percentile?: boolean } = {},
 ): SpeedIndex {
   const key = (request: StoredRequest): string => `${request.family}:${request.stratum}`;
   const baselineByStratum = new Map<string, DatedRequest[]>();
@@ -193,7 +201,8 @@ function speedIndex(
       .filter((item): item is number => item != null);
     percentile =
       value != null && historicalIndices.length > 0
-        ? (historicalIndices.filter((item) => item <= value).length / historicalIndices.length) * 100
+        ? (historicalIndices.filter((item) => item <= value).length / historicalIndices.length) *
+          100
         : null;
   }
   return { value, ciLow, ciHigh, percentile, eligible: reason == null, reason };
@@ -213,7 +222,7 @@ function niceHistogram(requests: readonly StoredRequest[]): HistogramBin[] {
   const bins = Array.from({ length: binCount }, (_, index) => ({
     lower: index * width,
     upper: (index + 1) * width,
-    count: 0
+    count: 0,
   }));
   for (const value of values) {
     const index = Math.min(binCount - 1, Math.max(0, Math.floor(value / width)));
@@ -248,12 +257,12 @@ export class Analytics {
         (request): request is StoredRequest & { finishedAt: number } =>
           request.finishedAt != null &&
           request.qualityReason == null &&
-          request.tokensPerSecond != null
+          request.tokensPerSecond != null,
       )
       .map((request) => ({ ...request, date: localDate(request.finishedAt, timezone) }));
     const snapshot = {
       includingProvisional,
-      completed: includingProvisional.filter((request) => !request.provisional)
+      completed: includingProvisional.filter((request) => !request.provisional),
     };
     this.#datedSnapshots.set(timezone, snapshot);
     return snapshot;
@@ -263,14 +272,20 @@ export class Analytics {
     validateTimezone(timezone);
     const today = localDate(now.getTime(), timezone);
     const all = this.requests();
-    const { includingProvisional: validIncludingProvisional, completed: valid } = this.dated(timezone);
+    const { includingProvisional: validIncludingProvisional, completed: valid } =
+      this.dated(timezone);
     const todaysRequests = valid.filter((request) => request.date === today);
     const todaysProvisional = validIncludingProvisional.filter(
-      (request) => request.date === today && request.provisional
+      (request) => request.date === today && request.provisional,
     );
     const baselineStart = addCalendarDays(today, -28);
-    const baseline = valid.filter((request) => request.date >= baselineStart && request.date < today);
-    const headlineOutput = todaysRequests.reduce((total, request) => total + request.outputTokens, 0);
+    const baseline = valid.filter(
+      (request) => request.date >= baselineStart && request.date < today,
+    );
+    const headlineOutput = todaysRequests.reduce(
+      (total, request) => total + request.outputTokens,
+      0,
+    );
     const weekStart = addCalendarDays(today, 1 - isoWeekday(today));
     const weekEnd = addCalendarDays(weekStart, 7);
     const usageByDate = new Map<string, number>();
@@ -295,11 +310,11 @@ export class Analytics {
     };
     const weeklyTokens = usageBetween(weekStart, weekEnd);
     const weeklyRequests = valid.filter(
-      (request) => request.date >= weekStart && request.date <= today
+      (request) => request.date >= weekStart && request.date <= today,
     );
     const weeklyBaselineStart = addCalendarDays(weekStart, -28);
     const weeklyBaseline = valid.filter(
-      (request) => request.date >= weeklyBaselineStart && request.date < weekStart
+      (request) => request.date >= weeklyBaselineStart && request.date < weekStart,
     );
     const weeklyByDate = new Map<string, DatedRequest[]>();
     for (const request of weeklyRequests) {
@@ -313,19 +328,24 @@ export class Analytics {
         return value === null ? [] : [{ date, median: value }];
       })
       .sort((left, right) => left.date.localeCompare(right.date));
-    const fastestDay = [...measuredDays].sort(
-      (left, right) => right.median - left.median || left.date.localeCompare(right.date)
-    )[0] ?? null;
-    const slowestDay = [...measuredDays].sort(
-      (left, right) => left.median - right.median || left.date.localeCompare(right.date)
-    )[0] ?? null;
+    const fastestDay =
+      [...measuredDays].sort(
+        (left, right) => right.median - left.median || left.date.localeCompare(right.date),
+      )[0] ?? null;
+    const slowestDay =
+      [...measuredDays].sort(
+        (left, right) => left.median - right.median || left.date.localeCompare(right.date),
+      )[0] ?? null;
     const weeklySpeedIndex = speedIndex(weeklyRequests, weeklyBaseline, {
       confidence: false,
-      percentile: false
+      percentile: false,
     });
     const weekStartMs = zonedMidnight(weekStart, timezone);
     const weekEndMs = zonedMidnight(weekEnd, timezone);
-    const elapsedFraction = Math.max(0, Math.min(1, (now.getTime() - weekStartMs) / (weekEndMs - weekStartMs)));
+    const elapsedFraction = Math.max(
+      0,
+      Math.min(1, (now.getTime() - weekStartMs) / (weekEndMs - weekStartMs)),
+    );
     const priorWeeks: number[] = [];
     for (let weeksAgo = 1; weeksAgo <= 4; weeksAgo += 1) {
       const start = addCalendarDays(weekStart, -7 * weeksAgo);
@@ -339,7 +359,7 @@ export class Analytics {
       headline: {
         ...summarize(metrics(todaysRequests)),
         outputTokens: headlineOutput,
-        provisional: todaysProvisional.length
+        provisional: todaysProvisional.length,
       },
       speedIndex: speedIndex(todaysRequests, baseline),
       models: modelSummaries(todaysRequests),
@@ -359,11 +379,11 @@ export class Analytics {
           speedIndex: weeklySpeedIndex,
           models: weeklyModelMix(weeklyRequests),
           fastestDay,
-          slowestDay
-        }
+          slowestDay,
+        },
       },
       refusals: this.refusals(timezone),
-      scan: this.database.getScanStatus()
+      scan: this.database.getScanStatus(),
     };
   }
 
@@ -373,7 +393,7 @@ export class Analytics {
     const today = localDate(now.getTime(), timezone);
     const start = addCalendarDays(today, 1 - boundedDays);
     const requestsIncludingProvisional = this.dated(timezone).includingProvisional.filter(
-      (request) => request.date >= start && request.date <= today
+      (request) => request.date >= start && request.date <= today,
     );
     const groups = new Map<string, DatedRequest[]>();
     const provisionalCounts = new Map<string, number>();
@@ -401,7 +421,7 @@ export class Analytics {
           family,
           ...summarize(metrics(selected)),
           outputTokens: selected.reduce((total, request) => total + request.outputTokens, 0),
-          provisional: provisionalCounts.get(key) ?? 0
+          provisional: provisionalCounts.get(key) ?? 0,
         });
       }
     }
@@ -413,19 +433,21 @@ export class Analytics {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new TypeError('Date must be YYYY-MM-DD');
     const all = this.requests();
     const selectedAll = all.filter(
-      (request) => request.finishedAt != null && localDate(request.finishedAt, timezone) === date
+      (request) => request.finishedAt != null && localDate(request.finishedAt, timezone) === date,
     );
     if (selectedAll.length === 0) return null;
     const selected = selectedAll.filter(
-      (request) => request.qualityReason == null && request.tokensPerSecond != null && !request.provisional
+      (request) =>
+        request.qualityReason == null && request.tokensPerSecond != null && !request.provisional,
     );
     const baselineStart = addCalendarDays(date, -28);
     const baseline = this.dated(timezone).completed.filter(
-      (request) => request.date >= baselineStart && request.date < date
+      (request) => request.date >= baselineStart && request.date < date,
     );
     const exclusions: Record<string, number> = {};
     for (const request of selectedAll) {
-      if (request.qualityReason) exclusions[request.qualityReason] = (exclusions[request.qualityReason] ?? 0) + 1;
+      if (request.qualityReason)
+        exclusions[request.qualityReason] = (exclusions[request.qualityReason] ?? 0) + 1;
       else if (request.provisional) exclusions.provisional = (exclusions.provisional ?? 0) + 1;
     }
     const requestsByHour = Array.from({ length: 24 }, () => [] as StoredRequest[]);
@@ -433,23 +455,27 @@ export class Analytics {
       requestsByHour[zonedParts(request.finishedAt as number, timezone).hour].push(request);
     }
     const hourly = requestsByHour.map((requests, hour) => {
-      return { hour, median: median(metrics(requests).map(({ value }) => value)), count: requests.length };
+      return {
+        hour,
+        median: median(metrics(requests).map(({ value }) => value)),
+        count: requests.length,
+      };
     });
     return {
       date,
       timezone,
       summary: {
         ...summarize(metrics(selected)),
-        outputTokens: selected.reduce((total, request) => total + request.outputTokens, 0)
+        outputTokens: selected.reduce((total, request) => total + request.outputTokens, 0),
       },
       speedIndex: speedIndex(
         selected.map((request) => ({ ...request, date })),
-        baseline
+        baseline,
       ),
       models: modelSummaries(selected),
       histogram: niceHistogram(selected),
       hourly,
-      exclusions
+      exclusions,
     };
   }
 
@@ -481,7 +507,7 @@ export class Analytics {
       perThousand: requestCount > 0 ? (refusals.length / requestCount) * 1_000 : null,
       byDay: [...dates.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([date, summary]) => ({ date, ...summary }))
+        .map(([date, summary]) => ({ date, ...summary })),
     };
   }
 

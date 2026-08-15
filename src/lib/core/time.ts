@@ -10,7 +10,7 @@ function formatter(timezone: string): Intl.DateTimeFormat {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
-      hourCycle: 'h23'
+      hourCycle: 'h23',
     });
     formatterCache.set(timezone, cached);
   }
@@ -22,7 +22,10 @@ export function validateTimezone(timezone: string): string {
   return timezone;
 }
 
-export function zonedParts(timestampMs: number, timezone: string): {
+export function zonedParts(
+  timestampMs: number,
+  timezone: string,
+): {
   date: string;
   year: number;
   month: number;
@@ -42,7 +45,7 @@ export function zonedParts(timestampMs: number, timezone: string): {
     year,
     month,
     day,
-    hour: get('hour')
+    hour: get('hour'),
   };
 }
 

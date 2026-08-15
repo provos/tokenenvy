@@ -2,7 +2,7 @@
   import { env } from '$env/dynamic/public';
   import { onMount } from 'svelte';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
-  import { compactNumber, FAMILY_COLORS } from './chart';
+  import { compactNumber } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
   import {
     safeWeeklyRecapProductLink,
@@ -16,7 +16,7 @@
     weeklyRecapPeriod,
     weeklyRecapReady,
     weeklyRecapTopModel,
-    type WeeklyRecapData
+    type WeeklyRecapData,
   } from './weekly-recap';
 
   interface Props {
@@ -36,7 +36,7 @@
   let renderVersion = 0;
 
   let productLink = $derived(
-    safeWeeklyRecapProductLink(env.PUBLIC_TOKENENVY_URL ?? WEEKLY_RECAP_PRODUCT_URL)
+    safeWeeklyRecapProductLink(env.PUBLIC_TOKENENVY_URL ?? WEEKLY_RECAP_PRODUCT_URL),
   );
   let headline = $derived(weeklyRecapHeadline(recap));
   let indexLine = $derived(weeklyRecapIndexLine(recap));
@@ -46,9 +46,10 @@
   let ready = $derived(weeklyRecapReady(recap));
   let caption = $derived(weeklyRecapCaption(recap, productLink?.href ?? null));
   let previewLabel = $derived(
-    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${headline}. ${Math.round(recap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${recap.requestCount} measured requests across ${recap.sessions} sessions. Personal baseline only.`
+    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${headline}. ${Math.round(recap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${recap.requestCount} measured requests across ${recap.sessions} sessions. Personal baseline only.`,
   );
   let canExport = $derived(preparedFile !== null && ready && !preparing);
+  const weekdayIndices = [0, 1, 2, 3, 4, 5, 6] as const;
 
   onMount(() => {
     clipboardImageAvailable =
@@ -99,11 +100,9 @@
     try {
       const blob = await renderCard(currentRecap, currentOutputTokens);
       if (version !== renderVersion) return;
-      const file = new File(
-        [blob],
-        `token-envy-week-${currentRecap.throughDate}.png`,
-        { type: 'image/png' }
-      );
+      const file = new File([blob], `token-envy-week-${currentRecap.throughDate}.png`, {
+        type: 'image/png',
+      });
       preparedFile = file;
       nativeFileShareAvailable =
         typeof navigator.share === 'function' &&
@@ -173,7 +172,7 @@
       414,
       500,
       currentRecap.daysObserved === 1 ? null : currentRecap.slowestDay,
-      currentRecap.daysObserved === 1 ? 'WEEK SO FAR' : 'SLOWEST OBSERVED DAY'
+      currentRecap.daysObserved === 1 ? 'WEEK SO FAR' : 'SLOWEST OBSERVED DAY',
     );
 
     context.strokeStyle = 'rgba(255, 255, 255, 0.14)';
@@ -188,8 +187,10 @@
       `${currentRecap.requestCount.toLocaleString('en-US')} requests`,
       `${currentRecap.sessions.toLocaleString('en-US')} sessions`,
       `${compactNumber(currentOutputTokens)} output tokens`,
-      model ? `${capitalize(model.family)} ${Math.round(model.share * 100)}% of output` : null
-    ].filter((item): item is string => item !== null).join(' · ');
+      model ? `${capitalize(model.family)} ${Math.round(model.share * 100)}% of output` : null,
+    ]
+      .filter((item): item is string => item !== null)
+      .join(' · ');
     context.textAlign = 'left';
     context.fillStyle = 'rgba(242, 238, 230, 0.67)';
     context.font = '500 19px Inter, ui-sans-serif, system-ui, sans-serif';
@@ -208,7 +209,7 @@
     return new Promise((resolve, reject) => {
       canvas.toBlob(
         (blob) => (blob ? resolve(blob) : reject(new Error('PNG export failed'))),
-        'image/png'
+        'image/png',
       );
     });
   }
@@ -243,7 +244,7 @@
     y: number,
     width: number,
     day: { date: string; median: number } | null,
-    label: string
+    label: string,
   ) {
     context.fillStyle = 'rgba(255, 255, 255, 0.055)';
     context.beginPath();
@@ -290,7 +291,7 @@
       await navigator.share({
         files: [preparedFile],
         title: 'My Token Envy weekly recap',
-        text: caption
+        text: caption,
       });
       status = 'Share sheet opened with the weekly image attached.';
     } catch (error) {
@@ -303,6 +304,7 @@
   function openComposer(platform: 'x' | 'bluesky' | 'linkedin') {
     let url: string;
     if (platform === 'x') {
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Local composer parameters are serialized immediately.
       const params = new URLSearchParams({ text: weeklyRecapCaption(recap, null) });
       if (productLink) params.set('url', productLink.href);
       url = `https://x.com/intent/tweet?${params.toString()}`;
@@ -333,11 +335,7 @@
 <svelte:window onkeydown={trapFocus} />
 
 {#if open}
-  <button
-    class="scrim share-scrim"
-    type="button"
-    aria-label="Close weekly recap"
-    onclick={onclose}
+  <button class="scrim share-scrim" type="button" aria-label="Close weekly recap" onclick={onclose}
   ></button>
   <div
     class="share-modal weekly-recap-modal"
@@ -351,21 +349,23 @@
       <div>
         <p class="eyebrow">Week so far</p>
         <h2 id="weekly-recap-title">Your Token Envy recap</h2>
-        <p>Compare this week with your own history. The image contains aggregate statistics only.</p>
+        <p>
+          Compare this week with your own history. The image contains aggregate statistics only.
+        </p>
       </div>
       <button
         class="icon-button"
         data-autofocus
         type="button"
         onclick={onclose}
-        aria-label="Close weekly recap"
-      >×</button>
+        aria-label="Close weekly recap">×</button
+      >
     </header>
 
     <div class="share-body">
       <div class="weekly-recap-preview" role="img" aria-label={previewLabel}>
         <div class="weekly-recap-signal" aria-hidden="true">
-          {#each Array(7) as _, index}
+          {#each weekdayIndices as index (index)}
             <i
               class:observed={observedWeekdays.has(index)}
               data-weekday={index + 1}
@@ -407,7 +407,8 @@
             {recap.requestCount.toLocaleString('en-US')} requests ·
             {recap.sessions.toLocaleString('en-US')} sessions ·
             {compactNumber(outputTokens)} output tokens
-            {#if topModel} · {topModel.family} {Math.round(topModel.share * 100)}%{/if}
+            {#if topModel}
+              · {topModel.family} {Math.round(topModel.share * 100)}%{/if}
           </span>
           <strong>{WEEKLY_RECAP_INSTALL_CTA}</strong>
           <small>Personal baseline · Prompts stayed local</small>
@@ -430,7 +431,12 @@
             Copy image
           </button>
         {/if}
-        <button class="secondary-button" type="button" onclick={downloadImage} disabled={!canExport}>
+        <button
+          class="secondary-button"
+          type="button"
+          onclick={downloadImage}
+          disabled={!canExport}
+        >
           {preparing ? 'Preparing PNG...' : 'Download PNG'}
         </button>
       </div>
@@ -442,14 +448,22 @@
           <p>Each Speed Index compares one person with their own local history.</p>
         </div>
         <div class="composer-buttons">
-          <button class="secondary-button" type="button" onclick={() => openComposer('x')}>Open X</button>
-          <button class="secondary-button" type="button" onclick={() => openComposer('bluesky')}>Open Bluesky</button>
+          <button class="secondary-button" type="button" onclick={() => openComposer('x')}
+            >Open X</button
+          >
+          <button class="secondary-button" type="button" onclick={() => openComposer('bluesky')}
+            >Open Bluesky</button
+          >
         </div>
         <div class="linkedin-guide">
           <strong>LinkedIn</strong>
-          <button class="text-button" type="button" onclick={downloadImage} disabled={!canExport}>1. Download PNG</button>
+          <button class="text-button" type="button" onclick={downloadImage} disabled={!canExport}
+            >1. Download PNG</button
+          >
           <button class="text-button" type="button" onclick={copyCaption}>2. Copy caption</button>
-          <button class="text-button" type="button" onclick={() => openComposer('linkedin')}>3. Open LinkedIn</button>
+          <button class="text-button" type="button" onclick={() => openComposer('linkedin')}
+            >3. Open LinkedIn</button
+          >
         </div>
       </section>
 

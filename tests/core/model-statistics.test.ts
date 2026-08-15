@@ -11,7 +11,7 @@ describe('model normalization', () => {
     ['claude-haiku-4-5', 'haiku'],
     ['claude-fable-1', 'fable'],
     ['future-bard', 'other'],
-    [null, 'other']
+    [null, 'other'],
   ])('maps %j to %s', (model, family) => {
     expect(normalizeModelFamily(model)).toBe(family);
   });
@@ -27,7 +27,7 @@ describe('robust summaries', () => {
     expect(summarize([{ value: 10, sessionId: 'a' }]).ciLow).toBeNull();
     const samples = Array.from({ length: 25 }, (_, index) => ({
       value: index + 1,
-      sessionId: `session-${index % 5}`
+      sessionId: `session-${index % 5}`,
     }));
     const first = clusteredMedianInterval(samples);
     expect(first).not.toBeNull();

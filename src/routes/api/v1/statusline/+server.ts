@@ -8,7 +8,8 @@ function quotaWindow(value: unknown): { usedPercentage: number; resetsAt: string
   const item = value as Record<string, unknown>;
   const usedPercentage = Number(item.usedPercentage);
   const reset = typeof item.resetsAt === 'string' ? new Date(item.resetsAt) : null;
-  if (!Number.isFinite(usedPercentage) || usedPercentage < 0 || usedPercentage > 100) return undefined;
+  if (!Number.isFinite(usedPercentage) || usedPercentage < 0 || usedPercentage > 100)
+    return undefined;
   if (!reset || !Number.isFinite(reset.getTime())) return undefined;
   return { usedPercentage, resetsAt: reset.toISOString() };
 }
@@ -34,7 +35,7 @@ export async function POST({ request }) {
   getRuntime().recordQuotaSample({
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
-    observedAt: new Date().toISOString()
+    observedAt: new Date().toISOString(),
   });
   return json({ accepted: true }, { status: 202, headers: { 'cache-control': 'no-store' } });
 }

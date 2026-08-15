@@ -27,7 +27,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
@@ -46,6 +46,12 @@ jobs:
             echo "Release tag $RELEASE_TAG does not match package version v$PACKAGE_VERSION" >&2
             exit 1
           fi
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
 
       - name: Check types and UI
         run: npm run check

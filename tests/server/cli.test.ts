@@ -27,10 +27,10 @@ describe('CLI arguments', () => {
     const script = [
       "Object.defineProperty(process.versions, 'node', { value: '20.19.0' });",
       `process.argv = [process.execPath, ${JSON.stringify(resolve('bin/launch.js'))}, '--help'];`,
-      `await import(${JSON.stringify(launcher)});`
+      `await import(${JSON.stringify(launcher)});`,
     ].join('\n');
     const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
-      encoding: 'utf8'
+      encoding: 'utf8',
     });
 
     expect(result.status).toBe(1);
@@ -38,7 +38,7 @@ describe('CLI arguments', () => {
     expect(result.stderr).toBe(
       'Token Envy requires Node.js 22.13 or newer.\n' +
         'Detected Node.js 20.19.0.\n' +
-        'Upgrade Node.js, then run `npx tokenenvy` again.\n'
+        'Upgrade Node.js, then run `npx tokenenvy` again.\n',
     );
   });
 
@@ -52,7 +52,7 @@ describe('CLI arguments', () => {
     ['22.13', false],
     ['22.13.x', false],
     ['not-a-version', false],
-    [undefined, false]
+    [undefined, false],
   ])('classifies Node version %s as supported: %s', (version, supported) => {
     expect(isSupportedNodeVersion(version)).toBe(supported);
   });
@@ -64,13 +64,13 @@ describe('CLI arguments', () => {
     const script = [
       "Object.defineProperty(process.versions, 'node', { value: '20.19.0' });",
       `process.argv = [process.execPath, ${JSON.stringify(implementation)}, '--no-open'];`,
-      `await import(${JSON.stringify(pathToFileURL(implementation).href)});`
+      `await import(${JSON.stringify(pathToFileURL(implementation).href)});`,
     ].join('\n');
 
     try {
       const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
         encoding: 'utf8',
-        env: { ...process.env, TOKENENVY_DATA_DIR: state }
+        env: { ...process.env, TOKENENVY_DATA_DIR: state },
       });
       expect(result.status).toBe(1);
       expect(result.stdout).toBe('');
@@ -92,7 +92,7 @@ describe('CLI arguments', () => {
       '--timezone',
       'America/Los_Angeles',
       '--no-open',
-      '--rescan'
+      '--rescan',
     ]);
     expect(options).toMatchObject({
       command: 'server',
@@ -100,7 +100,7 @@ describe('CLI arguments', () => {
       port: 4321,
       timezone: 'America/Los_Angeles',
       open: false,
-      rescan: true
+      rescan: true,
     });
   });
 
@@ -118,19 +118,21 @@ describe('CLI arguments', () => {
         '--logs',
         '/tmp/claude-logs',
         '--logs',
-        '/tmp/other-logs'
-      ]).logs
+        '/tmp/other-logs',
+      ]).logs,
     ).toEqual(['/tmp/claude-logs', '/tmp/other-logs']);
   });
 
   it('defaults state to ~/.tokenenvy and honors only the new override', () => {
     expect(stateDirectory({})).toBe(join(homedir(), '.tokenenvy'));
-    expect(stateDirectory({ TOKENENVY_DATA_DIR: '/tmp/tokenenvy-state' })).toBe('/tmp/tokenenvy-state');
+    expect(stateDirectory({ TOKENENVY_DATA_DIR: '/tmp/tokenenvy-state' })).toBe(
+      '/tmp/tokenenvy-state',
+    );
   });
 
   it.each([['--port', '0'], ['--port', '65536'], ['--timezone', 'Mars/Olympus'], ['--unknown']])(
     'rejects invalid input %s %s',
-    (...args) => expect(() => parseArgs(args.filter(Boolean) as string[])).toThrow()
+    (...args) => expect(() => parseArgs(args.filter(Boolean) as string[])).toThrow(),
   );
 });
 
@@ -144,21 +146,25 @@ describe('status-line projection', () => {
         rate_limits: {
           five_hour: { used_percentage: 12.4, resets_at: 1_800_000_000 },
           seven_day: { used_percentage: 54, resets_at: '2027-01-15T12:00:00Z' },
-          private_window: { prompt: 'never include me' }
-        }
+          private_window: { prompt: 'never include me' },
+        },
       },
-      new Date('2026-08-14T12:00:00Z')
+      new Date('2026-08-14T12:00:00Z'),
     );
 
     expect(result).toEqual({
       fiveHour: { usedPercentage: 12.4, resetsAt: '2027-01-15T08:00:00.000Z' },
       sevenDay: { usedPercentage: 54, resetsAt: '2027-01-15T12:00:00.000Z' },
-      observedAt: '2026-08-14T12:00:00.000Z'
+      observedAt: '2026-08-14T12:00:00.000Z',
     });
     expect(JSON.stringify(result)).not.toContain('private');
   });
 
   it('drops malformed or out-of-range windows', () => {
-    expect(extractRateLimits({ rate_limits: { five_hour: { used_percentage: 101, resets_at: 'soon' } } })).toBeNull();
+    expect(
+      extractRateLimits({
+        rate_limits: { five_hour: { used_percentage: 101, resets_at: 'soon' } },
+      }),
+    ).toBeNull();
   });
 });

@@ -32,7 +32,7 @@ export function parseTranscriptEvent(
   rawLine: string,
   sourceId: string,
   lineOffset: number,
-  digest: Digest
+  digest: Digest,
 ): ParsedEvent | null {
   let raw: Record<string, unknown>;
   try {
@@ -48,7 +48,8 @@ export function parseTranscriptEvent(
   const timestamp = typeof raw.timestamp === 'string' ? Date.parse(raw.timestamp) : Number.NaN;
   const type = raw.type === 'assistant' ? 'assistant' : 'other';
   const subtype = typeof raw.subtype === 'string' ? raw.subtype : null;
-  const message = raw.message && typeof raw.message === 'object' ? (raw.message as Record<string, unknown>) : {};
+  const message =
+    raw.message && typeof raw.message === 'object' ? (raw.message as Record<string, unknown>) : {};
   const usage =
     message.usage && typeof message.usage === 'object'
       ? (message.usage as Record<string, unknown>)
@@ -72,8 +73,8 @@ export function parseTranscriptEvent(
     inputTokens: safeCount(usage.input_tokens),
     cacheReadTokens: safeCount(usage.cache_read_input_tokens),
     cacheCreationTokens: safeCount(usage.cache_creation_input_tokens),
-    synthetic: raw.isSynthetic === true || raw.isMeta === true && type === 'assistant',
+    synthetic: raw.isSynthetic === true || (raw.isMeta === true && type === 'assistant'),
     refusalOutcome,
-    qualityFlags: uuid ? null : 'uuid_missing'
+    qualityFlags: uuid ? null : 'uuid_missing',
   };
 }

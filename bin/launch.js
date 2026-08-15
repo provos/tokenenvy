@@ -10,7 +10,9 @@ if (versionError) {
   import('./tokenenvy.js')
     .then(({ main }) => main())
     .catch((error) => {
-      process.stderr.write(`tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(
+        `tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
       process.exitCode = 1;
     });
 }

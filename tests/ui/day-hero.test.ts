@@ -16,7 +16,7 @@ const detail: DayDetailResponse = {
     p90: 90,
     ciLow: 58,
     ciHigh: 70,
-    outputTokens: 4_200
+    outputTokens: 4_200,
   },
   speedIndex: {
     value: 108,
@@ -24,15 +24,15 @@ const detail: DayDetailResponse = {
     ciHigh: 114,
     percentile: 70,
     eligible: true,
-    reason: null
+    reason: null,
   },
   models: [],
   histogram: [
     { lower: 40, upper: 60, count: 4 },
-    { lower: 60, upper: 80, count: 8 }
+    { lower: 60, upper: 80, count: 8 },
   ],
   hourly: [],
-  exclusions: {}
+  exclusions: {},
 };
 
 describe('daily hero refresh', () => {
@@ -45,8 +45,8 @@ describe('daily hero refresh', () => {
         loading: true,
         error: null,
         onretry: () => undefined,
-        onmore: () => undefined
-      }
+        onmore: () => undefined,
+      },
     });
 
     expect(body).toContain('64');

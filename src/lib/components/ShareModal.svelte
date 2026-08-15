@@ -15,13 +15,13 @@
     getShareModelLine,
     getShareMoodLine,
     getShareRefusalLine,
+    getShareSentimentDescription,
     getShareSentimentTheme,
     getShareTagline,
     getShareTextReceipt,
     normalizeHistogram,
     normalizeShareSentiment,
     safeShareProductLink,
-    sentimentAfterCardChange,
     SHARE_INSTALL_CTA,
     SHARE_METRIC_CONTEXT,
     SHARE_METRIC_UNIT,
@@ -34,11 +34,7 @@
     type ShareRefusalCounts,
     type ShareTone,
   } from './share';
-  import {
-    DAILY_SHARE_CARD_LAYOUT,
-    fitTextLines,
-    SHARE_CARD_LAYOUT_STYLE,
-  } from './share-layout';
+  import { DAILY_SHARE_CARD_LAYOUT, fitTextLines, SHARE_CARD_LAYOUT_STYLE } from './share-layout';
 
   interface Props {
     open: boolean;
@@ -59,6 +55,13 @@
     tone: ShareTone;
   }
 
+  interface ShareInputSnapshot {
+    detail: DayDetailResponse;
+    refusals: ShareRefusalCounts;
+    isToday: boolean;
+    refreshing: boolean;
+  }
+
   const SANS_FONT = 'Inter, ui-sans-serif, system-ui, sans-serif';
   const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 
@@ -68,34 +71,57 @@
   let status = $state<string | null>(null);
   let modal = $state<HTMLElement>();
   let previousOpen = false;
-  let sentimentCardDate: string | null = null;
   let preparedFile = $state<File | null>(null);
   let preparing = $state(false);
   let nativeFileShareAvailable = $state(false);
   let clipboardImageAvailable = $state(false);
   let renderVersion = 0;
 
+  function captureInputs(): ShareInputSnapshot {
+    return {
+      detail: {
+        ...detail,
+        summary: { ...detail.summary },
+        speedIndex: { ...detail.speedIndex },
+        models: detail.models.map((model) => ({ ...model })),
+        histogram: detail.histogram.map((bin) => ({ ...bin })),
+        hourly: detail.hourly.map((hour) => ({ ...hour })),
+        exclusions: { ...detail.exclusions },
+      },
+      refusals: { ...refusals },
+      isToday,
+      refreshing,
+    };
+  }
+
+  function buildCard(input: ShareInputSnapshot): ShareCardData {
+    return buildShareCardData({
+      date: input.detail.date,
+      median: input.detail.summary.median,
+      count: input.detail.summary.count,
+      sessions: input.detail.summary.sessions,
+      outputTokens: input.detail.summary.outputTokens,
+      isToday: input.isToday,
+      speedIndex: input.detail.speedIndex,
+      refusals: input.refusals,
+      models: input.detail.models,
+      histogram: input.detail.histogram,
+    });
+  }
+
+  let inputSnapshot = $state<ShareInputSnapshot>(captureInputs());
+
   let productLink = $derived(
     safeShareProductLink(env.PUBLIC_TOKENENVY_URL ?? DEFAULT_SHARE_PRODUCT_URL),
   );
-  let card = $derived(
-    buildShareCardData({
-      date: detail.date,
-      median: detail.summary.median,
-      count: detail.summary.count,
-      sessions: detail.summary.sessions,
-      outputTokens: detail.summary.outputTokens,
-      isToday,
-      speedIndex: detail.speedIndex,
-      refusals,
-      models: detail.models,
-      histogram: detail.histogram,
-    }),
-  );
+  let card = $derived(buildCard(inputSnapshot));
   let sentimentTheme = $derived(getShareSentimentTheme(sentiment));
   let tagline = $derived(getShareTagline(tone, sentiment, card));
   let moodLine = $derived(getShareMoodLine(card));
   let refusalLine = $derived(getShareRefusalLine(card));
+  let sentimentDescription = $derived(
+    getShareSentimentDescription(inputSnapshot.detail.speedIndex),
+  );
   let previewLabel = $derived(
     [
       `Token Envy share card for ${dayLabel(card.date)}`,
@@ -113,7 +139,7 @@
   let previewStyle = $derived(
     `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar};${SHARE_CARD_LAYOUT_STYLE}`,
   );
-  let canExport = $derived(!refreshing && preparedFile !== null);
+  let canExport = $derived(!inputSnapshot.refreshing && preparedFile !== null);
 
   onMount(() => {
     clipboardImageAvailable =
@@ -121,22 +147,15 @@
   });
 
   $effect(() => {
-    const nextCardDate = card.date;
-    const suggestedSentiment = suggestedShareSentiment(card);
     if (open && !previousOpen) {
+      const nextSnapshot = captureInputs();
+      const nextCard = buildCard(nextSnapshot);
+      inputSnapshot = nextSnapshot;
       tone = 'friendly';
-      sentiment = suggestedSentiment;
-      sentimentCardDate = nextCardDate;
+      sentiment = suggestedShareSentiment(nextCard);
       status = null;
-    } else if (open && sentimentCardDate !== nextCardDate) {
-      sentiment = sentimentAfterCardChange(
-        sentimentCardDate,
-        nextCardDate,
-        sentiment,
-        suggestedSentiment,
-      );
-      sentimentCardDate = nextCardDate;
-      status = null;
+    } else if (!open) {
+      inputSnapshot = captureInputs();
     }
     previousOpen = open;
   });
@@ -200,9 +219,13 @@
     try {
       const blob = await renderCard(snapshot);
       if (version !== renderVersion) return;
-      const file = new File([blob], getShareImageFilename(snapshot.card.date, snapshot.tone, snapshot.sentiment), {
-        type: 'image/png',
-      });
+      const file = new File(
+        [blob],
+        getShareImageFilename(snapshot.card.date, snapshot.tone, snapshot.sentiment),
+        {
+          type: 'image/png',
+        },
+      );
       preparedFile = file;
       nativeFileShareAvailable =
         typeof navigator.share === 'function' &&
@@ -216,7 +239,14 @@
   }
 
   function renderCard(snapshot: CardSnapshot): Promise<Blob> {
-    const { card: currentCard, tagline: currentTagline, moodLine: currentMood, refusalLine: currentRefusals, sentiment: currentSentiment, theme: currentTheme } = snapshot;
+    const {
+      card: currentCard,
+      tagline: currentTagline,
+      moodLine: currentMood,
+      refusalLine: currentRefusals,
+      sentiment: currentSentiment,
+      theme: currentTheme,
+    } = snapshot;
     const layout = DAILY_SHARE_CARD_LAYOUT;
     const centerX = layout.width / 2;
     const canvas = document.createElement('canvas');
@@ -340,7 +370,14 @@
     if (currentRefusals) {
       context.textAlign = 'center';
       context.fillStyle = currentTheme.accent;
-      drawFittedText(context, currentRefusals, { x: centerX, baseline: 590, maxWidth: 1040, maxFontSize: 17, minFontSize: 14, weight: 600 });
+      drawFittedText(context, currentRefusals, {
+        x: centerX,
+        baseline: 590,
+        maxWidth: 1040,
+        maxFontSize: 17,
+        minFontSize: 14,
+        weight: 600,
+      });
     }
 
     context.save();
@@ -432,7 +469,8 @@
       minFontSize: options.minFontSize,
     });
     const totalHeight = fitted.lineHeight * fitted.lines.length;
-    const firstBaseline = options.top + (options.bottom - options.top - totalHeight) / 2 + fitted.fontSize;
+    const firstBaseline =
+      options.top + (options.bottom - options.top - totalHeight) / 2 + fitted.fontSize;
     fitted.lines.forEach((line, index) => {
       context.fillText(line, options.centerX, firstBaseline + index * fitted.lineHeight);
     });
@@ -491,7 +529,7 @@
     context.beginPath();
     for (let point = 0; point < 8; point += 1) {
       const radius = point % 2 === 0 ? outerRadius : innerRadius;
-      const angle = -Math.PI / 2 + point * Math.PI / 4;
+      const angle = -Math.PI / 2 + (point * Math.PI) / 4;
       const px = x + Math.cos(angle) * radius;
       const py = y + Math.sin(angle) * radius;
       if (point === 0) context.moveTo(px, py);
@@ -586,9 +624,7 @@
     if (!preparedFile || !clipboardImageAvailable) return;
     status = null;
     try {
-      const write = navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': preparedFile }),
-      ]);
+      const write = navigator.clipboard.write([new ClipboardItem({ 'image/png': preparedFile })]);
       await write;
       status = 'Image copied. Paste or attach it in your composer.';
     } catch {
@@ -628,7 +664,10 @@
   function openComposer(platform: 'x' | 'bluesky' | 'linkedin') {
     let url: string;
     if (platform === 'x') {
-      const params = new URLSearchParams({ text: getShareCaption(tone, sentiment, card, 'x', null) });
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Local composer parameters are serialized immediately.
+      const params = new URLSearchParams({
+        text: getShareCaption(tone, sentiment, card, 'x', null),
+      });
       if (productLink) params.set('url', productLink.href);
       url = `https://x.com/intent/tweet?${params.toString()}`;
     } else if (platform === 'bluesky') {
@@ -644,11 +683,7 @@
         : `${platform === 'x' ? 'X' : 'Bluesky'} opened with the caption. Attach your copied or downloaded PNG.`;
   }
 
-  async function copyTextToClipboard(
-    text: string,
-    successStatus: string,
-    failureStatus: string,
-  ) {
+  async function copyTextToClipboard(text: string, successStatus: string, failureStatus: string) {
     status = null;
     try {
       await navigator.clipboard.writeText(text);
@@ -693,7 +728,8 @@
 <svelte:window onkeydown={trapFocus} />
 
 {#if open}
-  <button class="scrim share-scrim" type="button" aria-label="Close share card" onclick={onclose}></button>
+  <button class="scrim share-scrim" type="button" aria-label="Close share card" onclick={onclose}
+  ></button>
   <div
     class="share-modal"
     role="dialog"
@@ -702,14 +738,20 @@
     tabindex="-1"
     bind:this={modal}
   >
-      <header class="drawer-header">
-        <div>
-          <p class="eyebrow">Share a daily card</p>
-          <h2 id="share-title">Make this day a little competitive</h2>
-          <p>Only aggregate speed statistics shown in the preview leave this browser.</p>
-        </div>
-        <button class="icon-button" data-autofocus type="button" onclick={onclose} aria-label="Close share card">×</button>
-      </header>
+    <header class="drawer-header">
+      <div>
+        <p class="eyebrow">Share a daily card</p>
+        <h2 id="share-title">Make this day a little competitive</h2>
+        <p>Only aggregate speed statistics shown in the preview leave this browser.</p>
+      </div>
+      <button
+        class="icon-button"
+        data-autofocus
+        type="button"
+        onclick={onclose}
+        aria-label="Close share card">×</button
+      >
+    </header>
 
     <div class="share-body">
       <div class="share-controls">
@@ -720,14 +762,14 @@
               type="button"
               class:active={tone === 'friendly'}
               aria-pressed={tone === 'friendly'}
-              onclick={() => setTone('friendly')}
-            >Friendly</button>
+              onclick={() => setTone('friendly')}>Friendly</button
+            >
             <button
               type="button"
               class:active={tone === 'spicy'}
               aria-pressed={tone === 'spicy'}
-              onclick={() => setTone('spicy')}
-            >Spicy</button>
+              onclick={() => setTone('spicy')}>Spicy</button
+            >
           </div>
         </div>
         <div class="sentiment-control" style={`--sentiment-accent:${sentimentTheme.accent}`}>
@@ -747,11 +789,12 @@
             oninput={(event) => setSentiment(Number(event.currentTarget.value))}
           />
           <div class="sentiment-labels" aria-hidden="true">
-            {#each SHARE_SENTIMENTS as value}<span>{getShareSentimentTheme(value).label}</span>{/each}
+            {#each SHARE_SENTIMENTS as value (value)}<span
+                >{getShareSentimentTheme(value).label}</span
+              >{/each}
           </div>
           <p id="sentiment-description">
-            Starts from your adjusted comparable-day result. Move it anywhere. It changes the attitude,
-            expression, and palette while your stats stay fixed.
+            {sentimentDescription}
           </p>
         </div>
       </div>
@@ -762,7 +805,7 @@
         style={previewStyle}
         role="img"
         aria-label={previewLabel}
-        aria-busy={refreshing}
+        aria-busy={inputSnapshot.refreshing}
       >
         <svg class="share-sentiment-face" viewBox="0 0 440 360" aria-hidden="true">
           <circle cx="220" cy="180" r="150"></circle>
@@ -776,8 +819,14 @@
             <circle class="face-eye-fill" cx="151" cy="132" r="11"></circle>
             <circle class="face-eye-fill" cx="289" cy="132" r="11"></circle>
           {:else}
-            <path class="face-eye-fill" d="M151 94l10 26 27 10-27 10-10 27-10-27-27-10 27-10zm138 0 10 26 27 10-27 10-10 27-10-27-27-10 27-10z"></path>
-            <path class="face-spark-fill" d="M379 50l7 18 18 7-18 7-7 18-7-18-18-7 18-7zM62 259l5 13 13 5-13 5-5 13-5-13-13-5 13-5z"></path>
+            <path
+              class="face-eye-fill"
+              d="M151 94l10 26 27 10-27 10-10 27-10-27-27-10 27-10zm138 0 10 26 27 10-27 10-10 27-10-27-27-10 27-10z"
+            ></path>
+            <path
+              class="face-spark-fill"
+              d="M379 50l7 18 18 7-18 7-7 18-7-18-18-7 18-7zM62 259l5 13 13 5-13 5-5 13-5-13-13-5 13-5z"
+            ></path>
           {/if}
           <path d={sentiment === 0 ? 'M150 222h140' : `M150 222q70 ${sentiment * 38} 140 0`}></path>
           {#if sentiment === -2}
@@ -815,17 +864,29 @@
 
       <div class="share-actions" aria-label="Prepare the image">
         {#if nativeFileShareAvailable}
-          <button class="primary-button" type="button" onclick={nativeShare} disabled={!canExport}>Share image…</button>
+          <button class="primary-button" type="button" onclick={nativeShare} disabled={!canExport}
+            >Share image…</button
+          >
         {/if}
         {#if clipboardImageAvailable}
           <button class="secondary-button" type="button" onclick={copyImage} disabled={!canExport}>
             Copy image
           </button>
         {/if}
-        <button class="secondary-button" type="button" onclick={downloadImage} disabled={!canExport}>
+        <button
+          class="secondary-button"
+          type="button"
+          onclick={downloadImage}
+          disabled={!canExport}
+        >
           {preparing ? 'Preparing PNG…' : 'Download PNG'}
         </button>
-        <button class="secondary-button" type="button" onclick={copyTextReceipt} disabled={refreshing}>
+        <button
+          class="secondary-button"
+          type="button"
+          onclick={copyTextReceipt}
+          disabled={inputSnapshot.refreshing}
+        >
           Copy text receipt
         </button>
       </div>
@@ -837,14 +898,36 @@
           <p>X and Bluesky can prefill text, but browsers cannot attach this image for them.</p>
         </div>
         <div class="composer-buttons">
-          <button class="secondary-button" type="button" onclick={() => openComposer('x')} disabled={refreshing}>Open X</button>
-          <button class="secondary-button" type="button" onclick={() => openComposer('bluesky')} disabled={refreshing}>Open Bluesky</button>
+          <button
+            class="secondary-button"
+            type="button"
+            onclick={() => openComposer('x')}
+            disabled={inputSnapshot.refreshing}>Open X</button
+          >
+          <button
+            class="secondary-button"
+            type="button"
+            onclick={() => openComposer('bluesky')}
+            disabled={inputSnapshot.refreshing}>Open Bluesky</button
+          >
         </div>
         <div class="linkedin-guide">
           <strong>LinkedIn</strong>
-          <button class="text-button" type="button" onclick={downloadImage} disabled={!canExport}>1. Download PNG</button>
-          <button class="text-button" type="button" onclick={() => copyCaption('linkedin')} disabled={refreshing}>2. Copy caption</button>
-          <button class="text-button" type="button" onclick={() => openComposer('linkedin')} disabled={refreshing}>3. Open LinkedIn</button>
+          <button class="text-button" type="button" onclick={downloadImage} disabled={!canExport}
+            >1. Download PNG</button
+          >
+          <button
+            class="text-button"
+            type="button"
+            onclick={() => copyCaption('linkedin')}
+            disabled={inputSnapshot.refreshing}>2. Copy caption</button
+          >
+          <button
+            class="text-button"
+            type="button"
+            onclick={() => openComposer('linkedin')}
+            disabled={inputSnapshot.refreshing}>3. Open LinkedIn</button
+          >
         </div>
       </section>
 
@@ -852,7 +935,9 @@
         No prompts, responses, project names, file paths, or session identifiers are included.
       </p>
       <p class="share-status" aria-live="polite">
-        {refreshing ? 'Refreshing this day before sharing…' : (status ?? (preparing ? 'Preparing the daily PNG…' : ''))}
+        {inputSnapshot.refreshing
+          ? 'Refreshing this day before sharing…'
+          : (status ?? (preparing ? 'Preparing the daily PNG…' : ''))}
       </p>
     </div>
   </div>

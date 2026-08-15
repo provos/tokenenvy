@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { DailyPoint } from '../../src/lib/types';
-import { areaPath, chartMaximum, chartTickIndices, chartTickLabel, dayLabel, linePath } from '../../src/lib/components/chart';
+import {
+  areaPath,
+  chartMaximum,
+  chartTickIndices,
+  chartTickLabel,
+  dayLabel,
+  linePath,
+} from '../../src/lib/components/chart';
 import {
   buildShareCardData,
   DEFAULT_SHARE_PRODUCT_URL,
@@ -32,7 +39,7 @@ const points: DailyPoint[] = [
     ciLow: 48,
     ciHigh: 57,
     outputTokens: 3000,
-    provisional: 0
+    provisional: 0,
   },
   {
     date: '2026-08-14',
@@ -47,8 +54,8 @@ const points: DailyPoint[] = [
     ciLow: 64,
     ciHigh: 76,
     outputTokens: 2400,
-    provisional: 1
-  }
+    provisional: 1,
+  },
 ];
 
 describe('dashboard chart helpers', () => {
@@ -80,7 +87,7 @@ describe('dashboard chart helpers', () => {
     expect(chartTickLabel('2026-08-14', '2026-08-14')).toEqual({
       primary: 'Today',
       secondary: expect.stringMatching(/Aug 14/),
-      accessible: expect.stringMatching(/Today, Aug 14/)
+      accessible: expect.stringMatching(/Today, Aug 14/),
     });
   });
 });
@@ -89,11 +96,11 @@ describe('privacy-safe share-card data', () => {
   it('accepts only credential-free HTTPS product links', () => {
     expect(safeShareProductLink(DEFAULT_SHARE_PRODUCT_URL)).toEqual({
       href: 'https://www.npmjs.com/package/tokenenvy',
-      label: 'www.npmjs.com/package/tokenenvy'
+      label: 'www.npmjs.com/package/tokenenvy',
     });
     expect(safeShareProductLink('https://example.com/speedometer/')).toEqual({
       href: 'https://example.com/speedometer/',
-      label: 'example.com/speedometer'
+      label: 'example.com/speedometer',
     });
     expect(safeShareProductLink('javascript:alert(1)')).toBeNull();
     expect(safeShareProductLink('http://example.com/tokenenvy')).toBeNull();
@@ -117,25 +124,25 @@ describe('privacy-safe share-card data', () => {
         percentile: 88,
         eligible: true,
         reason: null,
-        privateMarker
+        privateMarker,
       } as never,
       refusals: {
         recorded: true,
         attempted: 3,
         recovered: 1,
         userVisible: 1,
-        privateMarker
+        privateMarker,
       } as never,
       models: [
         { ...points[0], outputTokens: 1_000, share: 0.3, privateMarker },
-        { ...points[0], family: 'opus', outputTokens: 2_000, share: 0.7, privateMarker }
+        { ...points[0], family: 'opus', outputTokens: 2_000, share: 0.7, privateMarker },
       ] as never,
       histogram: Array.from({ length: 45 }, (_, index) => ({
         lower: index * 10,
         upper: index * 10 + 10,
         count: index + 1,
-        privateMarker
-      })) as never
+        privateMarker,
+      })) as never,
     });
 
     expect(card.indexLabel).toBe('+12% vs your baseline');
@@ -145,27 +152,29 @@ describe('privacy-safe share-card data', () => {
     expect(suggestedShareSentiment(card)).toBe(1);
     const spicyTaglines = (isToday: boolean) =>
       SHARE_SENTIMENTS.map((sentiment) =>
-        getShareTagline('spicy', sentiment, { ...card, isToday })
+        getShareTagline('spicy', sentiment, { ...card, isToday }),
       );
     expect(spicyTaglines(true)).toEqual([
       'Anthropic hates me today',
       'Anthropic is testing me today',
       'Anthropic and I are on speaking terms',
       'Anthropic likes me today',
-      'Anthropic loves me today'
+      'Anthropic loves me today',
     ]);
     expect(spicyTaglines(false)).toEqual([
       'Anthropic hated me that day',
       'Anthropic was testing me that day',
       'Anthropic and I were on speaking terms',
       'Anthropic liked me that day',
-      'Anthropic loved me that day'
+      'Anthropic loved me that day',
     ]);
     expect(getShareMoodLine(card)).toBe('Faster than 88% of my comparable days');
     expect(getShareRefusalLine(card)).toBe(
-      '3 refusals · 1 recovered · 1 user-visible · 1 unresolved'
+      '3 refusals · 1 recovered · 1 user-visible · 1 unresolved',
     );
-    expect(normalizeHistogram(card.histogram, card.median).some((bar) => bar.containsMedian)).toBe(true);
+    expect(normalizeHistogram(card.histogram, card.median).some((bar) => bar.containsMedian)).toBe(
+      true,
+    );
   });
 
   it('maps sentiment to distinct semantic palettes without changing measurements', () => {
@@ -173,30 +182,32 @@ describe('privacy-safe share-card data', () => {
     const neutral = getShareSentimentTheme(0);
     const positive = getShareSentimentTheme(2);
 
-    expect([negative.label, neutral.label, positive.label]).toEqual(['Brutal', 'Neutral', 'Glorious']);
-    expect(new Set([negative.backgroundStart, neutral.backgroundStart, positive.backgroundStart]).size).toBe(3);
+    expect([negative.label, neutral.label, positive.label]).toEqual([
+      'Brutal',
+      'Neutral',
+      'Glorious',
+    ]);
+    expect(
+      new Set([negative.backgroundStart, neutral.backgroundStart, positive.backgroundStart]).size,
+    ).toBe(3);
     expect(new Set([negative.accent, neutral.accent, positive.accent]).size).toBe(3);
   });
 
   it('suggests conservative moods from percentile, adjusted effect, and confidence together', () => {
-    const sentimentFor = (
-      value: number,
-      percentile: number,
-      ciLow: number,
-      ciHigh: number
-    ) => suggestedShareSentiment(
-      buildShareCardData({
-        date: '2026-08-14',
-        median: 60,
-        count: 30,
-        sessions: 6,
-        outputTokens: 2_400,
-        isToday: true,
-        speedIndex: { value, ciLow, ciHigh, percentile, eligible: true, reason: null },
-        models: [],
-        histogram: []
-      })
-    );
+    const sentimentFor = (value: number, percentile: number, ciLow: number, ciHigh: number) =>
+      suggestedShareSentiment(
+        buildShareCardData({
+          date: '2026-08-14',
+          median: 60,
+          count: 30,
+          sessions: 6,
+          outputTokens: 2_400,
+          isToday: true,
+          speedIndex: { value, ciLow, ciHigh, percentile, eligible: true, reason: null },
+          models: [],
+          histogram: [],
+        }),
+      );
 
     expect(sentimentFor(90, 10, 82, 99)).toBe(-2);
     expect(sentimentFor(90, 10, 82, 100)).toBe(-1);
@@ -233,35 +244,35 @@ describe('privacy-safe share-card data', () => {
         ciHigh: null,
         percentile: null,
         eligible: false,
-        reason: 'Baseline warming up'
+        reason: 'Baseline warming up',
       },
       models: [],
-      histogram: [{ lower: 40, upper: 50, count: 9 }]
+      histogram: [{ lower: 40, upper: 50, count: 9 }],
     });
 
     expect(suggestedShareSentiment(card)).toBe(0);
     expect(getShareTagline('friendly', 0, card)).toBe('Claude Code kept it steady that day');
     expect(getShareTagline('spicy', 0, card)).toBe('Anthropic and I were on speaking terms');
     expect(getShareCaption('friendly', 0, card, 'bluesky', 'https://tokenenvy.example/')).toContain(
-      'https://tokenenvy.example/'
+      'https://tokenenvy.example/',
     );
     expect(getShareCaption('friendly', 0, card, 'bluesky', null)).toContain(
-      'How does your Claude Code speed compare?'
+      'How does your Claude Code speed compare?',
     );
     expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
-      'Built by Security Blueprints, LLC: securityblueprints.io'
+      'Built by Security Blueprints, LLC: securityblueprints.io',
     );
     expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
-      'Measured locally. Prompts stay private.'
+      'Measured locally. Prompts stay private.',
     );
-    expect(getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/')).not.toContain(
-      'https://tokenenvy.example/'
-    );
+    expect(
+      getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/'),
+    ).not.toContain('https://tokenenvy.example/');
     expect(getShareCaption('friendly', 0, card, 'linkedin', null)).toContain(
-      '\n\nMy Token Envy receipt:'
+      '\n\nMy Token Envy receipt:',
     );
     expect(getShareRefusalLine(card)).toBe('Refusals: explicit signals unavailable');
-    expect(getShareMoodLine(card)).toBe('Building my personal baseline');
+    expect(getShareMoodLine(card)).toBe('Building a comparable baseline');
   });
 
   it('omits a recorded zero refusal line from the compact card', () => {
@@ -278,11 +289,11 @@ describe('privacy-safe share-card data', () => {
         ciHigh: null,
         percentile: null,
         eligible: false,
-        reason: 'Baseline warming up'
+        reason: 'Baseline warming up',
       },
       refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
       models: [],
-      histogram: []
+      histogram: [],
     });
 
     expect(getShareRefusalLine(card)).toBe('');
@@ -303,29 +314,31 @@ describe('privacy-safe share-card data', () => {
         ciHigh: 120,
         percentile: 88,
         eligible: true,
-        reason: null
+        reason: null,
       },
       refusals: { recorded: true, attempted: 3, recovered: 1, userVisible: 1 },
       models: [],
-      histogram: []
+      histogram: [],
     });
 
     expect(getShareImageFilename(card.date, 'friendly', 1)).toBe(
-      'token-envy-2026-08-14-friendly-good.png'
+      'token-envy-2026-08-14-friendly-good.png',
     );
     expect(getShareImageFilename('../private/project', 'spicy', -20)).toBe(
-      'token-envy-private-project-spicy-brutal.png'
+      'token-envy-private-project-spicy-brutal.png',
     );
 
     const receipt = getShareTextReceipt(
       'friendly',
       1,
       card,
-      'https://www.npmjs.com/package/tokenenvy'
+      'https://www.npmjs.com/package/tokenenvy',
     );
     expect(receipt).toContain('Token Envy daily receipt\n2026-08-14');
     expect(receipt).toContain('3 refusals · 1 recovered · 1 user-visible · 1 unresolved');
-    expect(receipt).toContain('Refusals reflect explicit transcript signals and remain a lower bound.');
+    expect(receipt).toContain(
+      'Refusals reflect explicit transcript signals and remain a lower bound.',
+    );
     expect(receipt).toContain('Measured locally. Prompts stay private.');
     expect(receipt).toContain('Run it yourself · npx tokenenvy');
     expect(receipt).toContain('Built by Security Blueprints, LLC: securityblueprints.io');

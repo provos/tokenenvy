@@ -19,6 +19,8 @@ maintainer session.
 3. Run the release gates:
 
    ```bash
+   npm run format:check
+   npm run lint
    npm run check
    npm test
    npm run test:package

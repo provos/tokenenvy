@@ -2,7 +2,14 @@
 
 import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,14 +38,17 @@ function expandHome(value) {
 /** @param {string} root @param {string} candidate */
 function containsPath(root, candidate) {
   const within = relative(root, candidate);
-  return within === '' || (within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within));
+  return (
+    within === '' || (within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within))
+  );
 }
 
 /** Resolve, deduplicate, and remove nested roots without touching the filesystem. @param {string[]} values */
 export function normalizeLogRoots(values) {
   const unique = [...new Set(values.map((value) => resolve(expandHome(value))))];
-  return unique.filter((candidate, index) =>
-    !unique.some((root, rootIndex) => rootIndex !== index && containsPath(root, candidate))
+  return unique.filter(
+    (candidate, index) =>
+      !unique.some((root, rootIndex) => rootIndex !== index && containsPath(root, candidate)),
   );
 }
 
@@ -69,7 +79,7 @@ export function parseArgs(argv) {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     open: true,
     rescan: false,
-    help: false
+    help: false,
   };
 
   const args = [...argv];
@@ -85,7 +95,8 @@ export function parseArgs(argv) {
     else if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--logs') options.logs.push(requiredValue(args, ++index, arg));
     else if (arg === '--port') options.port = parsePort(requiredValue(args, ++index, arg));
-    else if (arg === '--timezone') options.timezone = parseTimezone(requiredValue(args, ++index, arg));
+    else if (arg === '--timezone')
+      options.timezone = parseTimezone(requiredValue(args, ++index, arg));
     else throw new Error(`Unknown option: ${arg}`);
   }
 
@@ -93,7 +104,7 @@ export function parseArgs(argv) {
     throw new Error('The statusline command does not accept server options.');
   }
   options.logs = normalizeLogRoots(
-    options.logs.length > 0 ? options.logs : [join(homedir(), '.claude', 'projects')]
+    options.logs.length > 0 ? options.logs : [join(homedir(), '.claude', 'projects')],
   );
   return options;
 }
@@ -108,7 +119,8 @@ function requiredValue(args, index, option) {
 /** @param {string} value */
 function parsePort(value) {
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`Invalid port: ${value}`);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535)
+    throw new Error(`Invalid port: ${value}`);
   return port;
 }
 
@@ -131,7 +143,8 @@ function normalizeWindow(value) {
   if (!Number.isFinite(used) || used < 0 || used > 100 || rawReset == null) return null;
 
   let date;
-  if (typeof rawReset === 'number') date = new Date(rawReset < 10_000_000_000 ? rawReset * 1000 : rawReset);
+  if (typeof rawReset === 'number')
+    date = new Date(rawReset < 10_000_000_000 ? rawReset * 1000 : rawReset);
   else if (typeof rawReset === 'string') date = new Date(rawReset);
   else return null;
   if (!Number.isFinite(date.getTime())) return null;
@@ -147,7 +160,11 @@ function normalizeWindow(value) {
 export function extractRateLimits(input, now = new Date()) {
   if (!input || typeof input !== 'object') return null;
   const document = /** @type {Record<string, any>} */ (input);
-  const limits = document.rate_limits ?? document.rateLimits ?? document.rate_limit ?? document.usage?.rate_limits;
+  const limits =
+    document.rate_limits ??
+    document.rateLimits ??
+    document.rate_limit ??
+    document.usage?.rate_limits;
   if (!limits || typeof limits !== 'object') return null;
 
   const fiveHour = normalizeWindow(limits.five_hour ?? limits.fiveHour ?? limits.five_hour_window);
@@ -156,7 +173,7 @@ export function extractRateLimits(input, now = new Date()) {
   return {
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
-    observedAt: now.toISOString()
+    observedAt: now.toISOString(),
   };
 }
 
@@ -204,7 +221,8 @@ export async function runStatusline() {
     try {
       const connection = JSON.parse(readFileSync(join(stateDirectory(), 'server.json'), 'utf8'));
       const serverUrl = loopbackServerUrl(connection.url);
-      if (!serverUrl || typeof connection.secret !== 'string') throw new Error('Invalid local server connection');
+      if (!serverUrl || typeof connection.secret !== 'string')
+        throw new Error('Invalid local server connection');
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 150);
       try {
@@ -212,10 +230,10 @@ export async function runStatusline() {
           method: 'POST',
           headers: {
             authorization: `Bearer ${connection.secret}`,
-            'content-type': 'application/json'
+            'content-type': 'application/json',
           },
           body: JSON.stringify(sample),
-          signal: controller.signal
+          signal: controller.signal,
         });
       } finally {
         clearTimeout(timeout);
@@ -262,7 +280,7 @@ export async function runServer(options) {
   writeFileSync(
     pendingConnectionPath,
     `${JSON.stringify({ url, secret: statuslineSecret, pid: process.pid, writtenAt: new Date().toISOString() })}\n`,
-    { mode: 0o600, flag: 'wx' }
+    { mode: 0o600, flag: 'wx' },
   );
   renameSync(pendingConnectionPath, connectionPath);
 
@@ -276,7 +294,7 @@ export async function runServer(options) {
     TOKENENVY_DATA_DIR: directory,
     TOKENENVY_BOOTSTRAP_TOKEN: bootstrapToken,
     TOKENENVY_STATUSLINE_SECRET: statuslineSecret,
-    TOKENENVY_RESCAN: options.rescan ? '1' : '0'
+    TOKENENVY_RESCAN: options.rescan ? '1' : '0',
   });
 
   const privateUrl = `${url}/?token=${encodeURIComponent(bootstrapToken)}`;
@@ -300,8 +318,16 @@ export async function runServer(options) {
     await import(pathToFileURL(entry).href);
   } catch (error) {
     cleanup();
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ERR_MODULE_NOT_FOUND') {
-      throw new Error('The production server is missing. Run `npm run build` before using this checkout.');
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'ERR_MODULE_NOT_FOUND'
+    ) {
+      throw new Error(
+        'The production server is missing. Run `npm run build` before using this checkout.',
+        { cause: error },
+      );
     }
     throw error;
   }
@@ -329,7 +355,7 @@ export async function main(argv = process.argv.slice(2)) {
 let invokedAsEntrypoint = false;
 try {
   invokedAsEntrypoint = Boolean(
-    process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href,
   );
 } catch {
   // Importing the helper functions remains safe even when argv[1] disappeared.
@@ -342,7 +368,9 @@ if (invokedAsEntrypoint) {
     process.exitCode = 1;
   } else {
     main().catch((error) => {
-      process.stderr.write(`tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(
+        `tokenenvy: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
       process.exitCode = 1;
     });
   }

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DAILY_SHARE_CARD_LAYOUT,
   fitTextLines,
-  shareCardLayoutStyle
+  shareCardLayoutStyle,
 } from '../../src/lib/components/share-layout';
 
 const appCss = readFileSync(new URL('../../src/app.css', import.meta.url), 'utf8');
@@ -32,8 +32,8 @@ describe('daily share-card layout', () => {
         maxHeight: headlineHeight,
         maxFontSize: 40,
         minFontSize: 20,
-        measure: (fontSize, text) => text.length * fontSize * 0.54
-      }
+        measure: (fontSize, text) => text.length * fontSize * 0.54,
+      },
     );
 
     expect(fitted.lines).toHaveLength(2);
@@ -48,7 +48,7 @@ describe('daily share-card layout', () => {
       maxLines: 2,
       maxFontSize: 30,
       minFontSize: 18,
-      measure: (fontSize, text) => text.length * fontSize * 0.6
+      measure: (fontSize, text) => text.length * fontSize * 0.6,
     });
 
     expect(fitted.lines).toHaveLength(2);
@@ -70,14 +70,18 @@ describe('daily share-card layout', () => {
     const narrowStyles = appCss.slice(appCss.indexOf('@media (max-width: 420px)'));
 
     expect(narrowStyles).toMatch(
-      /\.share-brand-lockup small,\s*\.share-metric-context,\s*\.share-preview-activity\s*\{\s*display: none;\s*\}/
+      /\.share-brand-lockup small,\s*\.share-metric-context,\s*\.share-preview-activity\s*\{\s*display: none;\s*\}/,
     );
-    expect(narrowStyles).toContain('.share-preview-headline { font-size: 10px; line-height: 1.02; }');
-    expect(narrowStyles).not.toContain('.share-preview-headline { font-size: 13px; }');
-    expect(narrowStyles).toContain('.share-metric-lockup strong { font-size: 38px; }');
-    expect(appCss).toContain(
-      '.share-modal { width: calc(100% - 20px); max-width: 700px; max-height: calc(100vh - 20px); }'
+    expect(narrowStyles).toMatch(
+      /\.share-preview-headline\s*\{[^}]*font-size:\s*10px;[^}]*line-height:\s*1\.02;[^}]*\}/,
     );
-    expect(appCss).toContain('.envy-callout-actions { width: 100%; flex-direction: column; }');
+    expect(narrowStyles).not.toMatch(/\.share-preview-headline\s*\{[^}]*font-size:\s*13px;[^}]*\}/);
+    expect(narrowStyles).toMatch(/\.share-metric-lockup strong\s*\{[^}]*font-size:\s*38px;[^}]*\}/);
+    expect(appCss).toMatch(
+      /\.share-modal\s*\{[^}]*width:\s*calc\(100% - 20px\);[^}]*max-width:\s*700px;[^}]*max-height:\s*calc\(100vh - 20px\);[^}]*\}/,
+    );
+    expect(appCss).toMatch(
+      /\.envy-callout-actions\s*\{[^}]*width:\s*100%;[^}]*flex-direction:\s*column;[^}]*\}/,
+    );
   });
 });

@@ -17,10 +17,10 @@ const config = {
         'object-src': ['none'],
         'base-uri': ['none'],
         'frame-ancestors': ['none'],
-        'form-action': ['self']
-      }
-    }
-  }
+        'form-action': ['self'],
+      },
+    },
+  },
 };
 
 export default config;

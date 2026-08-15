@@ -7,7 +7,7 @@ import type {
   QuotaResponse,
   RefusalSummary,
   ScanStatus,
-  SeriesResponse
+  SeriesResponse,
 } from '$lib/types';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -47,7 +47,11 @@ function configuredLogRoots(): string[] {
   } catch {
     throw new Error('TOKENENVY_LOGS must be a JSON array of paths.');
   }
-  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((value) => typeof value !== 'string' || !value)) {
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.some((value) => typeof value !== 'string' || !value)
+  ) {
     throw new Error('TOKENENVY_LOGS must be a non-empty JSON array of paths.');
   }
   return normalizeLogRoots(parsed as string[]);
@@ -85,7 +89,8 @@ export class DashboardRuntime {
     this.logsRoots = normalizeLogRoots(options.logsRoots ?? configuredLogRoots());
     if (this.logsRoots.length === 0) throw new Error('At least one transcript root is required.');
     this.dataDirectory = resolve(options.dataDirectory ?? defaultDataDirectory());
-    this.timezone = options.timezone && validTimezone(options.timezone) ? options.timezone : configuredTimezone();
+    this.timezone =
+      options.timezone && validTimezone(options.timezone) ? options.timezone : configuredTimezone();
 
     mkdirSync(this.dataDirectory, { recursive: true, mode: 0o700 });
     const dbPath = join(this.dataDirectory, 'index.sqlite3');

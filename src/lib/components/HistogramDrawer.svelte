@@ -18,10 +18,10 @@
   let histogramMax = $derived(Math.max(1, ...(detail?.histogram.map((bin) => bin.count) ?? [1])));
   let hourlyMax = $derived(Math.max(1, ...(detail?.hourly.map((hour) => hour.median ?? 0) ?? [1])));
   let totalExcluded = $derived(
-    Object.values(detail?.exclusions ?? {}).reduce((total, count) => total + count, 0)
+    Object.values(detail?.exclusions ?? {}).reduce((total, count) => total + count, 0),
   );
   let refusalUnknown = $derived(
-    Math.max(0, refusals.attempted - refusals.recovered - refusals.userVisible)
+    Math.max(0, refusals.attempted - refusals.recovered - refusals.userVisible),
   );
 
   $effect(() => {
@@ -48,13 +48,23 @@
 
 {#if open}
   <button class="scrim" aria-label="Close day details" onclick={onclose}></button>
-  <div class="drawer" id="daily-detail" bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
+  <div
+    class="drawer"
+    id="daily-detail"
+    bind:this={panel}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="drawer-title"
+    tabindex="-1"
+  >
     <header class="drawer-header">
       <div>
         <p class="eyebrow">Daily distribution</p>
         <h2 id="drawer-title">{detail ? dayLabel(detail.date, detail.timezone) : 'Loading day'}</h2>
       </div>
-      <button class="icon-button" data-autofocus aria-label="Close day details" onclick={onclose}>×</button>
+      <button class="icon-button" data-autofocus aria-label="Close day details" onclick={onclose}
+        >×</button
+      >
     </header>
 
     {#if loading}
@@ -97,15 +107,31 @@
             {#if refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
           </div>
           {#if refusals.recorded}
-            <div class="refusal-total"><strong>{refusals.attempted.toLocaleString()}</strong><span>attempted</span></div>
-            <div class="refusal-grid">
-              <span><i class="recovered"></i><strong>{refusals.recovered.toLocaleString()}</strong><small>recovered by fallback</small></span>
-              <span><i class="visible"></i><strong>{refusals.userVisible.toLocaleString()}</strong><small>user-visible</small></span>
-              <span><i class="unknown"></i><strong>{refusalUnknown.toLocaleString()}</strong><small>unknown outcome</small></span>
+            <div class="refusal-total">
+              <strong>{refusals.attempted.toLocaleString()}</strong><span>attempted</span>
             </div>
-            <p class="drawer-refusal-note">Explicit transcript signals only; these counts are a lower bound.</p>
+            <div class="refusal-grid">
+              <span
+                ><i class="recovered"></i><strong>{refusals.recovered.toLocaleString()}</strong
+                ><small>recovered by fallback</small></span
+              >
+              <span
+                ><i class="visible"></i><strong>{refusals.userVisible.toLocaleString()}</strong
+                ><small>user-visible</small></span
+              >
+              <span
+                ><i class="unknown"></i><strong>{refusalUnknown.toLocaleString()}</strong><small
+                  >unknown outcome</small
+                ></span
+              >
+            </div>
+            <p class="drawer-refusal-note">
+              Explicit transcript signals only; these counts are a lower bound.
+            </p>
           {:else}
-            <p class="subtle-empty">This log format does not expose explicit classifier outcomes.</p>
+            <p class="subtle-empty">
+              This log format does not expose explicit classifier outcomes.
+            </p>
           {/if}
         </section>
 
@@ -119,8 +145,11 @@
           </div>
           {#if detail.histogram.length}
             <div class="histogram" aria-label="Histogram of effective output speed">
-              {#each detail.histogram as bin}
-                <div class="histogram-bin" style={`--bar-height:${(bin.count / histogramMax) * 100}%`}>
+              {#each detail.histogram as bin (`${bin.lower}:${bin.upper}:${bin.family ?? 'all'}`)}
+                <div
+                  class="histogram-bin"
+                  style={`--bar-height:${(bin.count / histogramMax) * 100}%`}
+                >
                   <span class="histogram-count">{bin.count}</span>
                   <span
                     class="histogram-bar"
@@ -145,7 +174,7 @@
             </div>
           </div>
           <div class="hour-strip" aria-label="Median speed by hour">
-            {#each detail.hourly as hour}
+            {#each detail.hourly as hour (hour.hour)}
               <div class="hour-cell">
                 <span
                   class:hour-empty={hour.median === null}
@@ -167,9 +196,10 @@
             </div>
           </div>
           <div class="model-breakdown">
-            {#each detail.models as model}
+            {#each detail.models as model (model.family)}
               <div class="model-row">
-                <span class="model-dot" style={`--model-color:${FAMILY_COLORS[model.family]}`}></span>
+                <span class="model-dot" style={`--model-color:${FAMILY_COLORS[model.family]}`}
+                ></span>
                 <strong>{model.family}</strong>
                 <span>{model.median.toFixed(1)} tok/s</span>
                 <span>{Math.round(model.share * 100)}%</span>
@@ -181,12 +211,19 @@
         <section class="drawer-section quality-note">
           <div>
             <p class="eyebrow">Data quality</p>
-            <h3>{totalExcluded ? `${totalExcluded.toLocaleString()} events excluded` : 'All observed events eligible'}</h3>
+            <h3>
+              {totalExcluded
+                ? `${totalExcluded.toLocaleString()} events excluded`
+                : 'All observed events eligible'}
+            </h3>
           </div>
           {#if totalExcluded}
             <ul>
-              {#each Object.entries(detail.exclusions) as [reason, count]}
-                <li><span>{reason.replaceAll('_', ' ')}</span><strong>{count.toLocaleString()}</strong></li>
+              {#each Object.entries(detail.exclusions) as [reason, count] (reason)}
+                <li>
+                  <span>{reason.replaceAll('_', ' ')}</span><strong>{count.toLocaleString()}</strong
+                  >
+                </li>
               {/each}
             </ul>
           {/if}

@@ -27,7 +27,11 @@ export function isAllowedOrigin(origin: string | null, authority?: string | null
   if (!origin) return true;
   try {
     const parsed = new URL(origin);
-    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isLoopbackAuthority(parsed.host)) return false;
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      !isLoopbackAuthority(parsed.host)
+    )
+      return false;
     if (authority) {
       const expected = new URL(`http://${authority}`);
       return parsed.host.toLowerCase() === expected.host.toLowerCase();
@@ -38,10 +42,12 @@ export function isAllowedOrigin(origin: string | null, authority?: string | null
   }
 }
 
-function unauthorized(message = 'Open Token Envy using the private URL printed by the CLI.'): Response {
+function unauthorized(
+  message = 'Open Token Envy using the private URL printed by the CLI.',
+): Response {
   return new Response(message, {
     status: 401,
-    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
 
@@ -61,64 +67,67 @@ export function createSecurityHandle(options: SecurityHandleOptions = {}): Handl
   const statuslineSecret = options.statuslineSecret ?? process.env.TOKENENVY_STATUSLINE_SECRET;
 
   return async ({ event, resolve }) => {
-  const host = event.request.headers.get('host');
-  if (!isLoopbackAuthority(host)) {
-    return new Response('Token Envy only accepts loopback requests.', { status: 403 });
-  }
-
-  const origin = event.request.headers.get('origin');
-  if (!isAllowedOrigin(origin, host)) {
-    return new Response('Origin is not allowed.', { status: 403 });
-  }
-
-  const path = event.url.pathname;
-  const isHealth = path === '/api/v1/health' || path === '/health';
-  const isStatusline = path === '/api/v1/statusline';
-
-  if (production && !isHealth) {
-    if (isStatusline) {
-      const supplied = event.request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-      if (!equalSecret(supplied, statuslineSecret)) {
-        return unauthorized('Invalid status-line credential.');
-      }
-    } else {
-      const bootstrap = event.url.searchParams.get('token');
-
-      if (!bootstrapConsumed && equalSecret(bootstrap, bootstrapToken)) {
-        bootstrapConsumed = true;
-        const sessionCookie = event.cookies.serialize(SESSION_COOKIE, sessionToken, {
-          path: '/',
-          httpOnly: true,
-          sameSite: 'strict',
-          secure: event.url.protocol === 'https:',
-          maxAge: 12 * 60 * 60
-        });
-
-        const clean = new URL(event.url);
-        clean.searchParams.delete('token');
-        return new Response(null, {
-          status: 303,
-          headers: {
-            location: `${clean.pathname}${clean.search}${clean.hash}`,
-            'cache-control': 'no-store',
-            'set-cookie': sessionCookie
-          }
-        });
-      }
-
-      if (!equalSecret(event.cookies.get(SESSION_COOKIE), sessionToken)) return unauthorized();
+    const host = event.request.headers.get('host');
+    if (!isLoopbackAuthority(host)) {
+      return new Response('Token Envy only accepts loopback requests.', { status: 403 });
     }
-  }
 
-  const response = await resolve(event);
-  response.headers.set('x-content-type-options', 'nosniff');
-  response.headers.set('referrer-policy', 'no-referrer');
-  response.headers.set('x-frame-options', 'DENY');
-  response.headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-  response.headers.set('cross-origin-opener-policy', 'same-origin');
-  response.headers.set('cross-origin-resource-policy', 'same-origin');
-  response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
-  return response;
+    const origin = event.request.headers.get('origin');
+    if (!isAllowedOrigin(origin, host)) {
+      return new Response('Origin is not allowed.', { status: 403 });
+    }
+
+    const path = event.url.pathname;
+    const isHealth = path === '/api/v1/health' || path === '/health';
+    const isStatusline = path === '/api/v1/statusline';
+
+    if (production && !isHealth) {
+      if (isStatusline) {
+        const supplied = event.request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+        if (!equalSecret(supplied, statuslineSecret)) {
+          return unauthorized('Invalid status-line credential.');
+        }
+      } else {
+        const bootstrap = event.url.searchParams.get('token');
+
+        if (!bootstrapConsumed && equalSecret(bootstrap, bootstrapToken)) {
+          bootstrapConsumed = true;
+          const sessionCookie = event.cookies.serialize(SESSION_COOKIE, sessionToken, {
+            path: '/',
+            httpOnly: true,
+            sameSite: 'strict',
+            secure: event.url.protocol === 'https:',
+            maxAge: 12 * 60 * 60,
+          });
+
+          const clean = new URL(event.url);
+          clean.searchParams.delete('token');
+          return new Response(null, {
+            status: 303,
+            headers: {
+              location: `${clean.pathname}${clean.search}${clean.hash}`,
+              'cache-control': 'no-store',
+              'set-cookie': sessionCookie,
+            },
+          });
+        }
+
+        if (!equalSecret(event.cookies.get(SESSION_COOKIE), sessionToken)) return unauthorized();
+      }
+    }
+
+    const response = await resolve(event);
+    response.headers.set('x-content-type-options', 'nosniff');
+    response.headers.set('referrer-policy', 'no-referrer');
+    response.headers.set('x-frame-options', 'DENY');
+    response.headers.set(
+      'permissions-policy',
+      'camera=(), microphone=(), geolocation=(), payment=()',
+    );
+    response.headers.set('cross-origin-opener-policy', 'same-origin');
+    response.headers.set('cross-origin-resource-policy', 'same-origin');
+    response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
+    return response;
   };
 }
 

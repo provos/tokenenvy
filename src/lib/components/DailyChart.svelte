@@ -1,6 +1,14 @@
 <script lang="ts">
   import type { DailyPoint, ModelFamily } from '$lib/types';
-  import { areaPath, chartMaximum, chartTickIndices, chartTickLabel, dayLabel, FAMILY_COLORS, linePath } from './chart';
+  import {
+    areaPath,
+    chartMaximum,
+    chartTickIndices,
+    chartTickLabel,
+    dayLabel,
+    FAMILY_COLORS,
+    linePath,
+  } from './chart';
 
   interface Props {
     points: DailyPoint[];
@@ -23,8 +31,10 @@
   let families = $derived(
     visibleFamilies.map((family) => ({
       family,
-      points: filtered.filter((point) => point.family === family).sort((a, b) => a.date.localeCompare(b.date))
-    }))
+      points: filtered
+        .filter((point) => point.family === family)
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    })),
   );
   let gridValues = $derived([0, 0.25, 0.5, 0.75, 1].map((part) => max * part));
   let tickIndices = $derived(chartTickIndices(dates.length));
@@ -50,7 +60,7 @@
       return;
     }
     const current = dates.indexOf(date);
-    let target = current;
+    let target: number;
     if (event.key === 'ArrowLeft') target = Math.max(0, current - 1);
     else if (event.key === 'ArrowRight') target = Math.min(dates.length - 1, current + 1);
     else if (event.key === 'Home') target = 0;
@@ -58,7 +68,9 @@
     else return;
     event.preventDefault();
     keyboardDate = dates[target];
-    requestAnimationFrame(() => chart?.querySelector<SVGRectElement>(`[data-date="${keyboardDate}"]`)?.focus());
+    requestAnimationFrame(() =>
+      chart?.querySelector<SVGRectElement>(`[data-date="${keyboardDate}"]`)?.focus(),
+    );
   }
 </script>
 
@@ -73,17 +85,20 @@
   >
     <title id="trend-title">Daily effective output speed by model family</title>
     <desc id="trend-desc">
-      Median effective output tokens per second. Shaded regions show the middle 50 percent of requests.
-      Select any day to update the daily summary. Use Left and Right Arrow to move between days.
+      Median effective output tokens per second. Shaded regions show the middle 50 percent of
+      requests. Select any day to update the daily summary. Use Left and Right Arrow to move between
+      days.
     </desc>
     <g transform={`translate(${pad.left} ${pad.top})`}>
-      {#each gridValues as value}
+      {#each gridValues as value (value)}
         {@const y = height - (value / max) * height}
         <line class="grid-line" x1="0" x2={width} y1={y} y2={y} />
-        <text class="axis-label axis-label-y" x="-12" y={y + 4} text-anchor="end">{Math.round(value)}</text>
+        <text class="axis-label axis-label-y" x="-12" y={y + 4} text-anchor="end"
+          >{Math.round(value)}</text
+        >
       {/each}
 
-      {#each families as series}
+      {#each families as series (series.family)}
         {#if series.points.length}
           <path
             class="iqr-area"
@@ -95,7 +110,7 @@
             d={linePath(series.points, dates, max, width, height)}
             stroke={FAMILY_COLORS[series.family]}
           />
-          {#each series.points as point}
+          {#each series.points as point (point.date)}
             {#if point.ciLow !== null && point.ciHigh !== null}
               <line
                 class="ci-whisker"
@@ -130,13 +145,18 @@
               r={selectedDate === point.date ? 5 : 3.5}
               fill={FAMILY_COLORS[series.family]}
             >
-              <title>{series.family}: {point.median.toFixed(1)} tokens/s on {dayLabel(point.date, timezone)}</title>
+              <title
+                >{series.family}: {point.median.toFixed(1)} tokens/s on {dayLabel(
+                  point.date,
+                  timezone,
+                )}</title
+              >
             </circle>
           {/each}
         {/if}
       {/each}
 
-      {#each dates as date, index}
+      {#each dates as date, index (date)}
         {@const x = xFor(date)}
         {@const tickLabel = chartTickLabel(date, today, timezone)}
         <rect
@@ -145,7 +165,7 @@
           x={Math.max(0, x - Math.max(5, width / Math.max(1, dates.length) / 2))}
           y="0"
           width={Math.max(10, width / Math.max(1, dates.length))}
-          height={height}
+          {height}
           data-date={date}
           tabindex={keyboardDate === date ? 0 : -1}
           role="button"
@@ -161,21 +181,25 @@
           <text
             class="axis-label"
             class:axis-label-today={date === today}
-            x={x}
+            {x}
             y={height + 27}
             text-anchor={index === 0 ? 'start' : index === dates.length - 1 ? 'end' : 'middle'}
             aria-hidden="true"
           >
             {#if tickLabel.secondary}
-              <tspan class="today-tick" x={x}>{tickLabel.primary}</tspan>
-              <tspan x={x} dy="12">{tickLabel.secondary}</tspan>
+              <tspan class="today-tick" {x}>{tickLabel.primary}</tspan>
+              <tspan {x} dy="12">{tickLabel.secondary}</tspan>
             {:else}
               {tickLabel.primary}
             {/if}
           </text>
         {/if}
       {/each}
-      <text class="axis-title" transform={`translate(-40 ${height / 2}) rotate(-90)`} text-anchor="middle">
+      <text
+        class="axis-title"
+        transform={`translate(-40 ${height / 2}) rotate(-90)`}
+        text-anchor="middle"
+      >
         Effective output tokens/s
       </text>
     </g>
@@ -190,10 +214,19 @@
         <tr><th>Date</th><th>Model</th><th>Median</th><th>Middle 50%</th><th>Requests</th></tr>
       </thead>
       <tbody>
-        {#each [...filtered].sort((a, b) => b.date.localeCompare(a.date) || a.family.localeCompare(b.family)) as point}
+        {#each [...filtered].sort((a, b) => b.date.localeCompare(a.date) || a.family.localeCompare(b.family)) as point (`${point.date}:${point.family}`)}
           <tr>
-            <th scope="row"><button class="table-date" aria-pressed={selectedDate === point.date} onclick={() => onselect(point.date)}>{dayLabel(point.date, timezone)}</button></th>
-            <td><span class="model-dot" style={`--model-color:${FAMILY_COLORS[point.family]}`}></span>{point.family}</td>
+            <th scope="row"
+              ><button
+                class="table-date"
+                aria-pressed={selectedDate === point.date}
+                onclick={() => onselect(point.date)}>{dayLabel(point.date, timezone)}</button
+              ></th
+            >
+            <td
+              ><span class="model-dot" style={`--model-color:${FAMILY_COLORS[point.family]}`}
+              ></span>{point.family}</td
+            >
             <td>{point.median.toFixed(1)}</td>
             <td>{point.q1.toFixed(1)}–{point.q3.toFixed(1)}</td>
             <td>{point.count.toLocaleString()}</td>
