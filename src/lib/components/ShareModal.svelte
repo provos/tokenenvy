@@ -9,16 +9,23 @@
   import {
     buildShareCardData,
     DEFAULT_SHARE_PRODUCT_URL,
+    getShareActivityLine,
     getShareCaption,
+    getShareImageFilename,
+    getShareModelLine,
     getShareMoodLine,
     getShareRefusalLine,
     getShareSentimentTheme,
     getShareTagline,
+    getShareTextReceipt,
     normalizeHistogram,
     normalizeShareSentiment,
     safeShareProductLink,
     sentimentAfterCardChange,
     SHARE_INSTALL_CTA,
+    SHARE_METRIC_CONTEXT,
+    SHARE_METRIC_UNIT,
+    SHARE_SENTIMENTS,
     suggestedShareSentiment,
     type ShareCardData,
     type SharePlatform,
@@ -27,6 +34,11 @@
     type ShareRefusalCounts,
     type ShareTone,
   } from './share';
+  import {
+    DAILY_SHARE_CARD_LAYOUT,
+    fitTextLines,
+    SHARE_CARD_LAYOUT_STYLE,
+  } from './share-layout';
 
   interface Props {
     open: boolean;
@@ -36,6 +48,19 @@
     refreshing: boolean;
     onclose: () => void;
   }
+
+  interface CardSnapshot {
+    card: ShareCardData;
+    tagline: string;
+    moodLine: string;
+    refusalLine: string;
+    sentiment: ShareSentiment;
+    theme: ShareSentimentTheme;
+    tone: ShareTone;
+  }
+
+  const SANS_FONT = 'Inter, ui-sans-serif, system-ui, sans-serif';
+  const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 
   let { open, detail, refusals, isToday, refreshing, onclose }: Props = $props();
   let tone = $state<ShareTone>('friendly');
@@ -72,10 +97,21 @@
   let moodLine = $derived(getShareMoodLine(card));
   let refusalLine = $derived(getShareRefusalLine(card));
   let previewLabel = $derived(
-    `Token Envy share card for ${dayLabel(card.date)}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${sentimentTheme.accessibleLabel} mood. ${tagline}. ${Math.round(card.median)} effective output tokens per second. ${moodLine}. ${refusalLine}. ${SHARE_INSTALL_CTA}.`,
+    [
+      `Token Envy share card for ${dayLabel(card.date)}`,
+      SECURITY_BLUEPRINTS_CARD_LINE,
+      `${sentimentTheme.accessibleLabel} mood`,
+      tagline,
+      `${Math.round(card.median)} effective output tokens per second`,
+      moodLine,
+      refusalLine || null,
+      SHARE_INSTALL_CTA,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('. ') + '.',
   );
   let previewStyle = $derived(
-    `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar}`,
+    `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar};${SHARE_CARD_LAYOUT_STYLE}`,
   );
   let canExport = $derived(!refreshing && preparedFile !== null);
 
@@ -118,12 +154,6 @@
   });
 
   $effect(() => {
-    const currentCard = card;
-    const currentTagline = tagline;
-    const currentMood = moodLine;
-    const currentRefusals = refusalLine;
-    const currentSentiment = sentiment;
-    const currentTheme = sentimentTheme;
     if (!open) {
       renderVersion += 1;
       preparedFile = null;
@@ -131,14 +161,15 @@
       preparing = false;
       return;
     }
-    void prepareCard(
-      currentCard,
-      currentTagline,
-      currentMood,
-      currentRefusals,
-      currentSentiment,
-      currentTheme,
-    );
+    void prepareCard({
+      card,
+      tagline,
+      moodLine,
+      refusalLine,
+      sentiment,
+      theme: sentimentTheme,
+      tone,
+    });
   });
 
   function trapFocus(event: KeyboardEvent) {
@@ -161,29 +192,17 @@
     status = null;
   }
 
-  async function prepareCard(
-    currentCard: ShareCardData,
-    currentTagline: string,
-    currentMood: string,
-    currentRefusals: string,
-    currentSentiment: ShareSentiment,
-    currentTheme: ShareSentimentTheme,
-  ) {
+  async function prepareCard(snapshot: CardSnapshot) {
     const version = ++renderVersion;
     preparedFile = null;
     nativeFileShareAvailable = false;
     preparing = true;
     try {
-      const blob = await renderCard(
-        currentCard,
-        currentTagline,
-        currentMood,
-        currentRefusals,
-        currentSentiment,
-        currentTheme,
-      );
+      const blob = await renderCard(snapshot);
       if (version !== renderVersion) return;
-      const file = new File([blob], `token-envy-${currentCard.date}.png`, { type: 'image/png' });
+      const file = new File([blob], getShareImageFilename(snapshot.card.date, snapshot.tone, snapshot.sentiment), {
+        type: 'image/png',
+      });
       preparedFile = file;
       nativeFileShareAvailable =
         typeof navigator.share === 'function' &&
@@ -196,120 +215,144 @@
     }
   }
 
-  function renderCard(
-    currentCard: ShareCardData,
-    currentTagline: string,
-    currentMood: string,
-    currentRefusals: string,
-    currentSentiment: ShareSentiment,
-    currentTheme: ShareSentimentTheme,
-  ): Promise<Blob> {
+  function renderCard(snapshot: CardSnapshot): Promise<Blob> {
+    const { card: currentCard, tagline: currentTagline, moodLine: currentMood, refusalLine: currentRefusals, sentiment: currentSentiment, theme: currentTheme } = snapshot;
+    const layout = DAILY_SHARE_CARD_LAYOUT;
+    const centerX = layout.width / 2;
     const canvas = document.createElement('canvas');
-    canvas.width = 1200;
-    canvas.height = 630;
+    canvas.width = layout.width;
+    canvas.height = layout.height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas is unavailable');
 
-    const background = context.createLinearGradient(0, 0, 1200, 630);
+    const background = context.createLinearGradient(0, 0, layout.width, layout.height);
     background.addColorStop(0, currentTheme.backgroundStart);
     background.addColorStop(0.58, currentTheme.backgroundMiddle);
     background.addColorStop(1, currentTheme.backgroundEnd);
     context.fillStyle = background;
-    context.fillRect(0, 0, 1200, 630);
+    context.fillRect(0, 0, layout.width, layout.height);
 
-    const glow = context.createRadialGradient(600, 335, 20, 600, 335, 440);
+    const glow = context.createRadialGradient(centerX, 335, 20, centerX, 335, 440);
     glow.addColorStop(0, currentTheme.glow);
     glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
     context.fillStyle = glow;
-    context.fillRect(0, 0, 1200, 630);
+    context.fillRect(0, 0, layout.width, layout.height);
 
     drawSentimentFace(context, currentSentiment, currentTheme);
 
     context.fillStyle = currentTheme.accent;
-    context.font = '700 25px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText('TOKEN ENVY', 70, 68);
+    context.font = `750 28px ${MONO_FONT}`;
+    context.fillText('TOKEN ENVY', layout.marginX, 61);
 
     context.fillStyle = currentTheme.mutedText;
-    context.font = '500 15px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText(SECURITY_BLUEPRINTS_CARD_LINE, 70, 94);
+    context.font = `600 16px ${MONO_FONT}`;
+    context.fillText(SECURITY_BLUEPRINTS_CARD_LINE, layout.marginX, 86);
 
     context.textAlign = 'right';
     context.fillStyle = currentTheme.mutedText;
-    context.font = '500 24px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(formatShareDate(currentCard.date), 1130, 68);
+    context.font = `500 24px ${SANS_FONT}`;
+    context.fillText(formatShareDate(currentCard.date), layout.width - layout.marginX, 61);
 
     context.textAlign = 'center';
     context.fillStyle = currentTheme.text;
-    context.font = '650 42px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(currentTagline, 600, 140);
+    drawFittedCenteredText(context, currentTagline, {
+      centerX,
+      top: layout.headline.top,
+      bottom: layout.headline.bottom,
+      maxWidth: 1020,
+      maxLines: 2,
+      maxFontSize: 40,
+      minFontSize: 27,
+      weight: 680,
+    });
 
     const bars = normalizeHistogram(currentCard.histogram, currentCard.median);
-    const chartX = 88;
-    const chartY = 192;
-    const chartWidth = 1024;
-    const chartHeight = 220;
+    const chartX = layout.visualMarginX;
+    const chartY = layout.visual.top;
+    const chartWidth = layout.width - layout.visualMarginX * 2;
+    const chartHeight = layout.visual.bottom - layout.visual.top;
     const gap = bars.length > 24 ? 3 : 6;
     const barWidth = bars.length > 0 ? (chartWidth - gap * (bars.length - 1)) / bars.length : 0;
     for (const [index, bar] of bars.entries()) {
       const height = Math.max(8, chartHeight * bar.height);
-      context.fillStyle = bar.containsMedian
-        ? currentTheme.medianBar
-        : currentTheme.bar;
-      context.fillRect(
-        chartX + index * (barWidth + gap),
-        chartY + chartHeight - height,
-        barWidth,
-        height,
-      );
+      const x = chartX + index * (barWidth + gap);
+      const y = chartY + chartHeight - height;
+      context.fillStyle = bar.containsMedian ? currentTheme.medianBar : currentTheme.bar;
+      context.fillRect(x, y, barWidth, height);
+      if (!bar.containsMedian) {
+        context.globalAlpha = 0.08;
+        context.fillStyle = currentTheme.secondary;
+        context.fillRect(x, y, barWidth, height);
+        context.globalAlpha = 1;
+      }
     }
 
-    context.lineWidth = 14;
-    context.strokeStyle = currentTheme.outline;
-    context.fillStyle = currentTheme.text;
-    context.font = '750 142px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.strokeText(`${Math.round(currentCard.median)}`, 600, 350);
-    context.fillText(`${Math.round(currentCard.median)}`, 600, 350);
+    drawMetricLockup(context, centerX, currentCard.median, currentTheme);
     context.fillStyle = currentTheme.mutedText;
-    context.font = '650 27px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText('EFFECTIVE OUTPUT TOKENS / SECOND', 600, 392);
+    context.font = `650 21px ${SANS_FONT}`;
+    context.fillText(SHARE_METRIC_CONTEXT.toUpperCase(), centerX, 394);
 
     context.fillStyle = currentTheme.accent;
-    context.font = '650 26px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(currentMood, 600, 456);
+    drawFittedCenteredText(context, currentMood, {
+      centerX,
+      top: layout.comparison.top,
+      bottom: layout.comparison.bottom,
+      maxWidth: 1000,
+      maxLines: 1,
+      maxFontSize: 25,
+      minFontSize: 18,
+      weight: 650,
+    });
 
     context.fillStyle = currentTheme.mutedText;
-    context.font = '500 21px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(
-      `${currentCard.count.toLocaleString('en-US')} measured requests · ${currentCard.sessions.toLocaleString('en-US')} sessions`,
-      600,
-      494,
-    );
+    context.font = `500 20px ${SANS_FONT}`;
+    context.fillText(getShareActivityLine(currentCard), centerX, 482);
 
-    context.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    context.strokeStyle = 'rgba(255, 255, 255, 0.17)';
     context.lineWidth = 1;
     context.beginPath();
-    context.moveTo(70, 536);
-    context.lineTo(1130, 536);
+    context.moveTo(layout.marginX, layout.footer.top);
+    context.lineTo(layout.width - layout.marginX, layout.footer.top);
     context.stroke();
 
     context.textAlign = 'left';
     context.fillStyle = currentTheme.mutedText;
-    context.font = '500 20px Inter, ui-sans-serif, system-ui, sans-serif';
-    const leadingModels = currentCard.models
-      .slice(0, 3)
-      .map((model) => model.family)
-      .join(' · ');
-    context.fillText(leadingModels || 'All measured model families', 70, 582);
+    drawFittedText(context, getShareModelLine(currentCard), {
+      x: layout.marginX,
+      baseline: 553,
+      maxWidth: 440,
+      maxFontSize: 20,
+      minFontSize: 15,
+      weight: 500,
+    });
 
     context.textAlign = 'right';
     context.fillStyle = currentTheme.accent;
-    context.font = '650 20px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(SHARE_INSTALL_CTA, 1130, 582);
+    drawFittedText(context, SHARE_INSTALL_CTA, {
+      x: layout.width - layout.marginX,
+      baseline: 553,
+      maxWidth: 440,
+      maxFontSize: 20,
+      minFontSize: 16,
+      weight: 650,
+    });
 
-    context.textAlign = 'center';
-    context.fillStyle = currentTheme.accent;
-    context.font = '600 17px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(currentRefusals, 600, 610);
+    if (currentRefusals) {
+      context.textAlign = 'center';
+      context.fillStyle = currentTheme.accent;
+      drawFittedText(context, currentRefusals, { x: centerX, baseline: 590, maxWidth: 1040, maxFontSize: 17, minFontSize: 14, weight: 600 });
+    }
+
+    context.save();
+    context.strokeStyle = 'rgba(255, 255, 255, 0.24)';
+    context.lineWidth = 2;
+    context.strokeRect(
+      layout.inset,
+      layout.inset,
+      layout.width - layout.inset * 2,
+      layout.height - layout.inset * 2,
+    );
+    context.restore();
 
     return new Promise((resolve, reject) => {
       canvas.toBlob(
@@ -317,6 +360,125 @@
         'image/png',
       );
     });
+  }
+
+  interface FittedCanvasTextOptions {
+    centerX: number;
+    top: number;
+    bottom: number;
+    maxWidth: number;
+    maxLines: number;
+    maxFontSize: number;
+    minFontSize: number;
+    weight: number;
+  }
+
+  interface AnchoredCanvasTextOptions {
+    x: number;
+    baseline: number;
+    maxWidth: number;
+    maxFontSize: number;
+    minFontSize: number;
+    weight: number;
+  }
+
+  function canvasMeasurer(context: CanvasRenderingContext2D, weight: number) {
+    let currentFont = '';
+    return (fontSize: number, text: string): number => {
+      const font = `${weight} ${fontSize}px ${SANS_FONT}`;
+      if (font !== currentFont) {
+        context.font = font;
+        currentFont = font;
+      }
+      return context.measureText(text).width;
+    };
+  }
+
+  function fitCanvasText(
+    context: CanvasRenderingContext2D,
+    text: string,
+    options: {
+      weight: number;
+      maxWidth: number;
+      maxLines: number;
+      maxHeight?: number;
+      maxFontSize: number;
+      minFontSize: number;
+    },
+  ) {
+    const fitted = fitTextLines(text, {
+      maxWidth: options.maxWidth,
+      maxLines: options.maxLines,
+      maxHeight: options.maxHeight,
+      maxFontSize: options.maxFontSize,
+      minFontSize: options.minFontSize,
+      measure: canvasMeasurer(context, options.weight),
+    });
+    context.font = `${options.weight} ${fitted.fontSize}px ${SANS_FONT}`;
+    return fitted;
+  }
+
+  function drawFittedCenteredText(
+    context: CanvasRenderingContext2D,
+    text: string,
+    options: FittedCanvasTextOptions,
+  ) {
+    const fitted = fitCanvasText(context, text, {
+      weight: options.weight,
+      maxWidth: options.maxWidth,
+      maxLines: options.maxLines,
+      maxHeight: options.bottom - options.top,
+      maxFontSize: options.maxFontSize,
+      minFontSize: options.minFontSize,
+    });
+    const totalHeight = fitted.lineHeight * fitted.lines.length;
+    const firstBaseline = options.top + (options.bottom - options.top - totalHeight) / 2 + fitted.fontSize;
+    fitted.lines.forEach((line, index) => {
+      context.fillText(line, options.centerX, firstBaseline + index * fitted.lineHeight);
+    });
+  }
+
+  function drawFittedText(
+    context: CanvasRenderingContext2D,
+    text: string,
+    options: AnchoredCanvasTextOptions,
+  ) {
+    const fitted = fitCanvasText(context, text, {
+      weight: options.weight,
+      maxWidth: options.maxWidth,
+      maxLines: 1,
+      maxFontSize: options.maxFontSize,
+      minFontSize: options.minFontSize,
+    });
+    context.fillText(fitted.lines[0], options.x, options.baseline);
+  }
+
+  function drawMetricLockup(
+    context: CanvasRenderingContext2D,
+    centerX: number,
+    median: number,
+    currentTheme: ShareSentimentTheme,
+  ) {
+    const value = `${Math.round(median)}`;
+    const unit = SHARE_METRIC_UNIT;
+    context.font = `760 132px ${SANS_FONT}`;
+    const valueWidth = context.measureText(value).width;
+    context.font = `720 43px ${MONO_FONT}`;
+    const unitWidth = context.measureText(unit).width;
+    const gap = 18;
+    const startX = centerX - (valueWidth + gap + unitWidth) / 2;
+
+    context.textAlign = 'left';
+    context.lineWidth = 14;
+    context.strokeStyle = currentTheme.outline;
+    context.fillStyle = currentTheme.text;
+    context.font = `760 132px ${SANS_FONT}`;
+    context.strokeText(value, startX, 352);
+    context.fillText(value, startX, 352);
+    context.fillStyle = currentTheme.accent;
+    context.font = `720 43px ${MONO_FONT}`;
+    context.fillText(unit, startX + valueWidth + gap, 345);
+    context.textAlign = 'center';
   }
 
   function drawStar(
@@ -354,7 +516,7 @@
     currentTheme: ShareSentimentTheme,
   ) {
     context.save();
-    context.globalAlpha = 0.13;
+    context.globalAlpha = 0.32;
     context.strokeStyle = currentTheme.accent;
     context.fillStyle = currentTheme.secondary;
     context.lineWidth = 14;
@@ -482,23 +644,40 @@
         : `${platform === 'x' ? 'X' : 'Bluesky'} opened with the caption. Attach your copied or downloaded PNG.`;
   }
 
-  async function copyCaption(platform: SharePlatform = 'linkedin') {
+  async function copyTextToClipboard(
+    text: string,
+    successStatus: string,
+    failureStatus: string,
+  ) {
     status = null;
     try {
-      const write = navigator.clipboard.writeText(
-        getShareCaption(
-          tone,
-          sentiment,
-          card,
-          platform,
-          platform === 'bluesky' ? (productLink?.href ?? null) : null,
-        ),
-      );
-      await write;
-      status = 'Caption copied.';
+      await navigator.clipboard.writeText(text);
+      status = successStatus;
     } catch {
-      status = 'Caption copy was blocked. Try again after granting clipboard access.';
+      status = failureStatus;
     }
+  }
+
+  async function copyCaption(platform: SharePlatform = 'linkedin') {
+    await copyTextToClipboard(
+      getShareCaption(
+        tone,
+        sentiment,
+        card,
+        platform,
+        platform === 'bluesky' ? (productLink?.href ?? null) : null,
+      ),
+      'Caption copied.',
+      'Caption copy was blocked. Try again after granting clipboard access.',
+    );
+  }
+
+  async function copyTextReceipt() {
+    await copyTextToClipboard(
+      getShareTextReceipt(tone, sentiment, card, productLink?.href ?? null),
+      'Text receipt copied.',
+      'Text copy was blocked. Try again after granting clipboard access.',
+    );
   }
 
   function formatShareDate(value: string) {
@@ -568,11 +747,11 @@
             oninput={(event) => setSentiment(Number(event.currentTarget.value))}
           />
           <div class="sentiment-labels" aria-hidden="true">
-            <span>Negative</span><span>Neutral</span><span>Positive</span>
+            {#each SHARE_SENTIMENTS as value}<span>{getShareSentimentTheme(value).label}</span>{/each}
           </div>
           <p id="sentiment-description">
-            Starts from your adjusted comparable-day result. Move it anywhere; it changes the attitude,
-            expression, and palette—not your stats.
+            Starts from your adjusted comparable-day result. Move it anywhere. It changes the attitude,
+            expression, and palette while your stats stay fixed.
           </p>
         </div>
       </div>
@@ -614,17 +793,23 @@
         </div>
         <div class="share-preview-center">
           <HistogramBackdrop bins={card.histogram} median={card.median} />
-          <p>{tagline}</p>
-          <strong>{Math.round(card.median)}</strong>
-          <span>effective output tokens / second</span>
-          <em>{moodLine}</em>
+          <p class="share-preview-headline">{tagline}</p>
+          <div class="share-metric-lockup">
+            <strong>{Math.round(card.median)}</strong>
+            <span>{SHARE_METRIC_UNIT}</span>
+          </div>
+          <span class="share-metric-context">{SHARE_METRIC_CONTEXT}</span>
+          <em class="share-preview-comparison">{moodLine}</em>
+          <span class="share-preview-activity">{getShareActivityLine(card)}</span>
         </div>
         <div class="share-preview-footer">
           <div class="share-preview-footer-row">
-            <span>{card.count.toLocaleString('en-US')} measured requests · {card.sessions.toLocaleString('en-US')} sessions</span>
+            <span>{getShareModelLine(card)}</span>
             <strong>{SHARE_INSTALL_CTA}</strong>
           </div>
-          <span class="share-preview-refusals">{refusalLine}</span>
+          {#if refusalLine}
+            <span class="share-preview-refusals">{refusalLine}</span>
+          {/if}
         </div>
       </div>
 
@@ -639,6 +824,9 @@
         {/if}
         <button class="secondary-button" type="button" onclick={downloadImage} disabled={!canExport}>
           {preparing ? 'Preparing PNG…' : 'Download PNG'}
+        </button>
+        <button class="secondary-button" type="button" onclick={copyTextReceipt} disabled={refreshing}>
+          Copy text receipt
         </button>
       </div>
 

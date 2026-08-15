@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalizeModelFamily } from './model';
 
 export interface ParsedEvent {
   eventId: string;
@@ -6,8 +7,7 @@ export interface ParsedEvent {
   requestId: string | null;
   sessionId: string;
   timestampMs: number | null;
-  type: string;
-  subtype: string | null;
+  type: 'assistant' | 'other';
   model: string | null;
   outputTokens: number;
   inputTokens: number;
@@ -46,7 +46,7 @@ export function parseTranscriptEvent(
   const requestId = typeof raw.requestId === 'string' && raw.requestId ? raw.requestId : null;
   const sessionId = typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : null;
   const timestamp = typeof raw.timestamp === 'string' ? Date.parse(raw.timestamp) : Number.NaN;
-  const type = typeof raw.type === 'string' ? raw.type : 'unknown';
+  const type = raw.type === 'assistant' ? 'assistant' : 'other';
   const subtype = typeof raw.subtype === 'string' ? raw.subtype : null;
   const message = raw.message && typeof raw.message === 'object' ? (raw.message as Record<string, unknown>) : {};
   const usage =
@@ -67,8 +67,7 @@ export function parseTranscriptEvent(
     sessionId: digest(`session:${sessionId ?? sourceId}`),
     timestampMs: Number.isFinite(timestamp) ? timestamp : null,
     type,
-    subtype,
-    model: typeof message.model === 'string' ? message.model.slice(0, 100) : null,
+    model: typeof message.model === 'string' ? normalizeModelFamily(message.model) : null,
     outputTokens: safeCount(usage.output_tokens),
     inputTokens: safeCount(usage.input_tokens),
     cacheReadTokens: safeCount(usage.cache_read_input_tokens),

@@ -5,13 +5,16 @@ import {
   buildShareCardData,
   DEFAULT_SHARE_PRODUCT_URL,
   getShareCaption,
+  getShareImageFilename,
   getShareMoodLine,
   getShareRefusalLine,
   getShareSentimentTheme,
   getShareTagline,
+  getShareTextReceipt,
   normalizeHistogram,
   safeShareProductLink,
   sentimentAfterCardChange,
+  SHARE_SENTIMENTS,
   suggestedShareSentiment,
 } from '../../src/lib/components/share';
 
@@ -140,10 +143,27 @@ describe('privacy-safe share-card data', () => {
     expect(card.histogram).toHaveLength(40);
     expect(JSON.stringify(card)).not.toContain(privateMarker);
     expect(suggestedShareSentiment(card)).toBe(1);
-    expect(getShareTagline('spicy', 2, card)).toBe('Anthropic loves me today');
-    expect(getShareMoodLine(card)).toContain('88th percentile');
+    const spicyTaglines = (isToday: boolean) =>
+      SHARE_SENTIMENTS.map((sentiment) =>
+        getShareTagline('spicy', sentiment, { ...card, isToday })
+      );
+    expect(spicyTaglines(true)).toEqual([
+      'Anthropic hates me today',
+      'Anthropic is testing me today',
+      'Anthropic and I are on speaking terms',
+      'Anthropic likes me today',
+      'Anthropic loves me today'
+    ]);
+    expect(spicyTaglines(false)).toEqual([
+      'Anthropic hated me that day',
+      'Anthropic was testing me that day',
+      'Anthropic and I were on speaking terms',
+      'Anthropic liked me that day',
+      'Anthropic loved me that day'
+    ]);
+    expect(getShareMoodLine(card)).toBe('Faster than 88% of my comparable days');
     expect(getShareRefusalLine(card)).toBe(
-      'Refusals (explicit lower bound): 3 · 1 recovered · 1 user-visible · 1 unresolved'
+      '3 refusals · 1 recovered · 1 user-visible · 1 unresolved'
     );
     expect(normalizeHistogram(card.histogram, card.median).some((bar) => bar.containsMedian)).toBe(true);
   });
@@ -225,16 +245,26 @@ describe('privacy-safe share-card data', () => {
     expect(getShareCaption('friendly', 0, card, 'bluesky', 'https://tokenenvy.example/')).toContain(
       'https://tokenenvy.example/'
     );
+    expect(getShareCaption('friendly', 0, card, 'bluesky', null)).toContain(
+      'How does your Claude Code speed compare?'
+    );
     expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
       'Built by Security Blueprints, LLC: securityblueprints.io'
+    );
+    expect(getShareCaption('friendly', 0, card, 'x', null)).toContain(
+      'Measured locally. Prompts stay private.'
     );
     expect(getShareCaption('friendly', 0, card, 'linkedin', 'https://tokenenvy.example/')).not.toContain(
       'https://tokenenvy.example/'
     );
+    expect(getShareCaption('friendly', 0, card, 'linkedin', null)).toContain(
+      '\n\nMy Token Envy receipt:'
+    );
     expect(getShareRefusalLine(card)).toBe('Refusals: explicit signals unavailable');
+    expect(getShareMoodLine(card)).toBe('Building my personal baseline');
   });
 
-  it('shows a recorded zero rather than implying that classifier coverage is complete', () => {
+  it('omits a recorded zero refusal line from the compact card', () => {
     const card = buildShareCardData({
       date: '2026-08-14',
       median: 50,
@@ -255,6 +285,49 @@ describe('privacy-safe share-card data', () => {
       histogram: []
     });
 
-    expect(getShareRefusalLine(card)).toBe('Refusals (explicit lower bound): 0');
+    expect(getShareRefusalLine(card)).toBe('');
+    expect(getShareTextReceipt('friendly', 0, card)).not.toContain('refusal');
+  });
+
+  it('builds safe variant filenames and a privacy-safe text receipt', () => {
+    const card = buildShareCardData({
+      date: '2026-08-14',
+      median: 70,
+      count: 30,
+      sessions: 6,
+      outputTokens: 2_400,
+      isToday: true,
+      speedIndex: {
+        value: 112,
+        ciLow: 104,
+        ciHigh: 120,
+        percentile: 88,
+        eligible: true,
+        reason: null
+      },
+      refusals: { recorded: true, attempted: 3, recovered: 1, userVisible: 1 },
+      models: [],
+      histogram: []
+    });
+
+    expect(getShareImageFilename(card.date, 'friendly', 1)).toBe(
+      'token-envy-2026-08-14-friendly-good.png'
+    );
+    expect(getShareImageFilename('../private/project', 'spicy', -20)).toBe(
+      'token-envy-private-project-spicy-brutal.png'
+    );
+
+    const receipt = getShareTextReceipt(
+      'friendly',
+      1,
+      card,
+      'https://www.npmjs.com/package/tokenenvy'
+    );
+    expect(receipt).toContain('Token Envy daily receipt\n2026-08-14');
+    expect(receipt).toContain('3 refusals · 1 recovered · 1 user-visible · 1 unresolved');
+    expect(receipt).toContain('Refusals reflect explicit transcript signals and remain a lower bound.');
+    expect(receipt).toContain('Measured locally. Prompts stay private.');
+    expect(receipt).toContain('Run it yourself · npx tokenenvy');
+    expect(receipt).toContain('Built by Security Blueprints, LLC: securityblueprints.io');
   });
 });

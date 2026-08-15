@@ -321,11 +321,24 @@ describe('incremental scanner', () => {
           timestamp: '2026-08-14T12:00:03.000Z',
           apiRefusalCategory: 'PRIVATE_REFUSAL_CATEGORY',
           apiRefusalExplanation: 'PRIVATE_REFUSAL_EXPLANATION'
+        }) +
+        line({
+          type: 'PRIVATE_TYPE_CANARY',
+          subtype: 'PRIVATE_SUBTYPE_CANARY',
+          uuid: 'RAW-METADATA-UUID',
+          sessionId: 'session-a',
+          timestamp: '2026-08-14T12:00:04.000Z',
+          message: { model: 'PRIVATE_MODEL_CANARY' }
         })
     );
     const database = new Database({ path: dbPath, hmacKey: 'test-key' });
     const scanner = new Scanner({ roots: [logs], database });
     await scanner.scanAll();
+    expect(
+      database.db
+        .prepare('SELECT type, subtype, model FROM events WHERE timestamp_ms = ?')
+        .get(Date.parse('2026-08-14T12:00:04.000Z'))
+    ).toEqual({ type: 'other', subtype: null, model: 'other' });
     database.close();
     const bytes = (await readFile(dbPath)).toString('utf8');
     expect(bytes).not.toContain('PRIVATE_PROMPT');
@@ -334,6 +347,10 @@ describe('incremental scanner', () => {
     expect(bytes).not.toContain('RAW-USER-UUID');
     expect(bytes).not.toContain('PRIVATE_REFUSAL_CATEGORY');
     expect(bytes).not.toContain('PRIVATE_REFUSAL_EXPLANATION');
+    expect(bytes).not.toContain('PRIVATE_TYPE_CANARY');
+    expect(bytes).not.toContain('PRIVATE_SUBTYPE_CANARY');
+    expect(bytes).not.toContain('PRIVATE_MODEL_CANARY');
+    expect(bytes).not.toContain('RAW-METADATA-UUID');
   });
 
   it('does not run orphan collection for newly discovered files', async () => {
