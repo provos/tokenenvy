@@ -359,12 +359,12 @@ describe('incremental scanner', () => {
   it('deduplicates copied history and retracts only after the last occurrence disappears', async () => {
     const { directory, database, scanner } = await setup();
     const payload =
-      line(user('u1', '2026-08-14T12:00:00.000Z')) +
+      line(user('u1', '2099-08-14T12:00:00.000Z')) +
       line(
         assistant({
           uuid: 'a1',
           parentUuid: 'u1',
-          timestamp: '2026-08-14T12:00:02.000Z',
+          timestamp: '2099-08-14T12:00:02.000Z',
           output: 20,
         }),
       );
@@ -391,12 +391,12 @@ describe('incremental scanner', () => {
     const file = join(directory, 'replace.jsonl');
     await writeFile(
       file,
-      line(user('u1', '2026-08-14T12:00:00.000Z')) +
+      line(user('u1', '2099-08-14T12:00:00.000Z')) +
         line(
           assistant({
             uuid: 'a1',
             parentUuid: 'u1',
-            timestamp: '2026-08-14T12:00:02.000Z',
+            timestamp: '2099-08-14T12:00:02.000Z',
             output: 20,
           }),
         ),
@@ -405,7 +405,7 @@ describe('incremental scanner', () => {
     expect(database.getRequests()).toHaveLength(1);
 
     await truncate(file, 0);
-    await writeFile(file, `${line(user('u2', '2026-08-14T13:00:00.000Z'))}{not-json}\n`);
+    await writeFile(file, `${line(user('u2', '2099-08-14T13:00:00.000Z'))}{not-json}\n`);
     await scanner.scanFile(file);
     expect(database.getRequests()).toHaveLength(0);
     expect(database.getDataQuality()).toMatchObject({ uniqueEvents: 1, invalidRows: 1 });
@@ -689,12 +689,12 @@ describe('incremental scanner', () => {
   it('batches orphan collection when multiple sources disappear together', async () => {
     const { directory, database, scanner } = await setup();
     const payload =
-      line(user('u1', '2026-08-14T12:00:00.000Z')) +
+      line(user('u1', '2099-08-14T12:00:00.000Z')) +
       line(
         assistant({
           uuid: 'a1',
           parentUuid: 'u1',
-          timestamp: '2026-08-14T12:00:02.000Z',
+          timestamp: '2099-08-14T12:00:02.000Z',
           output: 20,
         }),
       );

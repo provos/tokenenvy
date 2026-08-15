@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dashboardRefreshDate,
   parseScanStatus,
   modelFamilyRailState,
   quotaWindowIsStale,
   rangeButtonState,
   scanRefreshTarget,
+  selectedAvailableModelFamilies,
   selectActiveDate,
 } from '../../src/routes/+page.svelte';
 
@@ -62,6 +64,17 @@ describe('dashboard event parsing', () => {
     expect(selectActiveDate(null, '2026-08-14', 0, [])).toBeNull();
   });
 
+  it('preserves an explicit selection through transient ordinary refresh gaps', () => {
+    const selected = '2026-08-13';
+    expect(dashboardRefreshDate(selected, '2026-08-14', 4, ['2026-08-14'], false)).toBe(selected);
+    expect(
+      dashboardRefreshDate(selected, '2026-08-14', 4, ['2026-08-13', '2026-08-14'], false),
+    ).toBe(selected);
+    expect(dashboardRefreshDate(selected, '2026-08-14', 4, ['2026-08-14'], true)).toBe(
+      '2026-08-14',
+    );
+  });
+
   it('locks the range group while identifying only the requested range as busy', () => {
     expect(rangeButtonState(null, 28)).toEqual({ disabled: false, busy: false });
     expect(rangeButtonState(90, 28)).toEqual({ disabled: true, busy: false });
@@ -74,5 +87,14 @@ describe('dashboard event parsing', () => {
     expect(modelFamilyRailState(3, false)).toBe('models');
     expect(modelFamilyRailState(0, true)).toBe('loading');
     expect(modelFamilyRailState(0, false)).toBe('empty');
+  });
+
+  it('keeps longitudinal share filters tied to visible chart controls', () => {
+    expect(
+      selectedAvailableModelFamilies(
+        ['opus', 'sonnet', 'fable'],
+        ['sonnet', 'fable', 'haiku', 'other'],
+      ),
+    ).toEqual(['sonnet', 'fable']);
   });
 });

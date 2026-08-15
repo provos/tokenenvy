@@ -19,7 +19,8 @@ Token Envy is a [Security Blueprints](https://securityblueprints.io/) project by
 - Classifier refusals grouped as attempted, recovered, user-visible, or unknown
 - Weekly output, projected usage, and fastest and slowest measured days
 - Optional five-hour and seven-day rate-limit percentages
-- Privacy-safe daily and weekly share cards
+- Privacy-safe daily, weekly, and longitudinal share cards
+- Model-filtered refusal warning markers on the longitudinal chart
 
 A daily Speed Index needs 20 measured requests, seven prior measured days, 100
 baseline requests, and at least 70% comparable model and output-size coverage.
@@ -105,6 +106,10 @@ Anyone with access to your local account may read the derived index. Standard wo
 Choose a measured day, select **Share this day**, and export a PNG. Friendly and spicy voices control the tagline. The mood slider changes wording, expression, and palette while measurements stay fixed.
 
 Daily cards contain aggregate statistics, model mix, a histogram, explicit refusal lower bounds, project attribution, and the `npx tokenenvy` command. Weekly recaps add a mix-adjusted Speed Index, the fastest and slowest days, request and session activity, output tokens, and the leading model family.
+
+The longitudinal chart marks explicit classifier refusals with warning triangles. Filled coral markers identify user-visible outcomes. Amber outlines identify recovered or unresolved attempts. Gray dashed outlines identify signals whose model family is unavailable. Counts remain lower bounds because the logs expose explicit signals only.
+
+Choose **Share this trend** to create a Claude Weather card for the current range and visible model families. The card summarizes typical model and output-size adjusted variation around a robust trend. It also shows measured output tokens, coverage, refusal signals, Security Blueprints attribution, and `npx tokenenvy`. Friendly and spicy voices share the same frozen measurements. The five-stop mood slider changes only the words, weather art, and palette.
 
 Browser support controls native sharing. **Copy image** and **Download PNG** work as fallbacks, with composer shortcuts for X, Bluesky, and LinkedIn.
 

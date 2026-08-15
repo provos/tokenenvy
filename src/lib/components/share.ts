@@ -1,15 +1,24 @@
 import type { HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
+import { adjustSentimentForRefusals, type RefusalMoodAdjustment } from './refusal-mood';
 
 export type ShareTone = 'friendly' | 'spicy';
 export type ShareSentiment = -2 | -1 | 0 | 1 | 2;
 export type SharePlatform = 'generic' | 'x' | 'bluesky' | 'linkedin';
-export const SHARE_INSTALL_CTA = 'Run it yourself · npx tokenenvy';
+export const SHARE_INSTALL_CTA = 'Measure yours · npx tokenenvy';
 export const DEFAULT_SHARE_PRODUCT_URL = 'https://www.npmjs.com/package/tokenenvy';
 export const SHARE_BASELINE_LINE = 'Building a comparable baseline';
 export const SHARE_PRIVACY_NOTE = 'Measured locally. Prompts stay private.';
 export const SHARE_METRIC_UNIT = 'tok/s';
-export const SHARE_METRIC_CONTEXT = 'effective output · end-to-end wall time';
+export const SHARE_METRIC_CONTEXT = 'effective output · wait + think time included';
+export const SHARE_CHALLENGE = 'How did Claude Code treat you today?';
+export const SHARE_SOCIAL_PRIVACY = 'Local stats; prompts private.';
+export const SHARE_SOCIAL_BRAND = '#TokenEnvy · securityblueprints.io';
+
+const SOCIAL_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 
 export interface ShareSentimentTheme {
   value: ShareSentiment;
@@ -144,6 +153,7 @@ export interface ShareRefusalCounts {
   attempted: number;
   recovered: number;
   userVisible: number;
+  unknown?: number;
 }
 
 export interface ShareCardInput {
@@ -210,6 +220,11 @@ export function sentimentAfterCardChange(
 }
 
 export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
+  const base = suggestedPerformanceSentiment(data);
+  return adjustSentimentForRefusals(base, data.refusals).suggested;
+}
+
+export function suggestedPerformanceSentiment(data: ShareCardData): ShareSentiment {
   const { indexValue, indexCiLow, indexCiHigh, percentile } = data;
   if (!data.indexEligible || indexValue === null || percentile === null) return 0;
 
@@ -225,13 +240,42 @@ export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
   return 0;
 }
 
-export function getShareSentimentDescription(index: SpeedIndex): string {
-  const reason = index.reason ?? 'Your comparable baseline is still growing.';
-  const reasonSentence = /[.!?]$/.test(reason.trim()) ? reason.trim() : `${reason.trim()}.`;
-  const basis = index.eligible
-    ? 'Starts from your adjusted comparable-day result.'
-    : `Starts at Neutral. ${reasonSentence}`;
-  return `${basis} Move it anywhere. It changes the attitude, expression, and palette while your stats stay fixed.`;
+export function getRefusalMoodAdjustmentLine(adjustment: RefusalMoodAdjustment): string | null {
+  if (adjustment.reason === 'unavailable' || adjustment.reason === 'none-observed') return null;
+
+  const count =
+    adjustment.reason === 'user-visible' || adjustment.reason === 'repeated-user-visible'
+      ? adjustment.counts.userVisible
+      : adjustment.reason === 'unresolved'
+        ? adjustment.counts.unknown
+        : adjustment.counts.recovered;
+  const kind =
+    adjustment.reason === 'user-visible' || adjustment.reason === 'repeated-user-visible'
+      ? 'user-visible'
+      : adjustment.reason === 'unresolved'
+        ? 'unresolved'
+        : 'recovered';
+  const signals = `${count} ${kind} refusal ${count === 1 ? 'signal' : 'signals'}`;
+  const finalMood = getShareSentimentTheme(adjustment.suggested).label;
+  return adjustment.stepsLowered > 0
+    ? `${signals} moved it to ${finalMood}.`
+    : `${signals} kept it at ${finalMood}.`;
+}
+
+function endSentence(value: string): string {
+  const trimmed = value.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+export function getShareSentimentDescription(data: ShareCardData, reason?: string | null): string {
+  const base = suggestedPerformanceSentiment(data);
+  const adjustment = adjustSentimentForRefusals(base, data.refusals);
+  const baseMood = getShareSentimentTheme(base).label;
+  const basis = data.indexEligible
+    ? `Comparable days suggested ${baseMood}.`
+    : `Neutral for now. ${endSentence(reason ?? 'The comparable baseline needs more data.')}`;
+  const refusalAdjustment = getRefusalMoodAdjustmentLine(adjustment);
+  return `${basis}${refusalAdjustment ? ` ${refusalAdjustment}` : ''} Pick the mood; the numbers stay put.`;
 }
 
 function sanitizeHistogram(
@@ -280,6 +324,7 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
     attempted - recovered,
     nonNegativeInteger(input.refusals?.userVisible),
   );
+  const unknown = Math.max(0, attempted - recovered - userVisible);
   return {
     date: input.date,
     median: input.median,
@@ -298,6 +343,7 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
       attempted,
       recovered,
       userVisible,
+      unknown,
     },
     models: [...input.models]
       .sort((left, right) => right.share - left.share)
@@ -316,15 +362,17 @@ function nonNegativeInteger(value: number | undefined): number {
 }
 
 export function getShareActivityLine(data: ShareCardData): string {
-  return `${data.count.toLocaleString('en-US')} measured requests · ${data.sessions.toLocaleString('en-US')} sessions`;
+  const requests = `${data.count.toLocaleString('en-US')} measured ${data.count === 1 ? 'request' : 'requests'}`;
+  const sessions = `${data.sessions.toLocaleString('en-US')} ${data.sessions === 1 ? 'session' : 'sessions'}`;
+  return `${requests} · ${sessions}`;
 }
 
 export function getShareModelLine(data: ShareCardData): string {
   const families = data.models
     .slice(0, 3)
-    .map((model) => model.family)
+    .map((model) => model.family.charAt(0).toUpperCase() + model.family.slice(1))
     .join(' · ');
-  return families || 'All measured model families';
+  return families ? `Models: ${families}` : 'All measured models';
 }
 
 export function getShareMoodLine(data: ShareCardData): string {
@@ -338,8 +386,16 @@ export function getShareMoodLine(data: ShareCardData): string {
   return `Faster than ${percentile}% of my comparable days`;
 }
 
+function getCompactShareMoodLine(data: ShareCardData): string {
+  if (!data.indexEligible || data.percentile === null) return 'baseline still forming';
+  const percentile = Math.max(0, Math.min(100, Math.round(data.percentile)));
+  if (percentile === 100) return 'top of comparable days';
+  if (percentile === 0) return 'bottom of comparable days';
+  return `beat ${percentile}% of comparable days`;
+}
+
 export function getShareRefusalLine(data: ShareCardData): string {
-  if (!data.refusals.recorded) return 'Refusals: explicit signals unavailable';
+  if (!data.refusals.recorded) return 'Explicit refusal signals unavailable';
   const { attempted, recovered, userVisible } = data.refusals;
   if (attempted === 0) return '';
   const unknown = Math.max(0, attempted - recovered - userVisible);
@@ -348,8 +404,52 @@ export function getShareRefusalLine(data: ShareCardData): string {
     userVisible > 0 ? `${userVisible} user-visible` : null,
     unknown > 0 ? `${unknown} unresolved` : null,
   ].filter((value): value is string => value !== null);
-  const label = attempted === 1 ? 'refusal' : 'refusals';
-  return `${attempted} ${label}${outcomes.length > 0 ? ` · ${outcomes.join(' · ')}` : ''}`;
+  const label = attempted === 1 ? 'refusal signal' : 'refusal signals';
+  return `${attempted} ${label}${outcomes.length > 0 ? ` · ${outcomes.join(' · ')}` : ''} · explicit lower bound`;
+}
+
+function getCompactShareRefusalLine(data: ShareCardData): string {
+  if (!data.refusals.recorded) return 'Refusal signals unavailable.';
+  const { attempted, recovered, userVisible } = data.refusals;
+  if (attempted === 0) return '';
+  const unresolved = Math.max(0, attempted - recovered - userVisible);
+  const outcomes = [
+    recovered > 0 ? `${compactSocialNumber(recovered)} recovered` : null,
+    userVisible > 0 ? `${compactSocialNumber(userVisible)} visible` : null,
+    unresolved > 0 ? `${compactSocialNumber(unresolved)} unresolved` : null,
+  ].filter((outcome): outcome is string => outcome !== null);
+  const signals = attempted === 1 ? 'refusal signal' : 'refusal signals';
+  return `${compactSocialNumber(attempted)} ${signals}${outcomes.length ? `: ${outcomes.join('/')}` : ''}; lower bound.`;
+}
+
+export function compactSocialNumber(value: number): string {
+  return SOCIAL_NUMBER_FORMATTER.format(Math.max(0, Math.round(value)));
+}
+
+export function fitSocialCaption(
+  lead: string,
+  body: readonly string[],
+  productUrl: string | null,
+  maxLength: number,
+): string {
+  const bodySuffix = body.filter(Boolean).join(' ');
+  const linkedSuffix = `${bodySuffix}${productUrl ? ` ${productUrl}` : ''}`;
+  const full = `${lead}. ${linkedSuffix}`;
+  if (full.length <= maxLength) return full;
+
+  const withoutLink = `${lead}. ${bodySuffix}`;
+  if (withoutLink.length <= maxLength) return withoutLink;
+
+  const prefix = `${lead}.`;
+  if (prefix.length >= maxLength) return `${lead.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+
+  const suffixParts: string[] = [];
+  for (let index = body.length - 1; index >= 0; index -= 1) {
+    const candidate = [body[index], ...suffixParts].filter(Boolean).join(' ');
+    if (`${prefix} … ${candidate}`.length > maxLength) break;
+    suffixParts.unshift(body[index]);
+  }
+  return suffixParts.length > 0 ? `${prefix} … ${suffixParts.join(' ')}` : prefix;
 }
 
 export function getShareImageFilename(date: string, tone: ShareTone, sentiment: number): string {
@@ -372,21 +472,27 @@ export function getShareTagline(
 ): string {
   const when = data.isToday ? 'today' : 'that day';
   if (tone === 'friendly') {
-    if (sentiment === -2) return `Claude Code chose hard mode ${when}`;
-    if (sentiment === -1) return `Claude Code took the scenic route ${when}`;
-    if (sentiment === 0) return `Claude Code kept it steady ${when}`;
-    if (sentiment === 1) return `Claude Code found another gear ${when}`;
-    return `Claude Code ${data.isToday ? 'is' : 'was'} flying ${when}`;
+    if (sentiment === -2) return `Claude Code made me wait ${when}`;
+    if (sentiment === -1) return `Claude Code dragged its feet ${when}`;
+    if (sentiment === 0) return `Claude Code kept pace ${when}`;
+    if (sentiment === 1) return `Claude Code moved fast ${when}`;
+    return `Claude Code flew ${when}`;
   }
 
   if (sentiment === -2) return `Anthropic ${data.isToday ? 'hates' : 'hated'} me ${when}`;
-  if (sentiment === -1) return `Anthropic ${data.isToday ? 'is' : 'was'} testing me ${when}`;
+  if (sentiment === -1)
+    return data.isToday
+      ? 'Anthropic made me earn every token today'
+      : 'Anthropic made me earn every token that day';
   if (sentiment === 0) {
     return data.isToday
-      ? 'Anthropic and I are on speaking terms'
-      : 'Anthropic and I were on speaking terms';
+      ? 'Anthropic and I called it even today'
+      : 'Anthropic and I called it even that day';
   }
-  if (sentiment === 1) return `Anthropic ${data.isToday ? 'likes' : 'liked'} me ${when}`;
+  if (sentiment === 1)
+    return data.isToday
+      ? 'Anthropic was feeling generous today'
+      : 'Anthropic was feeling generous that day';
   return `Anthropic ${data.isToday ? 'loves' : 'loved'} me ${when}`;
 }
 
@@ -399,15 +505,37 @@ export function getShareCaption(
 ): string {
   const tagline = getShareTagline(tone, sentiment, data);
   const result = `${Math.round(data.median)} effective output ${SHARE_METRIC_UNIT}. ${getShareMoodLine(data)}.`;
-  const question = 'How does your Claude Code speed compare?';
+  const refusalLine = getShareRefusalLine(data);
+  const refusal = refusalLine ? ` ${refusalLine}.` : '';
   const attribution = `#TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}`;
   const link =
     (platform === 'bluesky' || platform === 'generic') && productLink ? ` ${productLink}` : '';
 
-  if (platform === 'linkedin') {
-    return `${tagline}.\n\nMy Token Envy receipt: ${result}\n\n${question}\n\n${SHARE_PRIVACY_NOTE}\n${attribution}`;
+  if (platform === 'x' || platform === 'bluesky') {
+    const compactRefusal = getCompactShareRefusalLine(data);
+    const challenge = data.isToday
+      ? 'How did Claude treat you?'
+      : 'How did Claude treat you that day?';
+    return fitSocialCaption(
+      tagline,
+      [
+        `${compactSocialNumber(data.median)} ${SHARE_METRIC_UNIT} · ${getCompactShareMoodLine(data)}.`,
+        compactRefusal,
+        challenge,
+        SHARE_SOCIAL_PRIVACY,
+        SHARE_SOCIAL_BRAND,
+      ],
+      platform === 'bluesky' ? productLink : null,
+      platform === 'x' ? 250 : 300,
+    );
   }
-  return `${tagline}: ${result} ${question} ${SHARE_PRIVACY_NOTE} ${attribution}${link}`;
+
+  if (platform === 'linkedin') {
+    const challenge = data.isToday ? SHARE_CHALLENGE : 'How did Claude Code treat you that day?';
+    return `${tagline}.\n\nToken Envy receipt:\n${result}${refusal}\n\n${challenge}\n\n${SHARE_PRIVACY_NOTE}\n${attribution}`;
+  }
+  const challenge = data.isToday ? SHARE_CHALLENGE : 'How did Claude Code treat you that day?';
+  return `${tagline}: ${result}${refusal} ${challenge} ${SHARE_PRIVACY_NOTE} ${attribution}${link}`;
 }
 
 export function getShareTextReceipt(
@@ -425,9 +553,6 @@ export function getShareTextReceipt(
     getShareMoodLine(data),
     getShareActivityLine(data),
     refusalLine || null,
-    refusalLine && data.refusals.recorded
-      ? 'Refusals reflect explicit transcript signals and remain a lower bound.'
-      : null,
     SHARE_PRIVACY_NOTE,
     SHARE_INSTALL_CTA,
     SECURITY_BLUEPRINTS_CAPTION,

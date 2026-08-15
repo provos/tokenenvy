@@ -124,7 +124,19 @@ describe('share modal client state', () => {
       await tick();
       expect(modalState(target)).toMatchObject({ metric: '20', busy: 'false' });
       expect(modalState(target).mood.getAttribute('aria-valuetext')).toBe('Very negative');
-      expect(target.textContent).toContain('3 refusals · 1 recovered · 1 user-visible');
+      expect(target.textContent).toContain(
+        '3 refusal signals · 1 recovered · 1 user-visible · 1 unresolved',
+      );
+      expect(target.textContent).toContain('explicit lower bound');
+      const refreshedMood = modalState(target).mood;
+      refreshedMood.value = '2';
+      flushSync(() => refreshedMood.dispatchEvent(new Event('input', { bubbles: true })));
+      await tick();
+      expect(refreshedMood.getAttribute('aria-valuetext')).toBe('Very positive');
+      expect(
+        target.querySelector('.share-preview-refusals')?.classList.contains('user-visible'),
+      ).toBe(true);
+      expect(target.textContent).toContain('explicit lower bound');
     } finally {
       renderSpy.mockRestore();
       unmount(component);

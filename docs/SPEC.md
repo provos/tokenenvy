@@ -20,9 +20,18 @@ directory, and makes no automatic network requests.
 - Performance taglines require at least 20 requests, seven baseline days, 100
   baseline requests, and sufficient stratum coverage. Five sessions are
   required only for clustered confidence intervals and automatic extreme moods.
-  Friendly is the default; spicy is an explicit choice for the current share. A five-stop valence slider defaults from the eligible mix-adjusted comparable-day result (neutral while a comparable baseline is unavailable) and lets the user vary editorial sentiment from strongly negative to strongly positive. The automatic extremes require a percentile at or beyond 10/90, an index at or beyond 90/110, and a confidence interval wholly below/above 100. Moderate suggestions require the 45th/55th percentile and an index on the matching side of 100. It changes the card's wording, vector expression, and palette, never its measurements, and resets when the dialog is reopened. The daily and weekly share dialogs snapshot all aggregate inputs when they open and hold them through background refreshes. Closing and reopening takes a fresh snapshot.
+  Friendly is the default; spicy is an explicit choice for the current share. A five-stop valence slider defaults from the eligible mix-adjusted comparable-day result (neutral while a comparable baseline is unavailable) and lets the user vary editorial sentiment from strongly negative to strongly positive. The automatic extremes require a percentile at or beyond 10/90, an index at or beyond 90/110, and a confidence interval wholly below/above 100. Moderate suggestions require the 45th/55th percentile and an index on the matching side of 100. It changes the card's wording, vector expression, and palette, never its measurements, and resets when the dialog is reopened. The daily, weekly, and longitudinal share dialogs snapshot all aggregate inputs when they open and hold them through background refreshes. Closing and reopening takes a fresh snapshot.
+- The longitudinal share card uses the committed chart range and visible model
+  families. The server adjusts daily observations within model family and
+  output-size strata, fits a Theil-Sen trend over calendar dates, and reports
+  symmetric typical multiplicative variation around that trend. Automatic
+  longitudinal moods use Rough above 30 percent, Neutral from 20 through 30
+  percent, and Good below 20 percent when the quality gate passes. Brutal and
+  Glorious remain manual choices.
 - Classifier reporting uses explicit metadata only and distinguishes attempted,
-  recovered-by-fallback, user-visible, and unknown outcomes.
+  recovered-by-fallback, user-visible, and unknown outcomes. The longitudinal
+  chart and card show selected-model outcomes as warning triangles. Unattributed
+  model signals remain separate. All refusal counts are labeled as lower bounds.
 - Transcript-only weekly numbers are labelled observed usage, never quota.
   Exact five-hour and seven-day percentages are available only through an
   explicitly configured local status-line companion.
@@ -44,10 +53,12 @@ directory, and makes no automatic network requests.
   after 24 hours. That archive survives later upstream transcript cleanup and
   `--rescan`; live transcript-derived rows remain retractable.
 - No prompts, response text, tool inputs or outputs, commands, project names,
-  raw paths, refusal categories or explanations, or raw identifiers are persisted or returned.
+  raw paths, raw refusal text or explanations, or raw identifiers are persisted or returned. Only
+  derived aggregate refusal outcome classes such as recovered, user-visible, and unknown are stored
+  or returned.
 - Share cards are built from an allowlisted aggregate object and contain no
-  local identifiers. They may show the selected day's aggregate explicit
-  refusal counts, labeled as a lower bound, but never refusal categories or
+  local identifiers. They may show the selected day or range's aggregate explicit
+  refusal outcome counts, labeled as a lower bound, but never raw refusal text or
   explanations. Every card includes the static `npx tokenenvy` install command;
   user-triggered social navigation links to the public npm package page unless
   a valid public HTTPS product URL is configured.

@@ -1,6 +1,6 @@
 {
   "name": "tokenenvy",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Token Envy is a private, local-first performance dashboard for Claude Code session logs.",
   "type": "module",
   "license": "Apache-2.0",

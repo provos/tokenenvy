@@ -2,11 +2,15 @@ import type {
   DailyPoint,
   DayDetailResponse,
   HistogramBin,
+  LongitudinalSummary,
   ModelFamily,
   ModelSummary,
   OverviewResponse,
+  PeriodRefusalSummary,
   QuotaResponse,
+  RefusalCounts,
   RefusalSummary,
+  RefusalTimeline,
   SeriesResponse,
   SpeedIndex,
 } from '../types';
@@ -15,6 +19,7 @@ import { Database, type DataQualitySummary, type StoredRequest } from '../server
 import { quantile, summarize, type MetricSample } from './statistics';
 import {
   addCalendarDays,
+  daysBetween,
   isoWeekday,
   localDate,
   validateTimezone,
@@ -91,6 +96,45 @@ function weeklyModelMix(
 
 function median(values: readonly number[]): number | null {
   return values.length > 0 ? quantile(values, 0.5) : null;
+}
+
+function emptyRefusalCounts(): RefusalCounts {
+  return { attempted: 0, recovered: 0, userVisible: 0, unknown: 0 };
+}
+
+function addRefusalOutcome(
+  counts: RefusalCounts,
+  outcome: 'recovered' | 'user_visible' | 'unknown',
+): void {
+  counts.attempted += 1;
+  if (outcome === 'recovered') counts.recovered += 1;
+  else if (outcome === 'user_visible') counts.userVisible += 1;
+  else counts.unknown += 1;
+}
+
+function addRefusalCounts(target: RefusalCounts, source: RefusalCounts): void {
+  target.attempted += source.attempted;
+  target.recovered += source.recovered;
+  target.userVisible += source.userVisible;
+  target.unknown += source.unknown;
+}
+
+function theilSen(points: readonly { x: number; y: number }[]): {
+  slope: number;
+  intercept: number;
+} | null {
+  if (points.length < 2) return null;
+  const slopes: number[] = [];
+  for (let left = 0; left < points.length - 1; left += 1) {
+    for (let right = left + 1; right < points.length; right += 1) {
+      const elapsed = points[right].x - points[left].x;
+      if (elapsed > 0) slopes.push((points[right].y - points[left].y) / elapsed);
+    }
+  }
+  const slope = median(slopes);
+  if (slope === null) return null;
+  const intercept = median(points.map((point) => point.y - slope * point.x));
+  return intercept === null ? null : { slope, intercept };
 }
 
 function speedIndex(
@@ -267,6 +311,60 @@ export class Analytics {
     return snapshot;
   }
 
+  private refusalTimeline(timezone: string, start: string, end: string): RefusalTimeline {
+    const refusals = this.database.getRefusals();
+    const requestFamilies = new Map(
+      this.requests().map((request) => [request.requestId, request.family] as const),
+    );
+    const dates = new Map<
+      string,
+      { families: Map<ModelFamily, RefusalCounts>; unattributed: RefusalCounts }
+    >();
+    for (const refusal of refusals) {
+      const date = localDate(refusal.timestampMs, timezone);
+      if (date < start || date > end) continue;
+      const summary = dates.get(date) ?? {
+        families: new Map<ModelFamily, RefusalCounts>(),
+        unattributed: emptyRefusalCounts(),
+      };
+      const family = refusal.requestId ? requestFamilies.get(refusal.requestId) : undefined;
+      if (family) {
+        const counts = summary.families.get(family) ?? emptyRefusalCounts();
+        addRefusalOutcome(counts, refusal.outcome);
+        summary.families.set(family, counts);
+      } else {
+        addRefusalOutcome(summary.unattributed, refusal.outcome);
+      }
+      dates.set(date, summary);
+    }
+    return {
+      recorded: refusals.length > 0,
+      days: [...dates.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, summary]) => ({
+          date,
+          families: MODEL_FAMILIES.flatMap((family) => {
+            const counts = summary.families.get(family);
+            return counts ? [{ family, ...counts }] : [];
+          }),
+          unattributed: summary.unattributed,
+        })),
+    };
+  }
+
+  private periodRefusals(timezone: string, start: string, end: string): PeriodRefusalSummary {
+    const timeline = this.refusalTimeline(timezone, start, end);
+    const total = emptyRefusalCounts();
+    const affectedDates = timeline.days.map((day) => {
+      const counts = emptyRefusalCounts();
+      for (const family of day.families) addRefusalCounts(counts, family);
+      addRefusalCounts(counts, day.unattributed);
+      addRefusalCounts(total, counts);
+      return { date: day.date, ...counts };
+    });
+    return { recorded: timeline.recorded, ...total, affectedDates };
+  }
+
   overview(timezone = 'UTC', now: Date = new Date()): OverviewResponse {
     validateTimezone(timezone);
     const today = localDate(now.getTime(), timezone);
@@ -287,6 +385,7 @@ export class Analytics {
     );
     const weekStart = addCalendarDays(today, 1 - isoWeekday(today));
     const weekEnd = addCalendarDays(weekStart, 7);
+    const weeklyRefusals = this.periodRefusals(timezone, weekStart, today);
     const usageByDate = new Map<string, number>();
     for (const request of all) {
       if (
@@ -379,6 +478,7 @@ export class Analytics {
           models: weeklyModelMix(weeklyRequests),
           fastestDay,
           slowestDay,
+          refusals: weeklyRefusals,
         },
       },
       refusals: this.refusals(timezone),
@@ -424,7 +524,163 @@ export class Analytics {
         });
       }
     }
-    return { timezone, days: boundedDays, points };
+    return {
+      timezone,
+      days: boundedDays,
+      points,
+      refusals: this.refusalTimeline(timezone, start, today),
+    };
+  }
+
+  longitudinal(
+    days: 28 | 90 | 365,
+    families: readonly ModelFamily[],
+    timezone = 'UTC',
+    now: Date = new Date(),
+  ): LongitudinalSummary {
+    validateTimezone(timezone);
+    if (![28, 90, 365].includes(days)) throw new TypeError('days must be 28, 90, or 365');
+    const selectedFamilies = MODEL_FAMILIES.filter((family) => families.includes(family));
+    if (selectedFamilies.length === 0)
+      throw new TypeError('At least one model family is required.');
+    const selectedFamilySet = new Set(selectedFamilies);
+    const throughDate = localDate(now.getTime(), timezone);
+    const startDate = addCalendarDays(throughDate, 1 - days);
+    const selected = this.dated(timezone).completed.filter(
+      (request) =>
+        request.date >= startDate &&
+        request.date <= throughDate &&
+        selectedFamilySet.has(request.family),
+    );
+    const measuredOutputTokens = selected.reduce(
+      (total, request) => total + request.outputTokens,
+      0,
+    );
+    const observedDays = new Set(selected.map((request) => request.date)).size;
+    const stratumKey = (request: StoredRequest): string => `${request.family}:${request.stratum}`;
+    const strata = new Map<string, DatedRequest[]>();
+    for (const request of selected) {
+      const key = stratumKey(request);
+      const group = strata.get(key) ?? [];
+      group.push(request);
+      strata.set(key, group);
+    }
+    const usable = [...strata.entries()].flatMap(([key, requests]) => {
+      if (requests.length < 30 || new Set(requests.map((request) => request.date)).size < 5)
+        return [];
+      const center = median(metrics(requests).map(({ value }) => value));
+      return center !== null && center > 0 ? [{ key, center, weight: requests.length }] : [];
+    });
+    const usableKeys = new Set(usable.map(({ key }) => key));
+    const comparableRequests = selected.filter((request) => usableKeys.has(stratumKey(request)));
+    const comparableRequestCoverage =
+      selected.length > 0 ? comparableRequests.length / selected.length : 0;
+    const totalWeight = usable.reduce((total, item) => total + item.weight, 0);
+    const byDate = new Map<string, DatedRequest[]>();
+    for (const request of selected) {
+      const group = byDate.get(request.date) ?? [];
+      group.push(request);
+      byDate.set(request.date, group);
+    }
+    const points = [...byDate.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .flatMap(([date, requests]) => {
+        if (requests.length < 20 || totalWeight === 0) return [];
+        const dayStrata = new Map<string, DatedRequest[]>();
+        for (const request of requests) {
+          const key = stratumKey(request);
+          const group = dayStrata.get(key) ?? [];
+          group.push(request);
+          dayStrata.set(key, group);
+        }
+        let availableWeight = 0;
+        let weightedLogRatio = 0;
+        for (const item of usable) {
+          const candidates = dayStrata.get(item.key) ?? [];
+          if (candidates.length < 2) continue;
+          const dayMedian = median(metrics(candidates).map(({ value }) => value));
+          if (dayMedian === null || dayMedian <= 0) continue;
+          availableWeight += item.weight;
+          weightedLogRatio += Math.log(dayMedian / item.center) * item.weight;
+        }
+        const coverage = availableWeight / totalWeight;
+        if (coverage < 0.7 || availableWeight === 0) return [];
+        return [
+          {
+            date,
+            index: Math.exp(weightedLogRatio / availableWeight) * 100,
+            requestCount: requests.length,
+            coverage,
+          },
+        ];
+      });
+    const qualifiedRequests = points.reduce((total, point) => total + point.requestCount, 0);
+    const elapsedSpan = points.length > 0 ? daysBetween(points[0].date, points.at(-1)!.date) : 0;
+    const calendarSpan = points.length > 0 ? elapsedSpan + 1 : 0;
+    let quality: LongitudinalSummary['quality'] = 'insufficient';
+    if (
+      points.length >= 20 &&
+      calendarSpan >= 28 &&
+      qualifiedRequests >= 400 &&
+      comparableRequestCoverage >= 0.8
+    ) {
+      quality = 'robust';
+    } else if (
+      points.length >= 7 &&
+      calendarSpan >= 14 &&
+      qualifiedRequests >= 100 &&
+      comparableRequestCoverage >= 0.7
+    ) {
+      quality = 'directional';
+    }
+    let variationPct: number | null = null;
+    let trendPct: number | null = null;
+    if (quality !== 'insufficient' && points.length >= 2) {
+      const firstDate = points[0].date;
+      const fitted = theilSen(
+        points.map((point) => ({
+          x: daysBetween(firstDate, point.date),
+          y: Math.log(point.index),
+        })),
+      );
+      if (fitted) {
+        const residuals = points.map((point) => {
+          const x = daysBetween(firstDate, point.date);
+          return Math.abs(Math.log(point.index) - (fitted.intercept + fitted.slope * x));
+        });
+        const typicalResidual = median(residuals);
+        variationPct = typicalResidual === null ? null : (Math.exp(typicalResidual) - 1) * 100;
+        trendPct = (Math.exp(fitted.slope * elapsedSpan) - 1) * 100;
+      }
+    }
+    const timeline = this.refusalTimeline(timezone, startDate, throughDate);
+    const refusalDays = timeline.days.flatMap((day) => {
+      const selectedCounts = emptyRefusalCounts();
+      for (const family of day.families) {
+        if (selectedFamilySet.has(family.family)) addRefusalCounts(selectedCounts, family);
+      }
+      return selectedCounts.attempted > 0 || day.unattributed.attempted > 0
+        ? [{ date: day.date, selected: selectedCounts, unattributed: day.unattributed }]
+        : [];
+    });
+    return {
+      timezone,
+      days,
+      startDate,
+      throughDate,
+      families: selectedFamilies,
+      observedDays,
+      measuredRequests: selected.length,
+      measuredOutputTokens,
+      qualifiedDays: points.length,
+      comparableRequestCoverage,
+      quality,
+      variationPct,
+      trendPct,
+      points,
+      refusalsRecorded: timeline.recorded,
+      refusals: refusalDays,
+    };
   }
 
   day(date: string, timezone = 'UTC'): DayDetailResponse | null {
