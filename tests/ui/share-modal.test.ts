@@ -47,7 +47,6 @@ describe('share-card customization', () => {
         detail,
         refusals,
         isToday,
-        refreshing: false,
         onclose: () => undefined,
       },
     });

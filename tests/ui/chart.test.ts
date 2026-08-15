@@ -225,6 +225,35 @@ describe('privacy-safe share-card data', () => {
     expect(sentimentFor(99, 55, 90, 108)).toBe(0);
   });
 
+  it('suggests moderate moods from an eligible point estimate without a confidence interval', () => {
+    const sentimentFor = (value: number, percentile: number) =>
+      suggestedShareSentiment(
+        buildShareCardData({
+          date: '2026-08-14',
+          median: 60,
+          count: 30,
+          sessions: 2,
+          outputTokens: 2_400,
+          isToday: true,
+          speedIndex: {
+            value,
+            ciLow: null,
+            ciHigh: null,
+            percentile,
+            eligible: true,
+            reason: null,
+          },
+          models: [],
+          histogram: [],
+        }),
+      );
+
+    expect(sentimentFor(90, 10)).toBe(-1);
+    expect(sentimentFor(99, 45)).toBe(-1);
+    expect(sentimentFor(101, 55)).toBe(1);
+    expect(sentimentFor(110, 90)).toBe(1);
+  });
+
   it('resets a suggested sentiment for a new day but preserves a same-day override', () => {
     expect(sentimentAfterCardChange('2026-08-14', '2026-08-14', -2, 1)).toBe(-2);
     expect(sentimentAfterCardChange('2026-08-14', '2026-08-15', -2, 1)).toBe(1);

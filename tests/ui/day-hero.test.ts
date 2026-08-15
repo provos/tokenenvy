@@ -55,4 +55,38 @@ describe('daily hero refresh', () => {
     expect(body).toContain('Updating in the background');
     expect(body).not.toContain('Loading this day');
   });
+
+  it.each([
+    ['At least 20 requests are required.', 'More measurements needed'],
+    ['At least seven baseline days are required.', 'Baseline warming up'],
+    ['At least 100 baseline requests are required.', 'Baseline warming up'],
+    [
+      'Not enough comparable model and output-size coverage.',
+      'No reliable like-for-like comparison',
+    ],
+  ])('explains an unavailable comparison without blaming every case on history', (reason, copy) => {
+    const { body } = render(DayHero, {
+      props: {
+        date: detail.date,
+        today: detail.date,
+        detail: {
+          ...detail,
+          speedIndex: {
+            value: null,
+            ciLow: null,
+            ciHigh: null,
+            percentile: null,
+            eligible: false,
+            reason,
+          },
+        },
+        loading: false,
+        error: null,
+        onretry: () => undefined,
+        onmore: () => undefined,
+      },
+    });
+
+    expect(body).toContain(copy);
+  });
 });

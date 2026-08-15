@@ -320,6 +320,48 @@ describe('analytics', () => {
     ).speedIndex;
     expect(index.eligible).toBe(true);
     expect(index.value).toBeCloseTo(100, 8);
+    expect(index.ciLow).not.toBeNull();
+    expect(index.ciHigh).not.toBeNull();
+    database.close();
+  });
+
+  it('keeps the point estimate eligible when fewer than five sessions prevent an interval', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'point-estimate-key' });
+    for (let index = 0; index < 100; index += 1) {
+      insertRequest(database, {
+        id: `baseline-${index}`,
+        sessionId: `baseline-session-${index % 8}`,
+        date: `2026-08-${String(1 + (index % 7)).padStart(2, '0')}`,
+        outputTokens: 32,
+        family: 'sonnet',
+        stratum: 0,
+        tokensPerSecond: 10,
+      });
+    }
+    for (let index = 0; index < 20; index += 1) {
+      insertRequest(database, {
+        id: `current-${index}`,
+        sessionId: 'one-long-session',
+        date: '2026-08-14',
+        outputTokens: 32,
+        family: 'sonnet',
+        stratum: 0,
+        tokensPerSecond: 20,
+      });
+    }
+
+    const index = new Analytics(database).overview(
+      'UTC',
+      new Date('2026-08-14T18:00:00Z'),
+    ).speedIndex;
+    expect(index).toMatchObject({
+      eligible: true,
+      value: 200,
+      ciLow: null,
+      ciHigh: null,
+      percentile: 100,
+      reason: null,
+    });
     database.close();
   });
 

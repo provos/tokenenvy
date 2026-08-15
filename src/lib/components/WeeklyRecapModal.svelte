@@ -1,6 +1,6 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { compactNumber } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
@@ -26,6 +26,11 @@
     onclose: () => void;
   }
 
+  interface WeeklyShareSnapshot {
+    recap: WeeklyRecapData;
+    outputTokens: number;
+  }
+
   let { open, recap, outputTokens, onclose }: Props = $props();
   let modal = $state<HTMLElement>();
   let preparedFile = $state<File | null>(null);
@@ -33,20 +38,39 @@
   let nativeFileShareAvailable = $state(false);
   let clipboardImageAvailable = $state(false);
   let status = $state<string | null>(null);
+  let previousOpen = false;
   let renderVersion = 0;
+
+  function captureInputs(): WeeklyShareSnapshot {
+    return {
+      recap: {
+        ...recap,
+        observedDates: [...recap.observedDates],
+        speedIndex: { ...recap.speedIndex },
+        models: recap.models.map((model) => ({ ...model })),
+        fastestDay: recap.fastestDay ? { ...recap.fastestDay } : null,
+        slowestDay: recap.slowestDay ? { ...recap.slowestDay } : null,
+      },
+      outputTokens,
+    };
+  }
+
+  let inputSnapshot = $state<WeeklyShareSnapshot>(captureInputs());
+  let snapshotRecap = $derived(inputSnapshot.recap);
+  let snapshotOutputTokens = $derived(inputSnapshot.outputTokens);
 
   let productLink = $derived(
     safeWeeklyRecapProductLink(env.PUBLIC_TOKENENVY_URL ?? WEEKLY_RECAP_PRODUCT_URL),
   );
-  let headline = $derived(weeklyRecapHeadline(recap));
-  let indexLine = $derived(weeklyRecapIndexLine(recap));
-  let period = $derived(weeklyRecapPeriod(recap));
-  let topModel = $derived(weeklyRecapTopModel(recap));
-  let observedWeekdays = $derived(weeklyRecapObservedWeekdays(recap));
-  let ready = $derived(weeklyRecapReady(recap));
-  let caption = $derived(weeklyRecapCaption(recap, productLink?.href ?? null));
+  let headline = $derived(weeklyRecapHeadline(snapshotRecap));
+  let indexLine = $derived(weeklyRecapIndexLine(snapshotRecap));
+  let period = $derived(weeklyRecapPeriod(snapshotRecap));
+  let topModel = $derived(weeklyRecapTopModel(snapshotRecap));
+  let observedWeekdays = $derived(weeklyRecapObservedWeekdays(snapshotRecap));
+  let ready = $derived(weeklyRecapReady(snapshotRecap));
+  let caption = $derived(weeklyRecapCaption(snapshotRecap, productLink?.href ?? null));
   let previewLabel = $derived(
-    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${headline}. ${Math.round(recap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${recap.requestCount} measured requests across ${recap.sessions} sessions. Personal baseline only.`,
+    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${headline}. ${Math.round(snapshotRecap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${snapshotRecap.requestCount} measured requests across ${snapshotRecap.sessions} sessions. Personal baseline only.`,
   );
   let canExport = $derived(preparedFile !== null && ready && !preparing);
   const weekdayIndices = [0, 1, 2, 3, 4, 5, 6] as const;
@@ -54,6 +78,18 @@
   onMount(() => {
     clipboardImageAvailable =
       typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function';
+  });
+
+  $effect(() => {
+    if (!open) {
+      previousOpen = false;
+      return;
+    }
+    if (previousOpen) return;
+
+    previousOpen = true;
+    inputSnapshot = untrack(captureInputs);
+    status = null;
   });
 
   $effect(() => {
@@ -69,8 +105,8 @@
   });
 
   $effect(() => {
-    const currentRecap = recap;
-    const currentOutputTokens = outputTokens;
+    const currentRecap = snapshotRecap;
+    const currentOutputTokens = snapshotOutputTokens;
     if (!open || !ready) {
       renderVersion += 1;
       preparedFile = null;
@@ -305,7 +341,7 @@
     let url: string;
     if (platform === 'x') {
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Local composer parameters are serialized immediately.
-      const params = new URLSearchParams({ text: weeklyRecapCaption(recap, null) });
+      const params = new URLSearchParams({ text: weeklyRecapCaption(snapshotRecap, null) });
       if (productLink) params.set('url', productLink.href);
       url = `https://x.com/intent/tweet?${params.toString()}`;
     } else if (platform === 'bluesky') {
@@ -382,31 +418,33 @@
         </div>
         <div class="weekly-recap-center">
           <p>{headline}</p>
-          <strong>{Math.round(recap.median ?? 0)}</strong>
+          <strong>{Math.round(snapshotRecap.median ?? 0)}</strong>
           <span>weekly median effective output tokens / second</span>
           <em>{indexLine}</em>
         </div>
         <div class="weekly-recap-standouts">
-          {#if recap.fastestDay}
+          {#if snapshotRecap.fastestDay}
             <span>
-              <small>{recap.daysObserved === 1 ? 'Observed day' : 'Fastest observed day'}</small>
-              <strong>{weeklyRecapDayLabel(recap.fastestDay.date)}</strong>
-              <em>{Math.round(recap.fastestDay.median)} effective tok/s</em>
+              <small
+                >{snapshotRecap.daysObserved === 1 ? 'Observed day' : 'Fastest observed day'}</small
+              >
+              <strong>{weeklyRecapDayLabel(snapshotRecap.fastestDay.date)}</strong>
+              <em>{Math.round(snapshotRecap.fastestDay.median)} effective tok/s</em>
             </span>
           {/if}
-          {#if recap.daysObserved > 1 && recap.slowestDay}
+          {#if snapshotRecap.daysObserved > 1 && snapshotRecap.slowestDay}
             <span>
               <small>Slowest observed day</small>
-              <strong>{weeklyRecapDayLabel(recap.slowestDay.date)}</strong>
-              <em>{Math.round(recap.slowestDay.median)} effective tok/s</em>
+              <strong>{weeklyRecapDayLabel(snapshotRecap.slowestDay.date)}</strong>
+              <em>{Math.round(snapshotRecap.slowestDay.median)} effective tok/s</em>
             </span>
           {/if}
         </div>
         <div class="weekly-recap-footer">
           <span>
-            {recap.requestCount.toLocaleString('en-US')} requests ·
-            {recap.sessions.toLocaleString('en-US')} sessions ·
-            {compactNumber(outputTokens)} output tokens
+            {snapshotRecap.requestCount.toLocaleString('en-US')} requests ·
+            {snapshotRecap.sessions.toLocaleString('en-US')} sessions ·
+            {compactNumber(snapshotOutputTokens)} output tokens
             {#if topModel}
               · {topModel.family} {Math.round(topModel.share * 100)}%{/if}
           </span>

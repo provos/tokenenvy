@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { DayDetailResponse, SpeedIndex } from '$lib/types';
-  import { compactNumber, dayLabel } from './chart';
+  import type { DayDetailResponse } from '$lib/types';
+  import { compactNumber, dayLabel, speedIndexSummary } from './chart';
   import HistogramBackdrop from './HistogramBackdrop.svelte';
   import { speedIndexDelta } from './share';
 
@@ -17,16 +17,7 @@
   let { date, today, detail, loading, error, onretry, onmore }: Props = $props();
   let label = $derived(date ? (date === today ? 'Today' : dayLabel(date)) : 'Selected day');
   let indexDelta = $derived(detail ? speedIndexDelta(detail.speedIndex) : null);
-  let baselineCopy = $derived(detail ? describeBaseline(detail.speedIndex) : '');
-
-  function describeBaseline(index: SpeedIndex): string {
-    const delta = speedIndexDelta(index);
-    if (delta === null) {
-      return index.reason ? `Baseline warming up · ${index.reason}` : 'Baseline warming up';
-    }
-    if (delta === 0) return 'Right at your baseline';
-    return `${delta > 0 ? '+' : ''}${delta}% vs your baseline`;
-  }
+  let baselineCopy = $derived(detail ? speedIndexSummary(detail.speedIndex) : '');
 </script>
 
 <section class="hero-card day-hero" aria-busy={loading} aria-label={`${label} performance`}>

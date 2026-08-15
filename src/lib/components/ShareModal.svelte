@@ -1,6 +1,6 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { DayDetailResponse } from '$lib/types';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { dayLabel } from './chart';
@@ -41,7 +41,6 @@
     detail: DayDetailResponse;
     refusals: ShareRefusalCounts;
     isToday: boolean;
-    refreshing: boolean;
     onclose: () => void;
   }
 
@@ -59,13 +58,12 @@
     detail: DayDetailResponse;
     refusals: ShareRefusalCounts;
     isToday: boolean;
-    refreshing: boolean;
   }
 
   const SANS_FONT = 'Inter, ui-sans-serif, system-ui, sans-serif';
   const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 
-  let { open, detail, refusals, isToday, refreshing, onclose }: Props = $props();
+  let { open, detail, refusals, isToday, onclose }: Props = $props();
   let tone = $state<ShareTone>('friendly');
   let sentiment = $state<ShareSentiment>(0);
   let status = $state<string | null>(null);
@@ -90,7 +88,6 @@
       },
       refusals: { ...refusals },
       isToday,
-      refreshing,
     };
   }
 
@@ -139,7 +136,7 @@
   let previewStyle = $derived(
     `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar};${SHARE_CARD_LAYOUT_STYLE}`,
   );
-  let canExport = $derived(!inputSnapshot.refreshing && preparedFile !== null);
+  let canExport = $derived(preparedFile !== null);
 
   onMount(() => {
     clipboardImageAvailable =
@@ -147,17 +144,18 @@
   });
 
   $effect(() => {
-    if (open && !previousOpen) {
-      const nextSnapshot = captureInputs();
-      const nextCard = buildCard(nextSnapshot);
-      inputSnapshot = nextSnapshot;
-      tone = 'friendly';
-      sentiment = suggestedShareSentiment(nextCard);
-      status = null;
-    } else if (!open) {
-      inputSnapshot = captureInputs();
+    if (!open) {
+      previousOpen = false;
+      return;
     }
-    previousOpen = open;
+    if (previousOpen) return;
+
+    previousOpen = true;
+    const nextSnapshot = untrack(captureInputs);
+    inputSnapshot = nextSnapshot;
+    tone = 'friendly';
+    sentiment = suggestedShareSentiment(buildCard(nextSnapshot));
+    status = null;
   });
 
   $effect(() => {
@@ -805,7 +803,7 @@
         style={previewStyle}
         role="img"
         aria-label={previewLabel}
-        aria-busy={inputSnapshot.refreshing}
+        aria-busy={preparing}
       >
         <svg class="share-sentiment-face" viewBox="0 0 440 360" aria-hidden="true">
           <circle cx="220" cy="180" r="150"></circle>
@@ -881,12 +879,7 @@
         >
           {preparing ? 'Preparing PNG…' : 'Download PNG'}
         </button>
-        <button
-          class="secondary-button"
-          type="button"
-          onclick={copyTextReceipt}
-          disabled={inputSnapshot.refreshing}
-        >
+        <button class="secondary-button" type="button" onclick={copyTextReceipt}>
           Copy text receipt
         </button>
       </div>
@@ -898,17 +891,11 @@
           <p>X and Bluesky can prefill text, but browsers cannot attach this image for them.</p>
         </div>
         <div class="composer-buttons">
-          <button
-            class="secondary-button"
-            type="button"
-            onclick={() => openComposer('x')}
-            disabled={inputSnapshot.refreshing}>Open X</button
+          <button class="secondary-button" type="button" onclick={() => openComposer('x')}
+            >Open X</button
           >
-          <button
-            class="secondary-button"
-            type="button"
-            onclick={() => openComposer('bluesky')}
-            disabled={inputSnapshot.refreshing}>Open Bluesky</button
+          <button class="secondary-button" type="button" onclick={() => openComposer('bluesky')}
+            >Open Bluesky</button
           >
         </div>
         <div class="linkedin-guide">
@@ -916,17 +903,11 @@
           <button class="text-button" type="button" onclick={downloadImage} disabled={!canExport}
             >1. Download PNG</button
           >
-          <button
-            class="text-button"
-            type="button"
-            onclick={() => copyCaption('linkedin')}
-            disabled={inputSnapshot.refreshing}>2. Copy caption</button
+          <button class="text-button" type="button" onclick={() => copyCaption('linkedin')}
+            >2. Copy caption</button
           >
-          <button
-            class="text-button"
-            type="button"
-            onclick={() => openComposer('linkedin')}
-            disabled={inputSnapshot.refreshing}>3. Open LinkedIn</button
+          <button class="text-button" type="button" onclick={() => openComposer('linkedin')}
+            >3. Open LinkedIn</button
           >
         </div>
       </section>
@@ -935,9 +916,7 @@
         No prompts, responses, project names, file paths, or session identifiers are included.
       </p>
       <p class="share-status" aria-live="polite">
-        {inputSnapshot.refreshing
-          ? 'Refreshing this day before sharing…'
-          : (status ?? (preparing ? 'Preparing the daily PNG…' : ''))}
+        {status ?? (preparing ? 'Preparing the daily PNG…' : '')}
       </p>
     </div>
   </div>

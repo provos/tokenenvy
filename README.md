@@ -21,6 +21,10 @@ Token Envy is a [Security Blueprints](https://securityblueprints.io/) project by
 - Optional five-hour and seven-day rate-limit percentages
 - Privacy-safe daily and weekly share cards
 
+A daily Speed Index needs 20 measured requests, seven prior measured days, 100
+baseline requests, and at least 70% comparable model and output-size coverage.
+Five independent sessions add a confidence interval. They do not block the point estimate.
+
 ## Install and run
 
 Token Envy requires Node.js 22.13 or newer. Older runtimes exit with upgrade instructions.

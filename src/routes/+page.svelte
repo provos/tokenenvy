@@ -916,7 +916,6 @@
     detail={dayDetail}
     refusals={selectedDayRefusals}
     isToday={dayDetail.date === overview.today}
-    refreshing={dayLoading}
     onclose={() => (shareOpen = false)}
   />
 {/if}
