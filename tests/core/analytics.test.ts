@@ -238,7 +238,7 @@ describe('analytics', () => {
     database.close();
   });
 
-  it('reads the data-quality summary once for both interruption rates', async () => {
+  it('reads only the measured-request count once for both interruption rates', async () => {
     const { database, analytics } = await fixture([
       { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T11:59:59.000Z' },
       {
@@ -252,10 +252,17 @@ describe('analytics', () => {
       },
     ]);
     const getDataQuality = vi.spyOn(database, 'getDataQuality');
+    const getMeasuredRequestCount = vi.spyOn(database, 'getMeasuredRequestCount');
     const overview = analytics.overview('UTC', new Date('2026-08-14T18:00:00Z'));
-    // Refusals and failures share one measured-request denominator.
-    expect(getDataQuality).toHaveBeenCalledTimes(1);
+    // Refusals and failures share one measured-request denominator, and the
+    // overview never pays for the four aggregates it would not have read.
+    expect(getMeasuredRequestCount).toHaveBeenCalledTimes(1);
+    expect(getDataQuality).not.toHaveBeenCalled();
     expect(overview.refusals.perThousand).toBe(overview.failures.perThousand);
+    // The narrow count is the same denominator the full summary reports.
+    expect(getMeasuredRequestCount.mock.results[0].value).toBe(
+      database.getDataQuality().includedRequests,
+    );
     database.close();
   });
 
@@ -895,6 +902,23 @@ describe('analytics', () => {
       .getRefusals()
       .filter((refusal) => refusal.requestId === database.digest('request:shared'));
     expect(shared).toMatchObject([{ eventId: database.digest('event:c1') }]);
+    // The failure axis archives platform faults only. A safeguard block is
+    // reported as a refusal, and the refusal row records that origin itself
+    // instead of the refusal axis reading it back out of `failure_history`.
+    expect(database.db.prepare('SELECT COUNT(*) count FROM failure_history').get()).toEqual({
+      count: 0,
+    });
+    expect(
+      database.db
+        .prepare('SELECT event_id, safeguard FROM refusal_history ORDER BY timestamp_ms')
+        .all(),
+    ).toEqual([
+      { event_id: database.digest('event:s1'), safeguard: 1 },
+      { event_id: database.digest('event:c1'), safeguard: 0 },
+      { event_id: database.digest('event:s2'), safeguard: 1 },
+      { event_id: database.digest('event:s3'), safeguard: 1 },
+      { event_id: database.digest('event:c2'), safeguard: 0 },
+    ]);
     // Archived rows dedupe the same way once the live events are gone.
     database.db.prepare('DELETE FROM events').run();
     expect(database.getRefusals().map(({ eventId }) => eventId)).toEqual([
@@ -984,12 +1008,16 @@ describe('analytics', () => {
         .prepare("SELECT model FROM events WHERE type = 'assistant' ORDER BY timestamp_ms")
         .all(),
     ).toEqual([{ model: 'opus' }, { model: 'fable' }, { model: null }, { model: null }]);
+    // `family_known` is decided from the events themselves, so `other` on the
+    // error-only request is a placeholder rather than an attribution.
     expect(
-      database.getRequests().map(({ family, qualityReason }) => ({ family, qualityReason })),
+      database
+        .getRequests()
+        .map(({ family, familyKnown, qualityReason }) => ({ family, familyKnown, qualityReason })),
     ).toEqual([
-      { family: 'opus', qualityReason: null },
-      { family: 'fable', qualityReason: 'api_error' },
-      { family: 'other', qualityReason: 'api_error' },
+      { family: 'opus', familyKnown: true, qualityReason: null },
+      { family: 'fable', familyKnown: true, qualityReason: 'api_error' },
+      { family: 'other', familyKnown: false, qualityReason: 'api_error' },
     ]);
 
     const timeline = analytics.series(28, 'UTC', new Date('2026-08-14T20:00:00Z')).refusals;
@@ -1022,6 +1050,15 @@ describe('analytics', () => {
         unattributed: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
       },
     ]);
+
+    // Attribution reads the stored evidence, not the quality-reason enum, so a
+    // higher-priority reason winning that single slot cannot silently re-file
+    // an unattributed refusal under the `other` placeholder.
+    database.db
+      .prepare("UPDATE requests SET quality_reason = 'synthetic' WHERE family_known = 0")
+      .run();
+    const reread = new Analytics(database).series(28, 'UTC', new Date('2026-08-14T20:00:00Z'));
+    expect(reread.refusals.days).toEqual(timeline.days);
     database.close();
   });
 });

@@ -132,16 +132,16 @@ function addRefusalCounts(target: RefusalCounts, source: RefusalCounts): void {
 /**
  * The model family a refusal may be filed under, or `undefined` when the
  * request never named a model. A request whose only assistant rows are API
- * error rows reports `model: "<synthetic>"`, which resolves to the `other`
- * family. `other` is offered as a family chip, but only once a *measured*
- * request carries it — and an `api_error` request is excluded from measurement,
- * so it can never make its own family available. A refusal filed there would be
- * counted and then drawn nowhere. Reporting those unattributed keeps them
- * visible under every filter, the same choice made for failures.
+ * error rows reports `model: "<synthetic>"`, which names nothing, so `family`
+ * holds the `other` placeholder that keeps the column non-null. `other` is
+ * offered as a family chip, but only once a *measured* request carries it —
+ * and an `api_error` request is excluded from measurement, so it can never
+ * make its own family available. A refusal filed there would be counted and
+ * then drawn nowhere. Reporting those unattributed keeps them visible under
+ * every filter, the same choice made for failures.
  */
 function attributableFamily(request: StoredRequest): ModelFamily | undefined {
-  if (request.family === 'other' && request.qualityReason === 'api_error') return undefined;
-  return request.family;
+  return request.familyKnown ? request.family : undefined;
 }
 
 function emptyFailureCounts(): FailureCounts {
@@ -465,7 +465,7 @@ export class Analytics {
     validateTimezone(timezone);
     const today = localDate(now.getTime(), timezone);
     const all = this.requests();
-    const quality = this.database.getDataQuality();
+    const measuredRequests = this.database.getMeasuredRequestCount();
     const storedFailures = this.database.getFailures();
     const { includingProvisional: validIncludingProvisional, completed: valid } =
       this.dated(timezone);
@@ -581,11 +581,11 @@ export class Analytics {
           failures: weeklyFailures,
         },
       },
-      // Both rates divide by the same measured-request count, and the query
-      // behind it is expensive, so it is read once and threaded through. The
-      // failure rows are read once for the same reason.
-      refusals: this.refusals(timezone, quality),
-      failures: this.failures(timezone, quality, storedFailures),
+      // Both rates divide by the same measured-request count, so it is read
+      // once and threaded through. The failure rows are read once for the same
+      // reason.
+      refusals: this.refusals(timezone, measuredRequests),
+      failures: this.failures(timezone, measuredRequests, storedFailures),
       scan: this.database.getScanStatus(),
     };
   }
@@ -842,7 +842,7 @@ export class Analytics {
     };
   }
 
-  refusals(timezone = 'UTC', quality?: DataQualitySummary): RefusalSummary {
+  refusals(timezone = 'UTC', measuredRequests?: number): RefusalSummary {
     validateTimezone(timezone);
     const refusals = this.database.getRefusals();
     const dates = new Map<string, { attempted: number; recovered: number; userVisible: number }>();
@@ -862,7 +862,7 @@ export class Analytics {
     }
     // The copy promises a rate per 1,000 *measured* requests, so the
     // denominator excludes the requests that were dropped from measurement.
-    const measured = (quality ?? this.database.getDataQuality()).includedRequests;
+    const measured = measuredRequests ?? this.database.getMeasuredRequestCount();
     return {
       recorded: refusals.length > 0,
       attempted: refusals.length,
@@ -878,7 +878,7 @@ export class Analytics {
 
   failures(
     timezone = 'UTC',
-    quality?: DataQualitySummary,
+    measuredRequests?: number,
     stored?: readonly StoredFailure[],
   ): FailureSummary {
     validateTimezone(timezone);
@@ -886,7 +886,7 @@ export class Analytics {
     const byDay = failureDays(failures, timezone);
     const total = totalFailureCounts(byDay);
     // Same measured-request denominator as refusals, so the two rates compare.
-    const measured = (quality ?? this.database.getDataQuality()).includedRequests;
+    const measured = measuredRequests ?? this.database.getMeasuredRequestCount();
     return {
       recorded: failures.length > 0,
       ...total,
