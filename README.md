@@ -34,7 +34,7 @@ Token Envy requires Node.js 22.13 or newer. Older runtimes exit with upgrade ins
 npx tokenenvy
 ```
 
-The CLI prints the loopback address and opens the dashboard in your default browser. Each launch creates a one-time access token. After redemption, the browser uses a `SameSite=Strict`, HTTP-only cookie.
+The CLI prints the loopback address and opens the dashboard in your default browser. Each launch mints a private access token that stays valid until the process exits. Redeeming it hands the browser a `SameSite=Strict`, HTTP-only cookie, and continued use slides that cookie forward. Reopening the printed URL restores a session that lapsed. Restarting Token Envy mints a new token and retires the previous URL.
 
 The scanner reads `~/.claude/projects/**/*.jsonl` by default. One or more `--logs` options replace that path. Token Envy deduplicates roots and removes nested overlaps. Explicit roots define the complete scan boundary.
 
@@ -95,7 +95,7 @@ Requests remain provisional while their transcripts grow. They enter the analyti
 - The database and API contain aggregate metadata. Prompts, responses, commands, tool data, project names, raw paths, refusal explanations, and raw identifiers stay in the source transcripts.
 - Locally keyed HMAC digests pseudonymize source, session, request, and event identifiers. Pseudonymization differs from encryption.
 - The server binds to `127.0.0.1` and accepts explicit loopback Host and Origin values. It omits CORS headers.
-- Browser sessions use a one-time launch token. Status-line ingestion uses a separate per-launch bearer secret.
+- Browser sessions use a per-launch token that remains valid for the life of the process. Anyone able to read the printed URL can reopen the dashboard until Token Envy exits. Status-line ingestion uses a separate per-launch bearer secret.
 - Automatic traffic stays on loopback. The app collects zero analytics and telemetry.
 - Share exports use an allowlisted aggregate record and require an explicit user action.
 

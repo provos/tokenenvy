@@ -45,8 +45,8 @@ directory, and makes no automatic network requests.
 - The derived index and local status-line connection live in `~/.tokenenvy`
   unless the user explicitly sets `TOKENENVY_DATA_DIR`.
 - The HTTP server binds to loopback. Host and Origin are validated; CORS is not
-  enabled; production browser access uses a one-time bootstrap token and strict
-  cookie.
+  enabled; production browser access uses a per-launch bootstrap token and a
+  sliding strict cookie that authenticated use renews.
 - Persisted identifiers and source paths are HMAC digests. The key is local
   pseudonymization, not encryption.
 - Stable request and refusal summaries move into a compact content-free archive

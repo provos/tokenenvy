@@ -157,6 +157,7 @@
   let refreshError = $state<{ message: string; requestedDays: (typeof ranges)[number] } | null>(
     null,
   );
+  let sessionExpired = $state(false);
   let rangeDays = $state<(typeof ranges)[number]>(28);
   let pendingRangeDays = $state<(typeof ranges)[number] | null>(null);
   let visibleFamilies = $state<ModelFamily[]>([...allFamilies]);
@@ -281,6 +282,12 @@
         signal: controller.signal,
       });
       if (optional && response.status === 404) return null;
+      if (response.status === 401) {
+        // The private session cookie is gone; every later request would answer 401 again.
+        sessionExpired = true;
+        stopDashboardActivity();
+        throw new Error('The dashboard session expired.');
+      }
       if (!response.ok) throw new Error(`The local service returned ${response.status}`);
       return (await response.json()) as T;
     } catch (cause) {
@@ -294,6 +301,7 @@
   }
 
   async function loadDashboard(showLoading = false, requestedDays = rangeDays) {
+    if (sessionExpired) return;
     if (dashboardRefreshTimer) {
       clearTimeout(dashboardRefreshTimer);
       dashboardRefreshTimer = null;
@@ -354,6 +362,7 @@
   }
 
   async function refreshQuota() {
+    if (sessionExpired) return;
     const sequence = ++quotaLoadSequence;
     try {
       const nextQuota = await getJson<QuotaResponse>('/api/v1/quota', true);
@@ -387,6 +396,7 @@
   }
 
   function handleScanEvent(event: MessageEvent<string>) {
+    if (sessionExpired) return;
     const status = parseScanStatus(event.data);
     if (!status) return;
     latestScanStatus = status;
@@ -401,11 +411,31 @@
 
   function connectEvents() {
     eventSource?.close();
-    eventSource = new EventSource('/api/v1/events');
-    eventSource.addEventListener('scan', handleScanEvent);
-    eventSource.onerror = () => {
-      // EventSource reconnects automatically. The dashboard remains usable meanwhile.
+    const source = new EventSource('/api/v1/events');
+    eventSource = source;
+    source.addEventListener('scan', handleScanEvent);
+    source.onerror = () => {
+      // A dropped stream reconnects on its own. A non-200 reply, which is what an
+      // expired session returns, closes the stream for good, so probe once to learn
+      // whether the session died instead of leaving stale numbers looking live.
+      if (sessionExpired || source.readyState !== EventSource.CLOSED) return;
+      void getJson('/api/v1/overview').catch(() => {
+        // The probe exists for its 401 side effect. Other failures keep the last view.
+      });
     };
+  }
+
+  function stopDashboardActivity() {
+    if (dashboardRefreshTimer) {
+      clearTimeout(dashboardRefreshTimer);
+      dashboardRefreshTimer = null;
+    }
+    if (quotaRefreshTimer) {
+      clearTimeout(quotaRefreshTimer);
+      quotaRefreshTimer = null;
+    }
+    eventSource?.close();
+    eventSource = null;
   }
 
   function reconcileSelectedDay(
@@ -436,6 +466,7 @@
   }
 
   async function selectDay(date: string, force = false) {
+    if (sessionExpired) return;
     const revision = analyticsRevision;
     const dateChanged = selectedDate !== date;
     if (!force && !dateChanged && dayDetail?.date === date && dayDetailRevision === revision)
@@ -563,7 +594,7 @@
     </a>
 
     <div class="topbar-meta">
-      {#if overview}
+      {#if overview && !sessionExpired}
         <span
           class:scanning={overview.scan.state === 'scanning' ||
             overview.scan.state === 'discovering'}
@@ -582,7 +613,7 @@
             class:active={rangeDays === days}
             aria-pressed={rangeDays === days}
             aria-busy={rangeState.busy}
-            disabled={rangeState.disabled}
+            disabled={rangeState.disabled || sessionExpired}
             onclick={() => loadDashboard(false, days)}
           >
             {days === 365 ? '1y' : `${days}d`}
@@ -597,10 +628,12 @@
       >
       <button
         class="share-button"
-        disabled={!shareReady}
-        title={shareReady
-          ? `Share ${selectedDayLabel.toLowerCase()}`
-          : 'Select a measured day to create a share card'}
+        disabled={!shareReady || sessionExpired}
+        title={sessionExpired
+          ? 'The dashboard session ended'
+          : shareReady
+            ? `Share ${selectedDayLabel.toLowerCase()}`
+            : 'Select a measured day to create a share card'}
         onclick={() => (shareOpen = true)}
       >
         <span aria-hidden="true">↗</span> Share
@@ -609,7 +642,14 @@
   </header>
 
   <main>
-    {#if loading && !overview}
+    {#if sessionExpired}
+      <section class="error-state" role="alert">
+        <span class="error-glyph">!</span>
+        <p class="eyebrow">Session expired</p>
+        <h1>The private dashboard session ended</h1>
+        <p>Session expired — reopen the private dashboard URL printed by the CLI.</p>
+      </section>
+    {:else if loading && !overview}
       <section class="loading-state" aria-live="polite">
         <div class="loading-orbit"><span></span></div>
         <p class="eyebrow">Reading private metadata</p>

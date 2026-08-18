@@ -41,8 +41,10 @@ function eventFor(url: string, cookie?: string, headers: Record<string, string> 
         const attributes = [
           `${name}=${value}`,
           options.path ? `Path=${options.path}` : '',
+          typeof options.maxAge === 'number' ? `Max-Age=${options.maxAge}` : '',
           options.httpOnly ? 'HttpOnly' : '',
           options.sameSite === 'strict' ? 'SameSite=Strict' : '',
+          options.secure ? 'Secure' : '',
         ].filter(Boolean);
         return attributes.join('; ');
       },
@@ -50,8 +52,10 @@ function eventFor(url: string, cookie?: string, headers: Record<string, string> 
   };
 }
 
+const TWELVE_HOURS = 12 * 60 * 60;
+
 describe('production browser handshake', () => {
-  it('redirects once, returns a strict cookie, and strips the bootstrap token', async () => {
+  it('redirects with a strict cookie, strips the bootstrap token, and re-issues on replay', async () => {
     const gate = createSecurityHandle({
       production: true,
       bootstrapToken: 'one-time-bootstrap',
@@ -69,13 +73,18 @@ describe('production browser handshake', () => {
     expect(bootstrap.headers.get('set-cookie')).toContain('tokenenvy_session=browser-session');
     expect(bootstrap.headers.get('set-cookie')).toContain('HttpOnly');
     expect(bootstrap.headers.get('set-cookie')).toContain('SameSite=Strict');
+    expect(bootstrap.headers.get('set-cookie')).toContain(`Max-Age=${TWELVE_HOURS}`);
+    expect(bootstrap.headers.get('set-cookie')).not.toContain('Secure');
     expect(bootstrap.headers.get('set-cookie')).not.toContain('one-time-bootstrap');
 
     const replay = await gate({
       event: eventFor('http://127.0.0.1:4173/?token=one-time-bootstrap') as never,
       resolve,
     });
-    expect(replay.status).toBe(401);
+    expect(replay.status).toBe(303);
+    expect(replay.headers.get('location')).toBe('/');
+    expect(replay.headers.get('set-cookie')).toContain('tokenenvy_session=browser-session');
+    expect(replay.headers.get('set-cookie')).toContain(`Max-Age=${TWELVE_HOURS}`);
 
     const authenticated = await gate({
       event: eventFor('http://127.0.0.1:4173/', 'browser-session') as never,
@@ -83,9 +92,41 @@ describe('production browser handshake', () => {
     });
     expect(authenticated.status).toBe(200);
     expect(authenticated.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(authenticated.headers.get('set-cookie')).toContain('tokenenvy_session=browser-session');
+    // The sliding re-issue is the fix: without a fresh full-length Max-Age an active
+    // dashboard still hard-expires, and Max-Age=0 would sign the browser out at once.
+    expect(authenticated.headers.get('set-cookie')).toContain(`Max-Age=${TWELVE_HOURS}`);
+    expect(authenticated.headers.get('set-cookie')).toContain('HttpOnly');
+    expect(authenticated.headers.get('set-cookie')).toContain('SameSite=Strict');
   });
 
-  it('keeps health public but protects status-line ingestion with its separate secret', async () => {
+  it('marks the session cookie Secure only when the dashboard is served over https', async () => {
+    const resolve = async () => new Response('dashboard');
+    const gate = createSecurityHandle({
+      production: true,
+      bootstrapToken: 'bootstrap',
+      sessionToken: 'browser-session',
+    });
+
+    const bootstrap = await gate({
+      event: eventFor('https://localhost:4173/?token=bootstrap', undefined, {
+        host: 'localhost:4173',
+      }) as never,
+      resolve,
+    });
+    expect(bootstrap.status).toBe(303);
+    expect(bootstrap.headers.get('set-cookie')).toContain('Secure');
+
+    const authenticated = await gate({
+      event: eventFor('https://localhost:4173/', 'browser-session', {
+        host: 'localhost:4173',
+      }) as never,
+      resolve,
+    });
+    expect(authenticated.headers.get('set-cookie')).toContain('Secure');
+  });
+
+  it('keeps health public, protects status-line ingestion, and only slides cookie sessions', async () => {
     const gate = createSecurityHandle({
       production: true,
       bootstrapToken: 'bootstrap',
@@ -110,15 +151,20 @@ describe('production browser handshake', () => {
         })
       ).status,
     ).toBe(401);
-    expect(
-      (
-        await gate({
-          event: eventFor('http://127.0.0.1:4173/api/v1/statusline', undefined, {
-            authorization: 'Bearer statusline-secret',
-          }) as never,
-          resolve,
-        })
-      ).status,
-    ).toBe(200);
+    const statusline = await gate({
+      event: eventFor('http://127.0.0.1:4173/api/v1/statusline', undefined, {
+        authorization: 'Bearer statusline-secret',
+      }) as never,
+      resolve,
+    });
+    expect(statusline.status).toBe(200);
+    expect(statusline.headers.get('set-cookie')).toBeNull();
+
+    const rejected = await gate({
+      event: eventFor('http://127.0.0.1:4173/?token=wrong-bootstrap') as never,
+      resolve,
+    });
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get('set-cookie')).toBeNull();
   });
 });
