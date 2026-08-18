@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import ShareModal from '../../src/lib/components/ShareModal.svelte';
 import {
   buildShareCardData,
+  getShareCaption,
   getShareSentimentDescription,
+  getShareTextReceipt,
+  type ShareFailureCounts,
   type ShareRefusalCounts,
 } from '../../src/lib/components/share';
 import type { DayDetailResponse } from '../../src/lib/types';
@@ -40,13 +43,25 @@ const detail: DayDetailResponse = {
   exclusions: {},
 };
 
+const noFailures: ShareFailureCounts = {
+  recorded: true,
+  attempted: 0,
+  overloaded: 0,
+  serverError: 0,
+};
+
 describe('share-card customization', () => {
-  const renderShareCard = (refusals: ShareRefusalCounts, isToday = true) =>
+  const renderShareCard = (
+    refusals: ShareRefusalCounts,
+    isToday = true,
+    failures: ShareFailureCounts = noFailures,
+  ) =>
     render(ShareModal, {
       props: {
         open: true,
         detail,
         refusals,
+        failures,
         isToday,
         onclose: () => undefined,
       },
@@ -128,6 +143,7 @@ describe('share-card customization', () => {
             reason: 'Not enough comparable model and output-size coverage',
           },
           refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+          failures: noFailures,
           models: [],
           histogram: [],
         }),
@@ -136,5 +152,128 @@ describe('share-card customization', () => {
     ).toBe(
       'Neutral for now. Not enough comparable model and output-size coverage. Pick the mood; the numbers stay put.',
     );
+  });
+  it('stamps platform failures on the card without touching the refusal line', () => {
+    const { body } = renderShareCard(
+      { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      true,
+      {
+        recorded: true,
+        attempted: 10,
+        overloaded: 7,
+        serverError: 3,
+      },
+    );
+    const normalizedBody = body.replace(/\s+/g, ' ');
+
+    expect(body).toContain('class="share-failure-stamp"');
+    expect(normalizedBody).toContain('10 API failures · the service could not');
+    expect(body).toContain('⊗');
+    // The refusal axis is untouched: no summed total, no refusal wording.
+    expect(body).not.toContain('share-preview-refusals');
+    expect(normalizedBody).not.toContain('10 refusal');
+    expect(normalizedBody).toContain(
+      'Comparable days suggested Good. 10 API failures that never completed moved it to Neutral. Pick the mood; the numbers stay put.',
+    );
+    // The accessible label spells the split out, which the terse stamp does not.
+    expect(normalizedBody).toContain(
+      '10 API failures · 7 overloaded · 3 server faults · the service could not',
+    );
+  });
+
+  it('leaves the card unchanged when the day had no failures', () => {
+    const { body } = renderShareCard(
+      { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      true,
+      {
+        recorded: true,
+        attempted: 0,
+        overloaded: 0,
+        serverError: 0,
+      },
+    );
+
+    expect(body).not.toContain('share-failure-stamp');
+    expect(body).not.toContain('API failure');
+    expect(body).not.toContain('the service could not');
+  });
+
+  it('says nothing at all when the log format records no failures', () => {
+    const { body } = renderShareCard(
+      { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      true,
+      {
+        recorded: false,
+        attempted: 0,
+        overloaded: 0,
+        serverError: 0,
+      },
+    );
+
+    expect(body).not.toContain('share-failure-stamp');
+    expect(body).not.toContain('failures unavailable');
+  });
+
+  it('reports both interruption axes in the mood copy without summing them', () => {
+    const { body } = renderShareCard(
+      { recorded: true, attempted: 2, recovered: 1, userVisible: 1 },
+      true,
+      {
+        recorded: true,
+        attempted: 10,
+        overloaded: 7,
+        serverError: 3,
+      },
+    );
+    const normalizedBody = body.replace(/\s+/g, ' ');
+
+    expect(normalizedBody).toContain(
+      'Comparable days suggested Good. 1 user-visible refusal signal moved it to Rough. 10 API failures that never completed kept it at Rough. Pick the mood; the numbers stay put.',
+    );
+    expect(normalizedBody).toContain('2 refusal signals · 1 recovered · 1 user-visible');
+    expect(normalizedBody).toContain('10 API failures · the service could not');
+    expect(normalizedBody).not.toContain('12 ');
+  });
+
+  it('carries the failure axis into captions and the text receipt', () => {
+    const card = buildShareCardData({
+      date: detail.date,
+      median: detail.summary.median,
+      count: detail.summary.count,
+      sessions: detail.summary.sessions,
+      outputTokens: detail.summary.outputTokens,
+      isToday: true,
+      speedIndex: detail.speedIndex,
+      refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      failures: { recorded: true, attempted: 10, overloaded: 7, serverError: 3 },
+      models: [],
+      histogram: [],
+    });
+
+    expect(getShareCaption('friendly', 0, card, 'generic', null)).toContain(
+      '10 API failures · 7 overloaded · 3 server faults · the service could not.',
+    );
+    expect(getShareTextReceipt('friendly', 0, card)).toContain(
+      '10 API failures · 7 overloaded · 3 server faults · the service could not',
+    );
+    const xCaption = getShareCaption('friendly', 0, card, 'x', null);
+    expect(xCaption).toContain('10 API failures: 7 overloaded/3 server; the service could not.');
+    expect(xCaption.length).toBeLessThanOrEqual(250);
+
+    const quiet = buildShareCardData({
+      date: detail.date,
+      median: detail.summary.median,
+      count: detail.summary.count,
+      sessions: detail.summary.sessions,
+      outputTokens: detail.summary.outputTokens,
+      isToday: true,
+      speedIndex: detail.speedIndex,
+      refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      failures: noFailures,
+      models: [],
+      histogram: [],
+    });
+    expect(getShareCaption('friendly', 0, quiet, 'generic', null)).not.toContain('API failure');
+    expect(getShareTextReceipt('friendly', 0, quiet)).not.toContain('API failure');
   });
 });

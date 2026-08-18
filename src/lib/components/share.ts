@@ -1,5 +1,6 @@
 import type { HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
+import { adjustSentimentForFailures, type FailureMoodAdjustment } from './failure-mood';
 import { adjustSentimentForRefusals, type RefusalMoodAdjustment } from './refusal-mood';
 
 export type ShareTone = 'friendly' | 'spicy';
@@ -14,6 +15,14 @@ export const SHARE_METRIC_CONTEXT = 'effective output · wait + think time inclu
 export const SHARE_CHALLENGE = 'How did Claude Code treat you today?';
 export const SHARE_SOCIAL_PRIVACY = 'Local stats; prompts private.';
 export const SHARE_SOCIAL_BRAND = '#TokenEnvy · securityblueprints.io';
+/** The dashboard chart marks platform failures with the same circled cross. */
+export const FAILURE_MARK = '⊗';
+/**
+ * The governing split, carried onto every card: refusals are the model would
+ * not, failures are the service could not. It never blames the reader and never
+ * claims a status class that was not measured.
+ */
+export const FAILURE_FRAMING = 'the service could not';
 
 const SOCIAL_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -144,6 +153,7 @@ export interface ShareCardData {
   indexCiHigh: number | null;
   percentile: number | null;
   refusals: ShareRefusalCounts;
+  failures: ShareFailureCounts;
   models: Array<{ family: string; median: number; count: number }>;
   histogram: Array<{ lower: number; upper: number; count: number }>;
 }
@@ -156,6 +166,17 @@ export interface ShareRefusalCounts {
   unknown?: number;
 }
 
+/**
+ * Platform failures. They are a separate axis from refusals and are never summed
+ * with them; `attempted` is always `overloaded + serverError`.
+ */
+export interface ShareFailureCounts {
+  recorded: boolean;
+  attempted: number;
+  overloaded: number;
+  serverError: number;
+}
+
 export interface ShareCardInput {
   date: string;
   median: number;
@@ -165,6 +186,7 @@ export interface ShareCardInput {
   isToday: boolean;
   speedIndex: SpeedIndex;
   refusals?: ShareRefusalCounts;
+  failures?: ShareFailureCounts;
   models: ModelSummary[];
   histogram: HistogramBin[];
 }
@@ -221,7 +243,8 @@ export function sentimentAfterCardChange(
 
 export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
   const base = suggestedPerformanceSentiment(data);
-  return adjustSentimentForRefusals(base, data.refusals).suggested;
+  const refusals = adjustSentimentForRefusals(base, data.refusals);
+  return adjustSentimentForFailures(refusals.suggested, data.failures).suggested;
 }
 
 export function suggestedPerformanceSentiment(data: ShareCardData): ShareSentiment {
@@ -262,6 +285,30 @@ export function getRefusalMoodAdjustmentLine(adjustment: RefusalMoodAdjustment):
     : `${signals} kept it at ${finalMood}.`;
 }
 
+/**
+ * Says what the failures did to the mood without blaming the reader and without
+ * naming a status class the logs never measured.
+ */
+export function getFailureMoodAdjustmentLine(adjustment: FailureMoodAdjustment): string | null {
+  if (adjustment.reason === 'unavailable' || adjustment.reason === 'none-observed') return null;
+  const { attempted } = adjustment.counts;
+  const signals = `${attempted} API ${attempted === 1 ? 'failure' : 'failures'} that never completed`;
+  const finalMood = getShareSentimentTheme(adjustment.suggested).label;
+  return adjustment.stepsLowered > 0
+    ? `${signals} moved it to ${finalMood}.`
+    : `${signals} kept it at ${finalMood}.`;
+}
+
+/** Refusals speak first, then failures, so the stronger signal leads. */
+export function getInterruptionMoodLines(
+  refusals: RefusalMoodAdjustment,
+  failures: FailureMoodAdjustment,
+): string {
+  return [getRefusalMoodAdjustmentLine(refusals), getFailureMoodAdjustmentLine(failures)]
+    .filter((line): line is string => line !== null)
+    .join(' ');
+}
+
 function endSentence(value: string): string {
   const trimmed = value.trim();
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
@@ -269,13 +316,14 @@ function endSentence(value: string): string {
 
 export function getShareSentimentDescription(data: ShareCardData, reason?: string | null): string {
   const base = suggestedPerformanceSentiment(data);
-  const adjustment = adjustSentimentForRefusals(base, data.refusals);
+  const refusals = adjustSentimentForRefusals(base, data.refusals);
+  const failures = adjustSentimentForFailures(refusals.suggested, data.failures);
   const baseMood = getShareSentimentTheme(base).label;
   const basis = data.indexEligible
     ? `Comparable days suggested ${baseMood}.`
     : `Neutral for now. ${endSentence(reason ?? 'The comparable baseline needs more data.')}`;
-  const refusalAdjustment = getRefusalMoodAdjustmentLine(adjustment);
-  return `${basis}${refusalAdjustment ? ` ${refusalAdjustment}` : ''} Pick the mood; the numbers stay put.`;
+  const adjustments = getInterruptionMoodLines(refusals, failures);
+  return `${basis}${adjustments ? ` ${adjustments}` : ''} Pick the mood; the numbers stay put.`;
 }
 
 function sanitizeHistogram(
@@ -345,6 +393,7 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
       userVisible,
       unknown,
     },
+    failures: normalizeShareFailures(input.failures),
     models: [...input.models]
       .sort((left, right) => right.share - left.share)
       .slice(0, 8)
@@ -359,6 +408,13 @@ export function buildShareCardData(input: ShareCardInput): ShareCardData {
 
 function nonNegativeInteger(value: number | undefined): number {
   return Number.isFinite(value) ? Math.max(0, Math.round(value as number)) : 0;
+}
+
+export function normalizeShareFailures(input: ShareFailureCounts | undefined): ShareFailureCounts {
+  const attempted = input?.recorded ? nonNegativeInteger(input.attempted) : 0;
+  const overloaded = Math.min(attempted, nonNegativeInteger(input?.overloaded));
+  const serverError = Math.min(attempted - overloaded, nonNegativeInteger(input?.serverError));
+  return { recorded: input?.recorded === true, attempted, overloaded, serverError };
 }
 
 export function getShareActivityLine(data: ShareCardData): string {
@@ -424,6 +480,167 @@ function getCompactShareRefusalLine(data: ShareCardData): string {
 
 export function compactSocialNumber(value: number): string {
   return SOCIAL_NUMBER_FORMATTER.format(Math.max(0, Math.round(value)));
+}
+
+function failureNoun(attempted: number): string {
+  return `${attempted} API ${attempted === 1 ? 'failure' : 'failures'}`;
+}
+
+function serverFaultLabel(serverError: number): string {
+  return `${serverError} server ${serverError === 1 ? 'fault' : 'faults'}`;
+}
+
+/**
+ * The mark that rides on the card itself. It carries only what a card can hold:
+ * the count and the framing that keeps it from reading as another refusal. The
+ * overloaded/server split lives in the accessible label, captions, and receipt,
+ * where there is room for it. Empty when there is nothing to report, so the
+ * common quiet day never grows an empty slot.
+ */
+export function failureStampLabel(counts: ShareFailureCounts): string {
+  const failures = normalizeShareFailures(counts);
+  if (failures.attempted === 0) return '';
+  return `${failureNoun(failures.attempted)} · ${FAILURE_FRAMING}`;
+}
+
+/** The long form used in captions, receipts, and the card's accessible label. */
+export function getShareFailureLine(counts: ShareFailureCounts): string {
+  const failures = normalizeShareFailures(counts);
+  if (failures.attempted === 0) return '';
+  const parts = [
+    failureNoun(failures.attempted),
+    failures.overloaded > 0 ? `${failures.overloaded} overloaded` : null,
+    failures.serverError > 0 ? serverFaultLabel(failures.serverError) : null,
+  ].filter((part): part is string => part !== null);
+  return `${parts.join(' · ')} · ${FAILURE_FRAMING}`;
+}
+
+export function getCompactFailureLine(counts: ShareFailureCounts): string {
+  const failures = normalizeShareFailures(counts);
+  if (failures.attempted === 0) return '';
+  const outcomes = [
+    failures.overloaded > 0 ? `${compactSocialNumber(failures.overloaded)} overloaded` : null,
+    failures.serverError > 0 ? `${compactSocialNumber(failures.serverError)} server` : null,
+  ].filter((outcome): outcome is string => outcome !== null);
+  return `${compactSocialNumber(failures.attempted)} API ${failures.attempted === 1 ? 'failure' : 'failures'}: ${outcomes.join('/')}; ${FAILURE_FRAMING}.`;
+}
+
+export interface FailureStampTheme {
+  mark: string;
+  text: string;
+  border: string;
+  fill: string;
+}
+
+function withAlpha(color: string, alpha: number): string {
+  const hex = color.trim().replace('#', '');
+  const expanded =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((part) => part + part)
+          .join('')
+      : hex;
+  if (!/^[0-9a-fA-F]{6}$/.test(expanded)) return color;
+  const value = Number.parseInt(expanded, 16);
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
+/**
+ * Failures borrow the card's own foreground rather than the dashboard's cool
+ * `--fault` hue: a fixed blue disappears into the calm themes and fights the
+ * angry ones. Staying achromatic also keeps failures below the refusal alarm,
+ * which owns the only saturated warning colors on the card.
+ */
+export function getFailureStampTheme(theme: ShareSentimentTheme): FailureStampTheme {
+  return {
+    mark: withAlpha(theme.text, 0.88),
+    text: withAlpha(theme.text, 0.86),
+    border: withAlpha(theme.text, 0.3),
+    fill: withAlpha(theme.text, 0.08),
+  };
+}
+
+export function failureStampStyle(theme: ShareSentimentTheme): string {
+  const stamp = getFailureStampTheme(theme);
+  return `--stamp-mark:${stamp.mark};--stamp-text:${stamp.text};--stamp-border:${stamp.border};--stamp-fill:${stamp.fill}`;
+}
+
+/** The circled cross the dashboard chart already uses for platform failures. */
+export function drawFailureMark(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  color: string,
+  lineWidth = 1.5,
+): void {
+  const arm = radius * 0.46;
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = lineWidth;
+  context.lineCap = 'round';
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(x - arm, y - arm);
+  context.lineTo(x + arm, y + arm);
+  context.moveTo(x + arm, y - arm);
+  context.lineTo(x - arm, y + arm);
+  context.stroke();
+  context.restore();
+}
+
+export interface FailureStampOptions {
+  right: number;
+  top: number;
+  label: string;
+  theme: ShareSentimentTheme;
+  fontSize?: number;
+}
+
+/**
+ * Draws the right-aligned outage stamp and returns its width, or 0 when there is
+ * nothing to stamp. Canvas state is saved and restored, so callers keep their
+ * alignment and font.
+ */
+export function drawFailureStamp(
+  context: CanvasRenderingContext2D,
+  options: FailureStampOptions,
+): number {
+  if (!options.label) return 0;
+  const stamp = getFailureStampTheme(options.theme);
+  const fontSize = options.fontSize ?? 14;
+  const font = `600 ${fontSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
+  context.save();
+  context.font = font;
+  context.textAlign = 'left';
+  const markRadius = fontSize * 0.44;
+  const paddingX = fontSize * 0.74;
+  const gap = fontSize * 0.46;
+  const height = Math.round(fontSize * 1.85);
+  const width = Math.round(
+    paddingX * 2 + markRadius * 2 + gap + context.measureText(options.label).width,
+  );
+  const left = options.right - width;
+  const middle = options.top + height / 2;
+
+  context.beginPath();
+  context.roundRect(left, options.top, width, height, height / 2);
+  context.fillStyle = stamp.fill;
+  context.fill();
+  context.strokeStyle = stamp.border;
+  context.lineWidth = 1;
+  context.stroke();
+
+  const markX = left + paddingX + markRadius;
+  drawFailureMark(context, markX, middle, markRadius, stamp.mark, 1.4);
+
+  context.fillStyle = stamp.text;
+  context.fillText(options.label, markX + markRadius + gap, middle + fontSize * 0.35);
+  context.restore();
+  return width;
 }
 
 export function fitSocialCaption(
@@ -507,6 +724,8 @@ export function getShareCaption(
   const result = `${Math.round(data.median)} effective output ${SHARE_METRIC_UNIT}. ${getShareMoodLine(data)}.`;
   const refusalLine = getShareRefusalLine(data);
   const refusal = refusalLine ? ` ${refusalLine}.` : '';
+  const failureLine = getShareFailureLine(data.failures);
+  const failure = failureLine ? ` ${failureLine}.` : '';
   const attribution = `#TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}`;
   const link =
     (platform === 'bluesky' || platform === 'generic') && productLink ? ` ${productLink}` : '';
@@ -521,6 +740,7 @@ export function getShareCaption(
       [
         `${compactSocialNumber(data.median)} ${SHARE_METRIC_UNIT} · ${getCompactShareMoodLine(data)}.`,
         compactRefusal,
+        getCompactFailureLine(data.failures),
         challenge,
         SHARE_SOCIAL_PRIVACY,
         SHARE_SOCIAL_BRAND,
@@ -532,10 +752,10 @@ export function getShareCaption(
 
   if (platform === 'linkedin') {
     const challenge = data.isToday ? SHARE_CHALLENGE : 'How did Claude Code treat you that day?';
-    return `${tagline}.\n\nToken Envy receipt:\n${result}${refusal}\n\n${challenge}\n\n${SHARE_PRIVACY_NOTE}\n${attribution}`;
+    return `${tagline}.\n\nToken Envy receipt:\n${result}${refusal}${failure}\n\n${challenge}\n\n${SHARE_PRIVACY_NOTE}\n${attribution}`;
   }
   const challenge = data.isToday ? SHARE_CHALLENGE : 'How did Claude Code treat you that day?';
-  return `${tagline}: ${result}${refusal} ${challenge} ${SHARE_PRIVACY_NOTE} ${attribution}${link}`;
+  return `${tagline}: ${result}${refusal}${failure} ${challenge} ${SHARE_PRIVACY_NOTE} ${attribution}${link}`;
 }
 
 export function getShareTextReceipt(
@@ -553,6 +773,7 @@ export function getShareTextReceipt(
     getShareMoodLine(data),
     getShareActivityLine(data),
     refusalLine || null,
+    getShareFailureLine(data.failures) || null,
     SHARE_PRIVACY_NOTE,
     SHARE_INSTALL_CTA,
     SECURITY_BLUEPRINTS_CAPTION,

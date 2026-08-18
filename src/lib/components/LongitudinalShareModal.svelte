@@ -23,6 +23,8 @@
   import { focusDialog, trapDialogTab } from './focus';
   import {
     longitudinalCaption,
+    longitudinalFailureLine,
+    longitudinalFailureStamp,
     longitudinalFamilyLabel,
     longitudinalHeadline,
     longitudinalImageFilename,
@@ -38,6 +40,11 @@
   import { selectedLongitudinalRefusalCounts } from './refusal-mood';
   import {
     DEFAULT_SHARE_PRODUCT_URL,
+    drawFailureMark,
+    drawFailureStamp,
+    FAILURE_MARK,
+    failureStampStyle,
+    getFailureStampTheme,
     getShareSentimentTheme,
     normalizeShareSentiment,
     safeShareProductLink,
@@ -75,6 +82,9 @@
     snapshot.refusals.some((day) => day.selected.attempted > 0 || day.unattributed.attempted > 0),
   );
   let sentimentDescription = $derived(longitudinalSentimentDescription(snapshot));
+  let failureStamp = $derived(longitudinalFailureStamp(snapshot));
+  let failureLine = $derived(longitudinalFailureLine(snapshot));
+  let failureDays = $derived(snapshot.failures.filter((day) => day.attempted > 0));
   let refusalDescription = $derived(
     refusalLines.length > 0
       ? refusalLines.join('. ')
@@ -90,7 +100,7 @@
   let caption = $derived(longitudinalCaption(snapshot, tone, sentiment, productLink?.href ?? null));
   let plotPoints = $derived(plot(snapshot.points, snapshot.startDate, snapshot.throughDate));
   let previewLabel = $derived(
-    `Token Envy Claude weather. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${snapshot.variationPct === null ? metricLabel : `${Math.round(snapshot.variationPct)} percent ${metricLabel}`}. ${trendLabel}. ${snapshot.measuredOutputTokens.toLocaleString('en-US')} measured output tokens across ${snapshot.measuredRequests.toLocaleString('en-US')} requests and ${snapshot.observedDays.toLocaleString('en-US')} observed days.${refusalDescription ? ` ${refusalDescription}.` : ''} ${familyLabel}, ${rangeLabel} view. ${LONGITUDINAL_INSTALL_CTA}.`,
+    `Token Envy Claude weather. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${snapshot.variationPct === null ? metricLabel : `${Math.round(snapshot.variationPct)} percent ${metricLabel}`}. ${trendLabel}. ${snapshot.measuredOutputTokens.toLocaleString('en-US')} measured output tokens across ${snapshot.measuredRequests.toLocaleString('en-US')} requests and ${snapshot.observedDays.toLocaleString('en-US')} observed days.${refusalDescription ? ` ${refusalDescription}.` : ''}${failureLine ? ` ${failureLine}.` : ''} ${familyLabel}, ${rangeLabel} view. ${LONGITUDINAL_INSTALL_CTA}.`,
   );
   let canExport = $derived(preparedFile !== null && !preparing);
 
@@ -104,6 +114,7 @@
         selected: { ...day.selected },
         unattributed: { ...day.unattributed },
       })),
+      failures: summary.failures.map((day) => ({ ...day })),
     };
   }
 
@@ -226,13 +237,23 @@
       61,
     );
 
+    const currentStamp = longitudinalFailureStamp(currentSummary);
+    drawFailureStamp(context, {
+      right: 1138,
+      top: 70,
+      label: currentStamp,
+      theme: currentTheme,
+    });
+
     context.textAlign = 'left';
     const currentHeadline = longitudinalHeadline(currentTone, currentSentiment);
+    // The stamp claims a little headline air rather than overlapping it.
+    const headlineBaseline = currentStamp ? 134 : 126;
     const fitted = fitTextLines(currentHeadline, {
       maxWidth: 1060,
       maxLines: 2,
       maxHeight: 74,
-      maxFontSize: 44,
+      maxFontSize: currentStamp ? 40 : 44,
       minFontSize: 30,
       measure: (fontSize, text) => {
         context.font = `700 ${fontSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
@@ -242,7 +263,7 @@
     context.fillStyle = currentTheme.text;
     context.font = `700 ${fitted.fontSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
     fitted.lines.forEach((line, index) =>
-      context.fillText(line, 62, 126 + index * fitted.lineHeight),
+      context.fillText(line, 62, headlineBaseline + index * fitted.lineHeight),
     );
 
     context.font = '760 102px Inter, ui-sans-serif, system-ui, sans-serif';
@@ -375,6 +396,15 @@
       if (unattributedAttempt) {
         drawWarningTriangle(context, markerX + (selectedAttempt ? 9 : 0), -11, false, true);
       }
+    }
+    // Failures ride their own row above the refusal markers, exactly as they do
+    // on the dashboard chart, and are never narrowed by the family filter.
+    const stamp = getFailureStampTheme(currentTheme);
+    for (const failure of currentSummary.failures) {
+      if (failure.attempted <= 0) continue;
+      const x =
+        dateFraction(failure.date, currentSummary.startDate, currentSummary.throughDate) * width;
+      drawFailureMark(context, Math.max(9, Math.min(width - 9, x)), -32, 7, stamp.mark);
     }
     context.restore();
   }
@@ -610,7 +640,7 @@
         class="longitudinal-share-preview"
         role="img"
         aria-label={previewLabel}
-        style={`--weather-start:${theme.backgroundStart};--weather-middle:${theme.backgroundMiddle};--weather-end:${theme.backgroundEnd};--weather-accent:${theme.accent};--weather-text:${theme.text};--weather-muted:${theme.mutedText}`}
+        style={`--weather-start:${theme.backgroundStart};--weather-middle:${theme.backgroundMiddle};--weather-end:${theme.backgroundEnd};--weather-accent:${theme.accent};--weather-text:${theme.text};--weather-muted:${theme.mutedText};${failureStampStyle(theme)}`}
       >
         <div class="longitudinal-weather-lines" aria-hidden="true"><i></i><i></i><i></i></div>
         <header>
@@ -619,7 +649,14 @@
               >{SECURITY_BLUEPRINTS_CARD_LINE}</small
             >
           </div>
-          <span>{rangeLabel} · {familyLabel}</span>
+          <div class="share-preview-context">
+            <span>{rangeLabel} · {familyLabel}</span>
+            {#if failureStamp}
+              <span class="share-failure-stamp"
+                ><i aria-hidden="true">{FAILURE_MARK}</i><span>{failureStamp}</span></span
+              >
+            {/if}
+          </div>
         </header>
         <div class="longitudinal-share-copy">
           <p>{headline}</p>
@@ -659,6 +696,15 @@
                 d={`M ${unattributedX} 1 L ${unattributedX + 7} 14 L ${unattributedX - 7} 14 Z`}
               ></path>
             {/if}
+          {/each}
+          {#each failureDays as failure (failure.date)}
+            {@const x = dateFraction(failure.date, snapshot.startDate, snapshot.throughDate) * 720}
+            {@const markX = Math.max(9, Math.min(711, x))}
+            <g class="failure-mark" transform={`translate(${markX} -14)`}>
+              <circle cx="0" cy="0" r="6.5"></circle>
+              <line x1="-3" y1="-3" x2="3" y2="3"></line>
+              <line x1="-3" y1="3" x2="3" y2="-3"></line>
+            </g>
           {/each}
         </svg>
         <div

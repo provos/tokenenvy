@@ -68,6 +68,7 @@ export interface WeeklyRecap {
   fastestDay: { date: string; median: number } | null;
   slowestDay: { date: string; median: number } | null;
   refusals: PeriodRefusalSummary;
+  failures: PeriodFailureSummary;
 }
 
 export interface WeeklyModelMix {
@@ -152,6 +153,11 @@ export interface FailureTimeline {
   days: DatedFailureCounts[];
 }
 
+export interface PeriodFailureSummary extends FailureCounts {
+  recorded: boolean;
+  affectedDates: DatedFailureCounts[];
+}
+
 export interface LongitudinalRefusalDay {
   date: string;
   selected: RefusalCounts;
@@ -182,6 +188,8 @@ export interface LongitudinalSummary {
   points: LongitudinalPoint[];
   refusalsRecorded: boolean;
   refusals: LongitudinalRefusalDay[];
+  failuresRecorded: boolean;
+  failures: DatedFailureCounts[];
 }
 
 export interface HistogramBin {

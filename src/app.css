@@ -2371,6 +2371,53 @@ td .model-dot {
   color: #ff826f;
 }
 
+/* Shared by all three cards: the date, week, or range, with the outage stamp
+   trailing it only when the service actually failed. */
+.share-preview-context {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+  text-align: right;
+}
+
+/* Platform failures borrow the card's own foreground instead of the dashboard's
+   --fault blue: a fixed hue either vanishes on the calm themes or competes with
+   the angry ones. Achromatic also keeps this below the refusal alarm, which owns
+   the only saturated warning colors on a card. */
+.share-failure-stamp {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42em;
+  overflow: hidden;
+  padding: 0.3em 0.72em;
+  border: 1px solid var(--stamp-border);
+  border-radius: 999px;
+  background: var(--stamp-fill);
+  color: var(--stamp-text);
+  font-size: clamp(5px, 1.05vw, 8px);
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-failure-stamp i {
+  flex: none;
+  color: var(--stamp-mark);
+  font-size: 1.18em;
+  font-style: normal;
+  line-height: 1;
+}
+
+/* Narrow previews trim the label instead of clipping it mid-word. */
+.share-failure-stamp > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .weekly-recap-preview {
   --weekly-bg-start: #07151c;
   --weekly-bg-middle: #102a31;
@@ -2869,6 +2916,24 @@ td .model-dot {
   fill: transparent;
   stroke: var(--weather-muted);
   stroke-dasharray: 3 2;
+}
+
+/* Failures ride their own row above the refusal markers, matching the dashboard
+   chart. The mark is drawn, not filled, so it stays quieter than a refusal. */
+.longitudinal-share-chart .failure-mark circle,
+.longitudinal-share-chart .failure-mark line {
+  fill: none;
+  stroke: var(--stamp-mark);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.longitudinal-share-chart .failure-mark line {
+  stroke-linecap: round;
+}
+
+.longitudinal-share-preview .share-failure-stamp {
+  font-size: clamp(5px, 1.05cqw, 9px);
 }
 
 .longitudinal-refusal-copy {

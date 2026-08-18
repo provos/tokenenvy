@@ -10,6 +10,7 @@ import type {
   ModelFamily,
   ModelSummary,
   OverviewResponse,
+  PeriodFailureSummary,
   PeriodRefusalSummary,
   QuotaResponse,
   RefusalCounts,
@@ -409,6 +410,17 @@ export class Analytics {
     return { recorded: failures.length > 0, days: failureDays(failures, timezone, start, end) };
   }
 
+  private periodFailures(timezone: string, start: string, end: string): PeriodFailureSummary {
+    const timeline = this.failureTimeline(timezone, start, end);
+    const total = { attempted: 0, overloaded: 0, serverError: 0 };
+    for (const day of timeline.days) {
+      total.attempted += day.attempted;
+      total.overloaded += day.overloaded;
+      total.serverError += day.serverError;
+    }
+    return { recorded: timeline.recorded, ...total, affectedDates: timeline.days };
+  }
+
   private periodRefusals(timezone: string, start: string, end: string): PeriodRefusalSummary {
     const timeline = this.refusalTimeline(timezone, start, end);
     const total = emptyRefusalCounts();
@@ -444,6 +456,7 @@ export class Analytics {
     const weekStart = addCalendarDays(today, 1 - isoWeekday(today));
     const weekEnd = addCalendarDays(weekStart, 7);
     const weeklyRefusals = this.periodRefusals(timezone, weekStart, today);
+    const weeklyFailures = this.periodFailures(timezone, weekStart, today);
     const usageByDate = new Map<string, number>();
     for (const request of all) {
       if (
@@ -537,6 +550,7 @@ export class Analytics {
           fastestDay,
           slowestDay,
           refusals: weeklyRefusals,
+          failures: weeklyFailures,
         },
       },
       // Both rates divide by the same measured-request count, and the query
@@ -716,6 +730,7 @@ export class Analytics {
       }
     }
     const timeline = this.refusalTimeline(timezone, startDate, throughDate);
+    const failureTimeline = this.failureTimeline(timezone, startDate, throughDate);
     const refusalDays = timeline.days.flatMap((day) => {
       const selectedCounts = emptyRefusalCounts();
       for (const family of day.families) {
@@ -742,6 +757,8 @@ export class Analytics {
       points,
       refusalsRecorded: timeline.recorded,
       refusals: refusalDays,
+      failuresRecorded: failureTimeline.recorded,
+      failures: failureTimeline.days,
     };
   }
 

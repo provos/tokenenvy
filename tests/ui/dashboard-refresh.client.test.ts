@@ -136,6 +136,13 @@ const overviewPayload: OverviewResponse = {
         unknown: 0,
         affectedDates: [],
       },
+      failures: {
+        recorded: false,
+        attempted: 0,
+        overloaded: 0,
+        serverError: 0,
+        affectedDates: [],
+      },
     },
   },
   refusals: {

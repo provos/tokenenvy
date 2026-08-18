@@ -1,9 +1,13 @@
 import type { LongitudinalSummary, ModelFamily, RefusalCounts } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
+import { adjustSentimentForFailures, longitudinalFailureCounts } from './failure-mood';
 import { adjustSentimentForRefusals, selectedLongitudinalRefusalCounts } from './refusal-mood';
 import {
   compactSocialNumber,
-  getRefusalMoodAdjustmentLine,
+  failureStampLabel,
+  getCompactFailureLine,
+  getInterruptionMoodLines,
+  getShareFailureLine,
   getShareSentimentTheme,
   fitSocialCaption,
   SHARE_PRIVACY_NOTE,
@@ -44,19 +48,36 @@ export function longitudinalPerformanceSentiment(summary: LongitudinalSummary): 
 
 export function suggestedLongitudinalSentiment(summary: LongitudinalSummary): ShareSentiment {
   const base = longitudinalPerformanceSentiment(summary);
-  return adjustSentimentForRefusals(base, selectedLongitudinalRefusalCounts(summary)).suggested;
+  const refusals = adjustSentimentForRefusals(base, selectedLongitudinalRefusalCounts(summary));
+  // Refusals answer to the family filter; failures never do, so every failure in
+  // range still weighs on the mood.
+  return adjustSentimentForFailures(refusals.suggested, longitudinalFailureCounts(summary))
+    .suggested;
 }
 
 export function longitudinalSentimentDescription(summary: LongitudinalSummary): string {
   const base = longitudinalPerformanceSentiment(summary);
-  const adjustment = adjustSentimentForRefusals(base, selectedLongitudinalRefusalCounts(summary));
+  const refusals = adjustSentimentForRefusals(base, selectedLongitudinalRefusalCounts(summary));
+  const failures = adjustSentimentForFailures(
+    refusals.suggested,
+    longitudinalFailureCounts(summary),
+  );
   const baseMood = getShareSentimentTheme(base).label;
   const basis =
     summary.quality === 'insufficient' || summary.variationPct === null
       ? 'Neutral for now. This view needs more comparable data.'
       : `Adjusted variation suggested ${baseMood}.`;
-  const refusalAdjustment = getRefusalMoodAdjustmentLine(adjustment);
-  return `${basis}${refusalAdjustment ? ` ${refusalAdjustment}` : ''} Pick the mood; the numbers stay put.`;
+  const adjustments = getInterruptionMoodLines(refusals, failures);
+  return `${basis}${adjustments ? ` ${adjustments}` : ''} Pick the mood; the numbers stay put.`;
+}
+
+/** Empty when the range is clean, so a quiet chart stays a quiet chart. */
+export function longitudinalFailureLine(summary: LongitudinalSummary): string {
+  return getShareFailureLine(longitudinalFailureCounts(summary));
+}
+
+export function longitudinalFailureStamp(summary: LongitudinalSummary): string {
+  return failureStampLabel(longitudinalFailureCounts(summary));
 }
 
 export function longitudinalHeadline(tone: ShareTone, sentiment: ShareSentiment): string {
@@ -142,6 +163,8 @@ export function longitudinalCaption(
   const refusals = summary.refusalsRecorded
     ? refusalLines.join('. ')
     : 'Explicit refusal signals unavailable';
+  const failureLine = longitudinalFailureLine(summary);
+  const failures = failureLine ? ` ${failureLine}.` : '';
   const link = productUrl ? ` ${productUrl}` : '';
 
   if (platform === 'x' || platform === 'bluesky') {
@@ -183,13 +206,20 @@ export function longitudinalCaption(
         : `${Math.round(summary.variationPct)}% swing${trend}.`;
     return fitSocialCaption(
       headline,
-      [metric, compactRefusals, LONGITUDINAL_CHALLENGE, SHARE_SOCIAL_PRIVACY, SHARE_SOCIAL_BRAND],
+      [
+        metric,
+        compactRefusals,
+        getCompactFailureLine(longitudinalFailureCounts(summary)),
+        LONGITUDINAL_CHALLENGE,
+        SHARE_SOCIAL_PRIVACY,
+        SHARE_SOCIAL_BRAND,
+      ],
       platform === 'bluesky' ? productUrl : null,
       platform === 'x' ? 250 : 300,
     );
   }
 
-  return `${headline}. ${weather} ${longitudinalTrendLabel(summary)}. ${summary.observedDays} observed days (${filters}). ${refusals}. ${LONGITUDINAL_CHALLENGE} ${SHARE_PRIVACY_NOTE} #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
+  return `${headline}. ${weather} ${longitudinalTrendLabel(summary)}. ${summary.observedDays} observed days (${filters}). ${refusals}.${failures} ${LONGITUDINAL_CHALLENGE} ${SHARE_PRIVACY_NOTE} #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
 }
 
 export function longitudinalImageFilename(

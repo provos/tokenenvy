@@ -237,6 +237,17 @@
       userVisible: selected?.userVisible ?? 0,
     };
   });
+  // Failures are always unattributed, so the selected day is taken whole: no
+  // family filter applies, and they are never summed with the refusals above.
+  let selectedDayFailures = $derived.by(() => {
+    const selected = overview?.failures.byDay.find((item) => item.date === dayDetail?.date);
+    return {
+      recorded: overview?.failures.recorded === true,
+      attempted: selected?.attempted ?? 0,
+      overloaded: selected?.overloaded ?? 0,
+      serverError: selected?.serverError ?? 0,
+    };
+  });
 
   $effect(() => {
     const window = quota?.sevenDay;
@@ -1090,6 +1101,7 @@
     open={shareOpen}
     detail={dayDetail}
     refusals={selectedDayRefusals}
+    failures={selectedDayFailures}
     isToday={dayDetail.date === overview.today}
     onclose={() => (shareOpen = false)}
   />

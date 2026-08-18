@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import LongitudinalShareModal from '../../src/lib/components/LongitudinalShareModal.svelte';
 import {
   longitudinalCaption,
+  longitudinalFailureLine,
+  longitudinalFailureStamp,
   longitudinalFamilyLabel,
   longitudinalHeadline,
   longitudinalImageFilename,
@@ -41,6 +43,8 @@ const summary: LongitudinalSummary = {
       unattributed: { attempted: 2, recovered: 2, userVisible: 0, unknown: 0 },
     },
   ],
+  failuresRecorded: true,
+  failures: [],
 };
 
 describe('longitudinal share helpers', () => {
@@ -201,5 +205,81 @@ describe('longitudinal share dialog', () => {
     );
     expect(refusalCopy).toContain('<span>Explicit refusal signals unavailable</span>');
     expect(refusalCopy).not.toContain('▲');
+  });
+});
+describe('longitudinal platform failures', () => {
+  const stormy: LongitudinalSummary = {
+    ...summary,
+    refusals: [],
+    failures: [
+      { date: '2026-07-02', attempted: 2, overloaded: 2, serverError: 0 },
+      { date: '2026-08-14', attempted: 10, overloaded: 7, serverError: 3 },
+    ],
+  };
+
+  it('summarises the whole range on its own axis', () => {
+    expect(longitudinalFailureStamp(stormy)).toBe('12 API failures · the service could not');
+    expect(longitudinalFailureLine(stormy)).toBe(
+      '12 API failures · 9 overloaded · 3 server faults · the service could not',
+    );
+    expect(longitudinalFailureLine({ ...summary, failures: [] })).toBe('');
+    expect(longitudinalFailureLine({ ...stormy, failuresRecorded: false })).toBe('');
+    // Refusal copy is untouched: the two axes are never merged into one count.
+    expect(longitudinalRefusalLines(stormy)).toEqual(['No explicit refusal signals in this range']);
+  });
+
+  it('never narrows failures by the selected model families', () => {
+    const asOpus = { ...stormy, families: ['opus'] as LongitudinalSummary['families'] };
+    const asSonnet = { ...stormy, families: ['sonnet'] as LongitudinalSummary['families'] };
+    expect(longitudinalFailureLine(asOpus)).toBe(longitudinalFailureLine(asSonnet));
+    expect(suggestedLongitudinalSentiment(asOpus)).toBe(suggestedLongitudinalSentiment(asSonnet));
+  });
+
+  it('lowers the mood gently and explains it after the refusal line', () => {
+    expect(suggestedLongitudinalSentiment({ ...summary, refusals: [], failures: [] })).toBe(1);
+    expect(suggestedLongitudinalSentiment(stormy)).toBe(0);
+    expect(longitudinalSentimentDescription(stormy)).toBe(
+      'Adjusted variation suggested Good. 12 API failures that never completed moved it to Neutral. Pick the mood; the numbers stay put.',
+    );
+
+    // Refusals already chose Rough; a sustained outage cannot drive it to Brutal.
+    const both = { ...stormy, refusals: summary.refusals };
+    expect(suggestedLongitudinalSentiment(both)).toBe(-1);
+    expect(longitudinalSentimentDescription(both)).toBe(
+      'Adjusted variation suggested Good. 1 user-visible refusal signal moved it to Rough. 12 API failures that never completed kept it at Rough. Pick the mood; the numbers stay put.',
+    );
+  });
+
+  it('carries the failure axis into every caption without crowding out the rest', () => {
+    expect(longitudinalCaption(stormy, 'friendly', 0, null)).toContain(
+      '12 API failures · 9 overloaded · 3 server faults · the service could not.',
+    );
+    const xCaption = longitudinalCaption(stormy, 'friendly', 0, null, 'x');
+    expect(xCaption).toContain('12 API failures: 9 overloaded/3 server; the service could not.');
+    expect(xCaption.length).toBeLessThanOrEqual(250);
+    expect(longitudinalCaption({ ...summary, failures: [] }, 'friendly', 0, null)).not.toContain(
+      'API failure',
+    );
+  });
+
+  it('marks only the days that failed, above the refusal markers', () => {
+    const { body } = render(LongitudinalShareModal, {
+      props: { open: true, summary: stormy, onclose: () => undefined },
+    });
+
+    expect(body.match(/class="failure-mark"/g)).toHaveLength(2);
+    expect(body).toContain('class="share-failure-stamp"');
+    expect(body.replace(/\s+/g, ' ')).toContain('12 API failures · the service could not');
+    expect(body).toContain('--stamp-mark:');
+  });
+
+  it('adds nothing to a card whose range never failed', () => {
+    const { body } = render(LongitudinalShareModal, {
+      props: { open: true, summary, onclose: () => undefined },
+    });
+
+    expect(body).not.toContain('failure-mark');
+    expect(body).not.toContain('share-failure-stamp');
+    expect(body).not.toContain('API failure');
   });
 });
