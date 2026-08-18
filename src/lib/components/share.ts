@@ -1,7 +1,11 @@
-import type { HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
+import type { FailureCounts, HistogramBin, ModelSummary, SpeedIndex } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
 import { adjustSentimentForFailures, type FailureMoodAdjustment } from './failure-mood';
-import { adjustSentimentForRefusals, type RefusalMoodAdjustment } from './refusal-mood';
+import {
+  adjustSentimentForRefusals,
+  type RefusalMoodAdjustment,
+  type RefusalMoodCounts,
+} from './refusal-mood';
 
 export type ShareTone = 'friendly' | 'spicy';
 export type ShareSentiment = -2 | -1 | 0 | 1 | 2;
@@ -27,7 +31,7 @@ export const FAILURE_MARK = '⊗';
  * A card carries only the failure half, and a caption is plain prose, so both
  * finish the verb instead of leaning on a twin that is not there.
  */
-export const FAILURE_FRAMING = 'the service could not complete';
+const FAILURE_FRAMING = 'the service could not complete';
 
 const SOCIAL_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -175,11 +179,8 @@ export interface ShareRefusalCounts {
  * Platform failures. They are a separate axis from refusals and are never summed
  * with them; `attempted` is always `overloaded + serverError`.
  */
-export interface ShareFailureCounts {
+export interface ShareFailureCounts extends FailureCounts {
   recorded: boolean;
-  attempted: number;
-  overloaded: number;
-  serverError: number;
 }
 
 export interface ShareCardInput {
@@ -248,8 +249,7 @@ export function sentimentAfterCardChange(
 
 export function suggestedShareSentiment(data: ShareCardData): ShareSentiment {
   const base = suggestedPerformanceSentiment(data);
-  const refusals = adjustSentimentForRefusals(base, data.refusals);
-  return adjustSentimentForFailures(refusals.suggested, data.failures).suggested;
+  return adjustSentimentForInterruptions(base, data.refusals, data.failures).suggested;
 }
 
 export function suggestedPerformanceSentiment(data: ShareCardData): ShareSentiment {
@@ -268,6 +268,15 @@ export function suggestedPerformanceSentiment(data: ShareCardData): ShareSentime
   return 0;
 }
 
+/** The shared tail: what the signals did to the mood, and where it landed. */
+function moodAdjustmentLine(
+  adjustment: RefusalMoodAdjustment | FailureMoodAdjustment,
+  signals: string,
+): string {
+  const finalMood = getShareSentimentTheme(adjustment.suggested).label;
+  return `${signals} ${adjustment.stepsLowered > 0 ? 'moved it to' : 'kept it at'} ${finalMood}.`;
+}
+
 export function getRefusalMoodAdjustmentLine(adjustment: RefusalMoodAdjustment): string | null {
   if (adjustment.reason === 'unavailable' || adjustment.reason === 'none-observed') return null;
 
@@ -284,24 +293,42 @@ export function getRefusalMoodAdjustmentLine(adjustment: RefusalMoodAdjustment):
         ? 'unresolved'
         : 'recovered';
   const signals = `${count} ${kind} refusal ${count === 1 ? 'signal' : 'signals'}`;
-  const finalMood = getShareSentimentTheme(adjustment.suggested).label;
-  return adjustment.stepsLowered > 0
-    ? `${signals} moved it to ${finalMood}.`
-    : `${signals} kept it at ${finalMood}.`;
+  return moodAdjustmentLine(adjustment, signals);
 }
 
 /**
  * Says what the failures did to the mood without blaming the reader and without
  * naming a status class the logs never measured.
  */
-export function getFailureMoodAdjustmentLine(adjustment: FailureMoodAdjustment): string | null {
+function getFailureMoodAdjustmentLine(adjustment: FailureMoodAdjustment): string | null {
   if (adjustment.reason === 'unavailable' || adjustment.reason === 'none-observed') return null;
-  const { attempted } = adjustment.counts;
-  const signals = `${attempted} API ${attempted === 1 ? 'failure' : 'failures'} that never completed`;
-  const finalMood = getShareSentimentTheme(adjustment.suggested).label;
-  return adjustment.stepsLowered > 0
-    ? `${signals} moved it to ${finalMood}.`
-    : `${signals} kept it at ${finalMood}.`;
+  return moodAdjustmentLine(
+    adjustment,
+    `${failureNoun(adjustment.counts.attempted)} that never completed`,
+  );
+}
+
+/**
+ * The only place the two-stage composition lives: refusals adjust the
+ * performance mood, then failures adjust what the refusals left. A caller that
+ * fed the failures the untouched base would silently drop the refusal step.
+ */
+export function adjustSentimentForInterruptions(
+  base: ShareSentiment,
+  refusals: RefusalMoodCounts,
+  failures: ShareFailureCounts,
+): {
+  refusals: RefusalMoodAdjustment;
+  failures: FailureMoodAdjustment;
+  suggested: ShareSentiment;
+} {
+  const refusalAdjustment = adjustSentimentForRefusals(base, refusals);
+  const failureAdjustment = adjustSentimentForFailures(refusalAdjustment.suggested, failures);
+  return {
+    refusals: refusalAdjustment,
+    failures: failureAdjustment,
+    suggested: failureAdjustment.suggested,
+  };
 }
 
 /** Refusals speak first, then failures, so the stronger signal leads. */
@@ -321,8 +348,11 @@ function endSentence(value: string): string {
 
 export function getShareSentimentDescription(data: ShareCardData, reason?: string | null): string {
   const base = suggestedPerformanceSentiment(data);
-  const refusals = adjustSentimentForRefusals(base, data.refusals);
-  const failures = adjustSentimentForFailures(refusals.suggested, data.failures);
+  const { refusals, failures } = adjustSentimentForInterruptions(
+    base,
+    data.refusals,
+    data.failures,
+  );
   const baseMood = getShareSentimentTheme(base).label;
   const basis = data.indexEligible
     ? `Comparable days suggested ${baseMood}.`
@@ -415,7 +445,7 @@ function nonNegativeInteger(value: number | undefined): number {
   return Number.isFinite(value) ? Math.max(0, Math.round(value as number)) : 0;
 }
 
-export function normalizeShareFailures(input: ShareFailureCounts | undefined): ShareFailureCounts {
+function normalizeShareFailures(input: ShareFailureCounts | undefined): ShareFailureCounts {
   const attempted = input?.recorded ? nonNegativeInteger(input.attempted) : 0;
   const overloaded = Math.min(attempted, nonNegativeInteger(input?.overloaded));
   const serverError = Math.min(attempted - overloaded, nonNegativeInteger(input?.serverError));
@@ -487,11 +517,15 @@ export function compactSocialNumber(value: number): string {
   return SOCIAL_NUMBER_FORMATTER.format(Math.max(0, Math.round(value)));
 }
 
-function failureNoun(attempted: number): string {
-  return `${attempted} API ${attempted === 1 ? 'failure' : 'failures'}`;
+/**
+ * The one spelling of the failure count. `format` lets the compact social path
+ * abbreviate the number without re-deriving the plural.
+ */
+export function failureNoun(attempted: number, format: (value: number) => string = String): string {
+  return `${format(attempted)} API ${attempted === 1 ? 'failure' : 'failures'}`;
 }
 
-function serverFaultLabel(serverError: number): string {
+export function serverFaultLabel(serverError: number): string {
   return `${serverError} server ${serverError === 1 ? 'fault' : 'faults'}`;
 }
 
@@ -528,7 +562,7 @@ export function getCompactFailureLine(counts: ShareFailureCounts): string {
     failures.overloaded > 0 ? `${compactSocialNumber(failures.overloaded)} overloaded` : null,
     failures.serverError > 0 ? `${compactSocialNumber(failures.serverError)} server` : null,
   ].filter((outcome): outcome is string => outcome !== null);
-  return `${compactSocialNumber(failures.attempted)} API ${failures.attempted === 1 ? 'failure' : 'failures'}: ${outcomes.join('/')}; ${FAILURE_FRAMING}.`;
+  return `${failureNoun(failures.attempted, compactSocialNumber)}: ${outcomes.join('/')}; ${FAILURE_FRAMING}.`;
 }
 
 export interface FailureStampTheme {

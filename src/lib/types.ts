@@ -128,6 +128,15 @@ export interface RefusalTimeline {
 export type FailureClass = 'overloaded' | 'server_error' | 'safeguard_block' | 'client';
 
 /**
+ * The subset of `FailureClass` that counts as a platform fault. Single source of
+ * truth for both the narrowed type and the queries that select those rows.
+ */
+export const PLATFORM_FAILURE_CLASSES = [
+  'overloaded',
+  'server_error',
+] as const satisfies readonly FailureClass[];
+
+/**
  * Failure events carry `model: "<synthetic>"`, so they can never be attributed
  * to a model family. They are reported unattributed and stay visible under
  * every family filter.

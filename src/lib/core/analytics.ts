@@ -133,9 +133,11 @@ function addRefusalCounts(target: RefusalCounts, source: RefusalCounts): void {
  * The model family a refusal may be filed under, or `undefined` when the
  * request never named a model. A request whose only assistant rows are API
  * error rows reports `model: "<synthetic>"`, which resolves to the `other`
- * family — but `other` is never offered as a family chip, so a refusal filed
- * there would be counted and then drawn nowhere. Reporting those unattributed
- * keeps them visible under every filter, the same choice made for failures.
+ * family. `other` is offered as a family chip, but only once a *measured*
+ * request carries it — and an `api_error` request is excluded from measurement,
+ * so it can never make its own family available. A refusal filed there would be
+ * counted and then drawn nowhere. Reporting those unattributed keeps them
+ * visible under every filter, the same choice made for failures.
  */
 function attributableFamily(request: StoredRequest): ModelFamily | undefined {
   if (request.family === 'other' && request.qualityReason === 'api_error') return undefined;
@@ -144,6 +146,16 @@ function attributableFamily(request: StoredRequest): ModelFamily | undefined {
 
 function emptyFailureCounts(): FailureCounts {
   return { attempted: 0, overloaded: 0, serverError: 0 };
+}
+
+function totalFailureCounts(days: readonly FailureCounts[]): FailureCounts {
+  const total = emptyFailureCounts();
+  for (const day of days) {
+    total.attempted += day.attempted;
+    total.overloaded += day.overloaded;
+    total.serverError += day.serverError;
+  }
+  return total;
 }
 
 /**
@@ -163,7 +175,7 @@ function failureDays(
     const counts = dates.get(date) ?? emptyFailureCounts();
     counts.attempted += 1;
     if (failure.failureClass === 'overloaded') counts.overloaded += 1;
-    else counts.serverError += 1;
+    else if (failure.failureClass === 'server_error') counts.serverError += 1;
     dates.set(date, counts);
   }
   return [...dates.entries()]
@@ -365,9 +377,16 @@ export class Analytics {
 
   private refusalTimeline(timezone: string, start: string, end: string): RefusalTimeline {
     const refusals = this.database.getRefusals();
-    const requestsById = new Map(
-      this.requests().map((request) => [request.requestId, request] as const),
-    );
+    // Only the handful of requests a refusal points at need looking up, so the
+    // index is narrowed to those ids instead of every request ever measured.
+    const refusalRequestIds = new Set<string>();
+    for (const refusal of refusals) {
+      if (refusal.requestId) refusalRequestIds.add(refusal.requestId);
+    }
+    const requestsById = new Map<string, StoredRequest>();
+    for (const request of this.requests()) {
+      if (refusalRequestIds.has(request.requestId)) requestsById.set(request.requestId, request);
+    }
     const dates = new Map<
       string,
       { families: Map<ModelFamily, RefusalCounts>; unattributed: RefusalCounts }
@@ -405,20 +424,28 @@ export class Analytics {
     };
   }
 
-  private failureTimeline(timezone: string, start: string, end: string): FailureTimeline {
-    const failures = this.database.getFailures();
+  private failureTimeline(
+    timezone: string,
+    start: string,
+    end: string,
+    stored?: readonly StoredFailure[],
+  ): FailureTimeline {
+    const failures = stored ?? this.database.getFailures();
     return { recorded: failures.length > 0, days: failureDays(failures, timezone, start, end) };
   }
 
-  private periodFailures(timezone: string, start: string, end: string): PeriodFailureSummary {
-    const timeline = this.failureTimeline(timezone, start, end);
-    const total = { attempted: 0, overloaded: 0, serverError: 0 };
-    for (const day of timeline.days) {
-      total.attempted += day.attempted;
-      total.overloaded += day.overloaded;
-      total.serverError += day.serverError;
-    }
-    return { recorded: timeline.recorded, ...total, affectedDates: timeline.days };
+  private periodFailures(
+    timezone: string,
+    start: string,
+    end: string,
+    stored?: readonly StoredFailure[],
+  ): PeriodFailureSummary {
+    const timeline = this.failureTimeline(timezone, start, end, stored);
+    return {
+      recorded: timeline.recorded,
+      ...totalFailureCounts(timeline.days),
+      affectedDates: timeline.days,
+    };
   }
 
   private periodRefusals(timezone: string, start: string, end: string): PeriodRefusalSummary {
@@ -439,6 +466,7 @@ export class Analytics {
     const today = localDate(now.getTime(), timezone);
     const all = this.requests();
     const quality = this.database.getDataQuality();
+    const storedFailures = this.database.getFailures();
     const { includingProvisional: validIncludingProvisional, completed: valid } =
       this.dated(timezone);
     const todaysRequests = valid.filter((request) => request.date === today);
@@ -456,7 +484,7 @@ export class Analytics {
     const weekStart = addCalendarDays(today, 1 - isoWeekday(today));
     const weekEnd = addCalendarDays(weekStart, 7);
     const weeklyRefusals = this.periodRefusals(timezone, weekStart, today);
-    const weeklyFailures = this.periodFailures(timezone, weekStart, today);
+    const weeklyFailures = this.periodFailures(timezone, weekStart, today, storedFailures);
     const usageByDate = new Map<string, number>();
     for (const request of all) {
       if (
@@ -554,9 +582,10 @@ export class Analytics {
         },
       },
       // Both rates divide by the same measured-request count, and the query
-      // behind it is expensive, so it is read once and threaded through.
+      // behind it is expensive, so it is read once and threaded through. The
+      // failure rows are read once for the same reason.
       refusals: this.refusals(timezone, quality),
-      failures: this.failures(timezone, quality),
+      failures: this.failures(timezone, quality, storedFailures),
       scan: this.database.getScanStatus(),
     };
   }
@@ -847,16 +876,15 @@ export class Analytics {
     };
   }
 
-  failures(timezone = 'UTC', quality?: DataQualitySummary): FailureSummary {
+  failures(
+    timezone = 'UTC',
+    quality?: DataQualitySummary,
+    stored?: readonly StoredFailure[],
+  ): FailureSummary {
     validateTimezone(timezone);
-    const failures = this.database.getFailures();
+    const failures = stored ?? this.database.getFailures();
     const byDay = failureDays(failures, timezone);
-    const total = emptyFailureCounts();
-    for (const day of byDay) {
-      total.attempted += day.attempted;
-      total.overloaded += day.overloaded;
-      total.serverError += day.serverError;
-    }
+    const total = totalFailureCounts(byDay);
     // Same measured-request denominator as refusals, so the two rates compare.
     const measured = (quality ?? this.database.getDataQuality()).includedRequests;
     return {

@@ -1,8 +1,7 @@
 import type { WeeklyModelMix, WeeklyRecap } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
-import { adjustSentimentForFailures } from './failure-mood';
-import { adjustSentimentForRefusals } from './refusal-mood';
 import {
+  adjustSentimentForInterruptions,
   compactSocialNumber,
   failureStampLabel,
   getCompactFailureLine,
@@ -64,8 +63,11 @@ export function weeklyPerformanceSentiment(recap: WeeklyRecapData): ShareSentime
 }
 
 export function suggestedWeeklySentiment(recap: WeeklyRecapData): ShareSentiment {
-  const refusals = adjustSentimentForRefusals(weeklyPerformanceSentiment(recap), recap.refusals);
-  return adjustSentimentForFailures(refusals.suggested, recap.failures).suggested;
+  return adjustSentimentForInterruptions(
+    weeklyPerformanceSentiment(recap),
+    recap.refusals,
+    recap.failures,
+  ).suggested;
 }
 
 export function weeklyRecapHeadline(
@@ -89,8 +91,11 @@ export function weeklyRecapIndexLine(recap: WeeklyRecapData): string {
 
 export function weeklyRecapSentimentDescription(recap: WeeklyRecapData): string {
   const base = weeklyPerformanceSentiment(recap);
-  const refusals = adjustSentimentForRefusals(base, recap.refusals);
-  const failures = adjustSentimentForFailures(refusals.suggested, recap.failures);
+  const { refusals, failures } = adjustSentimentForInterruptions(
+    base,
+    recap.refusals,
+    recap.failures,
+  );
   const baseMood = getShareSentimentTheme(base).label;
   const basis = recap.speedIndex.eligible
     ? `My prior 28 days suggested ${baseMood}.`

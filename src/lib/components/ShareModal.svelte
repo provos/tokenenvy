@@ -4,13 +4,13 @@
   import type { DayDetailResponse } from '$lib/types';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { dayLabel } from './chart';
+  import FailureStamp from './FailureStamp.svelte';
   import { focusDialog, trapDialogTab } from './focus';
   import HistogramBackdrop from './HistogramBackdrop.svelte';
   import {
     buildShareCardData,
     DEFAULT_SHARE_PRODUCT_URL,
     drawFailureStamp,
-    FAILURE_MARK,
     failureStampLabel,
     failureStampStyle,
     getShareActivityLine,
@@ -881,11 +881,7 @@
           </div>
           <div class="share-preview-context">
             <span>{formatShareDate(card.date)}</span>
-            {#if failureStamp}
-              <span class="share-failure-stamp"
-                ><i aria-hidden="true">{FAILURE_MARK}</i><span>{failureStamp}</span></span
-              >
-            {/if}
+            <FailureStamp label={failureStamp} />
           </div>
         </div>
         <div class="share-preview-center">

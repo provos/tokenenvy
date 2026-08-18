@@ -7,6 +7,8 @@ import type {
   RefusalTimeline,
   SpeedIndex,
 } from '$lib/types';
+// `share.ts` pulls in no chart module, so this stays a one-way dependency.
+import { failureNoun, serverFaultLabel } from './share';
 
 export const FAMILY_COLORS: Record<ModelFamily, string> = {
   opus: '#ff7359',
@@ -105,11 +107,8 @@ export function failureDayLabel(day: DatedFailureCounts): string {
   if (day.attempted === 0) {
     return 'No API failures recorded. Calls that never completed; not model refusals.';
   }
-  const parts = [
-    `${day.overloaded} overloaded`,
-    `${day.serverError} server ${day.serverError === 1 ? 'fault' : 'faults'}`,
-  ];
-  const attemptedLabel = `${day.attempted} API ${day.attempted === 1 ? 'failure' : 'failures'}: ${parts.join(', ')}`;
+  const parts = [`${day.overloaded} overloaded`, serverFaultLabel(day.serverError)];
+  const attemptedLabel = `${failureNoun(day.attempted)}: ${parts.join(', ')}`;
   return `${attemptedLabel}. Calls that never completed; not model refusals.`;
 }
 

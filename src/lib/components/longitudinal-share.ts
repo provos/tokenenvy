@@ -1,8 +1,9 @@
 import type { LongitudinalSummary, ModelFamily, RefusalCounts } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
-import { adjustSentimentForFailures, longitudinalFailureCounts } from './failure-mood';
-import { adjustSentimentForRefusals, selectedLongitudinalRefusalCounts } from './refusal-mood';
+import { longitudinalFailureCounts } from './failure-mood';
+import { selectedLongitudinalRefusalCounts } from './refusal-mood';
 import {
+  adjustSentimentForInterruptions,
   compactSocialNumber,
   failureStampLabel,
   getCompactFailureLine,
@@ -47,19 +48,20 @@ export function longitudinalPerformanceSentiment(summary: LongitudinalSummary): 
 }
 
 export function suggestedLongitudinalSentiment(summary: LongitudinalSummary): ShareSentiment {
-  const base = longitudinalPerformanceSentiment(summary);
-  const refusals = adjustSentimentForRefusals(base, selectedLongitudinalRefusalCounts(summary));
   // Refusals answer to the family filter; failures never do, so every failure in
   // range still weighs on the mood.
-  return adjustSentimentForFailures(refusals.suggested, longitudinalFailureCounts(summary))
-    .suggested;
+  return adjustSentimentForInterruptions(
+    longitudinalPerformanceSentiment(summary),
+    selectedLongitudinalRefusalCounts(summary),
+    longitudinalFailureCounts(summary),
+  ).suggested;
 }
 
 export function longitudinalSentimentDescription(summary: LongitudinalSummary): string {
   const base = longitudinalPerformanceSentiment(summary);
-  const refusals = adjustSentimentForRefusals(base, selectedLongitudinalRefusalCounts(summary));
-  const failures = adjustSentimentForFailures(
-    refusals.suggested,
+  const { refusals, failures } = adjustSentimentForInterruptions(
+    base,
+    selectedLongitudinalRefusalCounts(summary),
     longitudinalFailureCounts(summary),
   );
   const baseMood = getShareSentimentTheme(base).label;

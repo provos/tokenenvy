@@ -5,7 +5,8 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { normalizeModelFamily, outputSizeStratum } from '../core/model';
 import type { ParsedEvent } from '../core/parser';
-import type { FailureClass, ModelFamily, QuotaResponse, ScanStatus } from '../types';
+import type { ModelFamily, QuotaResponse, ScanStatus } from '../types';
+import { PLATFORM_FAILURE_CLASSES } from '../types';
 
 export interface DatabaseOptions {
   path: string;
@@ -63,7 +64,7 @@ export interface StoredFailure {
   requestId: string | null;
   sessionId: string;
   timestampMs: number;
-  failureClass: Extract<FailureClass, 'overloaded' | 'server_error'>;
+  failureClass: (typeof PLATFORM_FAILURE_CLASSES)[number];
 }
 
 export interface QuotaSampleInput {
@@ -270,11 +271,6 @@ export class Database {
     const version = Number(this.db.pragma('user_version', { simple: true })) || 0;
     const missingFailureClass = !eventColumns.some(({ name }) => name === 'failure_class');
     if (missingFailureClass) this.db.exec('ALTER TABLE events ADD COLUMN failure_class TEXT');
-    // Created after the column so an upgraded database can index it too.
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS events_failure_timestamp_idx
-        ON events(timestamp_ms) WHERE failure_class IS NOT NULL;
-    `);
     // The reset and the version bump commit together. Recording the version
     // afterwards would let a crash in between wipe the live index a second time
     // on the next open.
@@ -290,6 +286,12 @@ export class Database {
       }
       this.db.pragma('user_version = 3');
     })();
+    // Created after the column so an upgraded database can index it too, and
+    // after the reset so it is not built over rows the reset is about to delete.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS events_failure_timestamp_idx
+        ON events(timestamp_ms) WHERE failure_class IS NOT NULL;
+    `);
     this.db.pragma('optimize');
   }
 
@@ -455,6 +457,50 @@ export class Database {
       .run();
   }
 
+  /**
+   * Prunes archived rows whose live event no longer carries the class, then
+   * archives every stable live row that does. `table` and `column` are internal
+   * literals from the two call sites below, never user input, so interpolating
+   * them into the statements is safe.
+   */
+  private archiveEventClass(table: string, column: string, nowMs: number, cutoff: number): number {
+    const removed = this.db
+      .prepare(
+        `
+      DELETE FROM ${table}
+      WHERE EXISTS (
+        SELECT 1 FROM events live
+        WHERE live.event_id = ${table}.event_id
+          AND live.${column} IS NULL
+          AND live.timestamp_ms IS NOT NULL
+          AND live.timestamp_ms <= @cutoff
+      )
+    `,
+      )
+      .run({ cutoff });
+    const archived = this.db
+      .prepare(
+        `
+      INSERT INTO ${table}(
+        event_id, request_id, session_id, timestamp_ms, ${column}, archived_at, updated_at
+      )
+      SELECT event_id, request_id, session_id, timestamp_ms, ${column}, @nowMs, @nowMs
+      FROM events
+      WHERE ${column} IS NOT NULL AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
+      ON CONFLICT(event_id) DO UPDATE SET
+        request_id=excluded.request_id, session_id=excluded.session_id,
+        timestamp_ms=excluded.timestamp_ms, ${column}=excluded.${column},
+        updated_at=excluded.updated_at
+      WHERE ${table}.request_id IS NOT excluded.request_id
+        OR ${table}.session_id IS NOT excluded.session_id
+        OR ${table}.timestamp_ms IS NOT excluded.timestamp_ms
+        OR ${table}.${column} IS NOT excluded.${column}
+    `,
+      )
+      .run({ nowMs, cutoff });
+    return removed.changes + archived.changes;
+  }
+
   private archiveStableInternal(nowMs: number): {
     requests: number;
     refusals: number;
@@ -499,78 +545,10 @@ export class Database {
     `,
       )
       .run({ nowMs, cutoff });
-    const removedRefusals = this.db
-      .prepare(
-        `
-      DELETE FROM refusal_history
-      WHERE EXISTS (
-        SELECT 1 FROM events live
-        WHERE live.event_id = refusal_history.event_id
-          AND live.refusal_outcome IS NULL
-          AND live.timestamp_ms IS NOT NULL
-          AND live.timestamp_ms <= @cutoff
-      )
-    `,
-      )
-      .run({ cutoff });
-    const refusalResult = this.db
-      .prepare(
-        `
-      INSERT INTO refusal_history(
-        event_id, request_id, session_id, timestamp_ms, refusal_outcome, archived_at, updated_at
-      )
-      SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome, @nowMs, @nowMs
-      FROM events
-      WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
-      ON CONFLICT(event_id) DO UPDATE SET
-        request_id=excluded.request_id, session_id=excluded.session_id,
-        timestamp_ms=excluded.timestamp_ms, refusal_outcome=excluded.refusal_outcome,
-        updated_at=excluded.updated_at
-      WHERE refusal_history.request_id IS NOT excluded.request_id
-        OR refusal_history.session_id IS NOT excluded.session_id
-        OR refusal_history.timestamp_ms IS NOT excluded.timestamp_ms
-        OR refusal_history.refusal_outcome IS NOT excluded.refusal_outcome
-    `,
-      )
-      .run({ nowMs, cutoff });
-    const removedFailures = this.db
-      .prepare(
-        `
-      DELETE FROM failure_history
-      WHERE EXISTS (
-        SELECT 1 FROM events live
-        WHERE live.event_id = failure_history.event_id
-          AND live.failure_class IS NULL
-          AND live.timestamp_ms IS NOT NULL
-          AND live.timestamp_ms <= @cutoff
-      )
-    `,
-      )
-      .run({ cutoff });
-    const failureResult = this.db
-      .prepare(
-        `
-      INSERT INTO failure_history(
-        event_id, request_id, session_id, timestamp_ms, failure_class, archived_at, updated_at
-      )
-      SELECT event_id, request_id, session_id, timestamp_ms, failure_class, @nowMs, @nowMs
-      FROM events
-      WHERE failure_class IS NOT NULL AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
-      ON CONFLICT(event_id) DO UPDATE SET
-        request_id=excluded.request_id, session_id=excluded.session_id,
-        timestamp_ms=excluded.timestamp_ms, failure_class=excluded.failure_class,
-        updated_at=excluded.updated_at
-      WHERE failure_history.request_id IS NOT excluded.request_id
-        OR failure_history.session_id IS NOT excluded.session_id
-        OR failure_history.timestamp_ms IS NOT excluded.timestamp_ms
-        OR failure_history.failure_class IS NOT excluded.failure_class
-    `,
-      )
-      .run({ nowMs, cutoff });
     return {
       requests: requestResult.changes,
-      refusals: removedRefusals.changes + refusalResult.changes,
-      failures: removedFailures.changes + failureResult.changes,
+      refusals: this.archiveEventClass('refusal_history', 'refusal_outcome', nowMs, cutoff),
+      failures: this.archiveEventClass('failure_history', 'failure_class', nowMs, cutoff),
     };
   }
 
@@ -809,23 +787,24 @@ export class Database {
       timestamp_ms: number;
       failure_class: StoredFailure['failureClass'];
     };
+    const placeholders = PLATFORM_FAILURE_CLASSES.map(() => '?').join(', ');
     return (
       this.db
         .prepare(
           `
           SELECT event_id, request_id, session_id, timestamp_ms, failure_class
           FROM events
-          WHERE failure_class IN ('overloaded', 'server_error') AND timestamp_ms IS NOT NULL
+          WHERE failure_class IN (${placeholders}) AND timestamp_ms IS NOT NULL
           UNION ALL
           SELECT history.event_id, history.request_id, history.session_id,
             history.timestamp_ms, history.failure_class
           FROM failure_history history
-          WHERE history.failure_class IN ('overloaded', 'server_error')
+          WHERE history.failure_class IN (${placeholders})
             AND NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
           ORDER BY timestamp_ms
         `,
         )
-        .all() as Row[]
+        .all(...PLATFORM_FAILURE_CLASSES, ...PLATFORM_FAILURE_CLASSES) as Row[]
     ).map((row) => ({
       eventId: row.event_id,
       requestId: row.request_id,

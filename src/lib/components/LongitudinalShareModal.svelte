@@ -20,6 +20,7 @@
   import type { LongitudinalPoint, LongitudinalSummary } from '$lib/types';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { compactNumber } from './chart';
+  import FailureStamp from './FailureStamp.svelte';
   import { focusDialog, trapDialogTab } from './focus';
   import {
     longitudinalCaption,
@@ -42,7 +43,6 @@
     DEFAULT_SHARE_PRODUCT_URL,
     drawFailureMark,
     drawFailureStamp,
-    FAILURE_MARK,
     failureStampStyle,
     getFailureStampTheme,
     getShareSentimentTheme,
@@ -651,11 +651,7 @@
           </div>
           <div class="share-preview-context">
             <span>{rangeLabel} · {familyLabel}</span>
-            {#if failureStamp}
-              <span class="share-failure-stamp"
-                ><i aria-hidden="true">{FAILURE_MARK}</i><span>{failureStamp}</span></span
-              >
-            {/if}
+            <FailureStamp label={failureStamp} />
           </div>
         </header>
         <div class="longitudinal-share-copy">

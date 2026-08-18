@@ -62,6 +62,34 @@ function insertRequest(
     );
 }
 
+/**
+ * The `isApiErrorMessage` assistant row every failure fixture is built from. The
+ * default fields are the API safeguard block; callers pass their own to reach
+ * the other classes. `PRIVATE_API_ERROR_TEXT` is the marker the privacy
+ * assertions look for, so it stays in the message body.
+ */
+function apiErrorEvent(
+  uuid: string,
+  requestId: string | null,
+  timestamp: string,
+  fields: Record<string, unknown> = { error: 'invalid_request' },
+) {
+  return {
+    type: 'assistant',
+    uuid,
+    requestId,
+    sessionId: 's1',
+    timestamp,
+    isApiErrorMessage: true,
+    ...fields,
+    message: {
+      model: '<synthetic>',
+      usage: { output_tokens: 0 },
+      content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+    },
+  };
+}
+
 describe('analytics', () => {
   it('groups timestamps by IANA timezone across a DST transition', async () => {
     const { database, analytics } = await fixture([
@@ -722,21 +750,7 @@ describe('analytics', () => {
       requestId: string,
       timestamp: string,
       fields: Record<string, unknown>,
-    ) => ({
-      type: 'assistant',
-      uuid,
-      parentUuid: 'u1',
-      requestId,
-      sessionId: 's1',
-      timestamp,
-      isApiErrorMessage: true,
-      ...fields,
-      message: {
-        model: '<synthetic>',
-        usage: { output_tokens: 0 },
-        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
-      },
-    });
+    ) => apiErrorEvent(uuid, requestId, timestamp, { parentUuid: 'u1', ...fields });
     const { database, analytics } = await fixture([
       { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T12:00:00.000Z' },
       {
@@ -848,22 +862,8 @@ describe('analytics', () => {
   });
 
   it('keeps one refusal per request when a safeguard block joins a classifier signal', async () => {
-    const safeguard = (uuid: string, requestId: string | null, timestamp: string) => ({
-      type: 'assistant',
-      uuid,
-      requestId,
-      sessionId: 's1',
-      timestamp,
-      error: 'invalid_request',
-      isApiErrorMessage: true,
-      message: {
-        model: '<synthetic>',
-        usage: { output_tokens: 0 },
-        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
-      },
-    });
     const { database, analytics } = await fixture([
-      safeguard('s1', 'shared', '2020-08-14T12:00:00.000Z'),
+      apiErrorEvent('s1', 'shared', '2020-08-14T12:00:00.000Z'),
       {
         type: 'system',
         subtype: 'model_refusal_no_fallback',
@@ -873,9 +873,9 @@ describe('analytics', () => {
         timestamp: '2020-08-14T12:00:01.000Z',
         apiRefusalCategory: 'PRIVATE_CATEGORY',
       },
-      safeguard('s2', 'solo', '2020-08-14T12:10:00.000Z'),
+      apiErrorEvent('s2', 'solo', '2020-08-14T12:10:00.000Z'),
       // Rows without a request id can never be merged with one another.
-      safeguard('s3', null, '2020-08-14T12:20:00.000Z'),
+      apiErrorEvent('s3', null, '2020-08-14T12:20:00.000Z'),
       {
         type: 'system',
         uuid: 'c2',
@@ -908,20 +908,6 @@ describe('analytics', () => {
   });
 
   it('keeps distinct refusals that merely share a request id', async () => {
-    const safeguard = (uuid: string, requestId: string, timestamp: string) => ({
-      type: 'assistant',
-      uuid,
-      requestId,
-      sessionId: 's1',
-      timestamp,
-      error: 'invalid_request',
-      isApiErrorMessage: true,
-      message: {
-        model: '<synthetic>',
-        usage: { output_tokens: 0 },
-        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
-      },
-    });
     const classifier = (uuid: string, requestId: string, timestamp: string, subtype: string) => ({
       type: 'system',
       subtype,
@@ -936,8 +922,8 @@ describe('analytics', () => {
       classifier('c1', 'both-classifier', '2020-08-14T12:00:00.000Z', 'model_refusal_fallback'),
       classifier('c2', 'both-classifier', '2020-08-14T12:00:05.000Z', 'model_refusal_no_fallback'),
       // Two safeguard blocks on one request are likewise two refusals.
-      safeguard('s1', 'both-safeguard', '2020-08-14T12:10:00.000Z'),
-      safeguard('s2', 'both-safeguard', '2020-08-14T12:10:05.000Z'),
+      apiErrorEvent('s1', 'both-safeguard', '2020-08-14T12:10:00.000Z'),
+      apiErrorEvent('s2', 'both-safeguard', '2020-08-14T12:10:05.000Z'),
     ]);
 
     const eventIds = () => database.getRefusals().map(({ eventId }) => eventId);
@@ -965,20 +951,6 @@ describe('analytics', () => {
   });
 
   it('reports a refusal without a named model as unattributed, not as family other', async () => {
-    const safeguard = (uuid: string, requestId: string, timestamp: string) => ({
-      type: 'assistant',
-      uuid,
-      requestId,
-      sessionId: 's1',
-      timestamp,
-      error: 'invalid_request',
-      isApiErrorMessage: true,
-      message: {
-        model: '<synthetic>',
-        usage: { output_tokens: 0 },
-        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
-      },
-    });
     const { database, analytics } = await fixture([
       { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T12:00:00.000Z' },
       {
@@ -1001,9 +973,9 @@ describe('analytics', () => {
         timestamp: '2026-08-14T13:00:02.000Z',
         message: { model: 'claude-fable-1-20260101', usage: { output_tokens: 40 } },
       },
-      safeguard('e-fable', 'r-fable', '2026-08-14T13:00:05.000Z'),
+      apiErrorEvent('e-fable', 'r-fable', '2026-08-14T13:00:05.000Z'),
       // A request whose only assistant row is an error names no model at all.
-      safeguard('e-solo', 'r-solo', '2026-08-14T14:00:00.000Z'),
+      apiErrorEvent('e-solo', 'r-solo', '2026-08-14T14:00:00.000Z'),
     ]);
 
     // `<synthetic>` is stored as no model, so it cannot masquerade as a family.
@@ -1028,8 +1000,9 @@ describe('analytics', () => {
         unattributed: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
       },
     ]);
-    // `other` is never an available chip, so a refusal filed there would be
-    // counted in the sidebar and then drawn nowhere.
+    // `other` only becomes an available chip once a *measured* request carries
+    // it, and an `api_error` request is excluded from measurement, so a refusal
+    // filed there would be counted in the sidebar and then drawn nowhere.
     expect(timeline.days[0].families.map(({ family }) => family)).not.toContain('other');
     expect(analytics.refusals('UTC').attempted).toBe(2);
 

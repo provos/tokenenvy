@@ -45,11 +45,15 @@
   }: Props = $props();
   const width = 820;
   const height = 286;
-  const basePad = { right: 18, bottom: 54, left: 52 };
   let chart = $state<SVGSVGElement>();
   let keyboardDate = $state<string | null>(null);
   // The failure row sits above the refusal row, so it needs its own headroom.
-  let pad = $derived({ ...basePad, top: failures.length ? 58 : 40 });
+  let pad = $derived({
+    top: failures.length ? 58 : 40,
+    right: 18,
+    bottom: 54,
+    left: 52,
+  });
   let measuredDates = $derived([...new Set(points.map((point) => point.date))].sort());
   let dates = $derived(
     [
