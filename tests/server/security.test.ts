@@ -51,7 +51,7 @@ function eventFor(url: string, cookie?: string, headers: Record<string, string> 
 }
 
 describe('production browser handshake', () => {
-  it('redirects once, returns a strict cookie, and strips the bootstrap token', async () => {
+  it('redirects with a strict cookie, strips the bootstrap token, and re-issues on replay', async () => {
     const gate = createSecurityHandle({
       production: true,
       bootstrapToken: 'one-time-bootstrap',
@@ -75,7 +75,9 @@ describe('production browser handshake', () => {
       event: eventFor('http://127.0.0.1:4173/?token=one-time-bootstrap') as never,
       resolve,
     });
-    expect(replay.status).toBe(401);
+    expect(replay.status).toBe(303);
+    expect(replay.headers.get('location')).toBe('/');
+    expect(replay.headers.get('set-cookie')).toContain('tokenenvy_session=browser-session');
 
     const authenticated = await gate({
       event: eventFor('http://127.0.0.1:4173/', 'browser-session') as never,
@@ -83,9 +85,10 @@ describe('production browser handshake', () => {
     });
     expect(authenticated.status).toBe(200);
     expect(authenticated.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(authenticated.headers.get('set-cookie')).toContain('tokenenvy_session=browser-session');
   });
 
-  it('keeps health public but protects status-line ingestion with its separate secret', async () => {
+  it('keeps health public, protects status-line ingestion, and only slides cookie sessions', async () => {
     const gate = createSecurityHandle({
       production: true,
       bootstrapToken: 'bootstrap',
@@ -110,15 +113,20 @@ describe('production browser handshake', () => {
         })
       ).status,
     ).toBe(401);
-    expect(
-      (
-        await gate({
-          event: eventFor('http://127.0.0.1:4173/api/v1/statusline', undefined, {
-            authorization: 'Bearer statusline-secret',
-          }) as never,
-          resolve,
-        })
-      ).status,
-    ).toBe(200);
+    const statusline = await gate({
+      event: eventFor('http://127.0.0.1:4173/api/v1/statusline', undefined, {
+        authorization: 'Bearer statusline-secret',
+      }) as never,
+      resolve,
+    });
+    expect(statusline.status).toBe(200);
+    expect(statusline.headers.get('set-cookie')).toBeNull();
+
+    const rejected = await gate({
+      event: eventFor('http://127.0.0.1:4173/?token=wrong-bootstrap') as never,
+      resolve,
+    });
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get('set-cookie')).toBeNull();
   });
 });

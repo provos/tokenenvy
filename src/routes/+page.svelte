@@ -157,6 +157,7 @@
   let refreshError = $state<{ message: string; requestedDays: (typeof ranges)[number] } | null>(
     null,
   );
+  let sessionExpired = $state(false);
   let rangeDays = $state<(typeof ranges)[number]>(28);
   let pendingRangeDays = $state<(typeof ranges)[number] | null>(null);
   let visibleFamilies = $state<ModelFamily[]>([...allFamilies]);
@@ -281,6 +282,12 @@
         signal: controller.signal,
       });
       if (optional && response.status === 404) return null;
+      if (response.status === 401) {
+        // The private session cookie is gone; every later request would answer 401 again.
+        sessionExpired = true;
+        stopDashboardActivity();
+        throw new Error('The dashboard session expired.');
+      }
       if (!response.ok) throw new Error(`The local service returned ${response.status}`);
       return (await response.json()) as T;
     } catch (cause) {
@@ -294,6 +301,7 @@
   }
 
   async function loadDashboard(showLoading = false, requestedDays = rangeDays) {
+    if (sessionExpired) return;
     if (dashboardRefreshTimer) {
       clearTimeout(dashboardRefreshTimer);
       dashboardRefreshTimer = null;
@@ -354,6 +362,7 @@
   }
 
   async function refreshQuota() {
+    if (sessionExpired) return;
     const sequence = ++quotaLoadSequence;
     try {
       const nextQuota = await getJson<QuotaResponse>('/api/v1/quota', true);
@@ -387,6 +396,7 @@
   }
 
   function handleScanEvent(event: MessageEvent<string>) {
+    if (sessionExpired) return;
     const status = parseScanStatus(event.data);
     if (!status) return;
     latestScanStatus = status;
@@ -406,6 +416,19 @@
     eventSource.onerror = () => {
       // EventSource reconnects automatically. The dashboard remains usable meanwhile.
     };
+  }
+
+  function stopDashboardActivity() {
+    if (dashboardRefreshTimer) {
+      clearTimeout(dashboardRefreshTimer);
+      dashboardRefreshTimer = null;
+    }
+    if (quotaRefreshTimer) {
+      clearTimeout(quotaRefreshTimer);
+      quotaRefreshTimer = null;
+    }
+    eventSource?.close();
+    eventSource = null;
   }
 
   function reconcileSelectedDay(
@@ -436,6 +459,7 @@
   }
 
   async function selectDay(date: string, force = false) {
+    if (sessionExpired) return;
     const revision = analyticsRevision;
     const dateChanged = selectedDate !== date;
     if (!force && !dateChanged && dayDetail?.date === date && dayDetailRevision === revision)
@@ -609,7 +633,14 @@
   </header>
 
   <main>
-    {#if loading && !overview}
+    {#if sessionExpired}
+      <section class="error-state" role="alert">
+        <span class="error-glyph">!</span>
+        <p class="eyebrow">Session expired</p>
+        <h1>The private dashboard session ended</h1>
+        <p>Session expired — reopen the private dashboard URL printed by the CLI.</p>
+      </section>
+    {:else if loading && !overview}
       <section class="loading-state" aria-live="polite">
         <div class="loading-orbit"><span></span></div>
         <p class="eyebrow">Reading private metadata</p>

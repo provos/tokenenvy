@@ -51,6 +51,17 @@ function unauthorized(
   });
 }
 
+/** Session cookie attributes, shared by bootstrap issuance and the sliding re-issue. */
+function sessionCookieOptions(url: URL) {
+  return {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'strict' as const,
+    secure: url.protocol === 'https:',
+    maxAge: 12 * 60 * 60,
+  };
+}
+
 export interface SecurityHandleOptions {
   production?: boolean;
   bootstrapToken?: string;
@@ -58,9 +69,8 @@ export interface SecurityHandleOptions {
   sessionToken?: string;
 }
 
-/** Create an isolated access gate, including its one-time bootstrap state. */
+/** Create an isolated access gate. */
 export function createSecurityHandle(options: SecurityHandleOptions = {}): Handle {
-  let bootstrapConsumed = false;
   const production = options.production ?? !dev;
   const sessionToken = options.sessionToken ?? randomBytes(32).toString('base64url');
   const bootstrapToken = options.bootstrapToken ?? process.env.TOKENENVY_BOOTSTRAP_TOKEN;
@@ -81,6 +91,8 @@ export function createSecurityHandle(options: SecurityHandleOptions = {}): Handl
     const isHealth = path === '/api/v1/health' || path === '/health';
     const isStatusline = path === '/api/v1/statusline';
 
+    let slidingSession = false;
+
     if (production && !isHealth) {
       if (isStatusline) {
         const supplied = event.request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
@@ -90,15 +102,12 @@ export function createSecurityHandle(options: SecurityHandleOptions = {}): Handl
       } else {
         const bootstrap = event.url.searchParams.get('token');
 
-        if (!bootstrapConsumed && equalSecret(bootstrap, bootstrapToken)) {
-          bootstrapConsumed = true;
-          const sessionCookie = event.cookies.serialize(SESSION_COOKIE, sessionToken, {
-            path: '/',
-            httpOnly: true,
-            sameSite: 'strict',
-            secure: event.url.protocol === 'https:',
-            maxAge: 12 * 60 * 60,
-          });
+        if (equalSecret(bootstrap, bootstrapToken)) {
+          const sessionCookie = event.cookies.serialize(
+            SESSION_COOKIE,
+            sessionToken,
+            sessionCookieOptions(event.url),
+          );
 
           const clean = new URL(event.url);
           clean.searchParams.delete('token');
@@ -113,6 +122,7 @@ export function createSecurityHandle(options: SecurityHandleOptions = {}): Handl
         }
 
         if (!equalSecret(event.cookies.get(SESSION_COOKIE), sessionToken)) return unauthorized();
+        slidingSession = true;
       }
     }
 
@@ -127,6 +137,13 @@ export function createSecurityHandle(options: SecurityHandleOptions = {}): Handl
     response.headers.set('cross-origin-opener-policy', 'same-origin');
     response.headers.set('cross-origin-resource-policy', 'same-origin');
     response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
+    // Re-issue the session cookie so active use keeps sliding its expiry forward.
+    if (slidingSession) {
+      response.headers.append(
+        'set-cookie',
+        event.cookies.serialize(SESSION_COOKIE, sessionToken, sessionCookieOptions(event.url)),
+      );
+    }
     return response;
   };
 }
