@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushSync, mount, tick, unmount } from 'svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OverviewResponse, ScanStatus, SeriesResponse } from '../../src/lib/types';
 import Dashboard from '../../src/routes/+page.svelte';
 import DashboardRefreshHarness from './fixtures/DashboardRefreshHarness.svelte';
@@ -24,7 +24,11 @@ type ScanEventHandler = (event: { data: string }) => void;
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
   closed = false;
+  readyState = FakeEventSource.OPEN;
   onerror: ((...args: unknown[]) => void) | null = null;
   readonly scanHandlers: ScanEventHandler[] = [];
 
@@ -38,11 +42,24 @@ class FakeEventSource {
 
   close() {
     this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
   }
 
   emitScan(status: ScanStatus) {
     const data = JSON.stringify(status);
     for (const handler of this.scanHandlers) handler({ data });
+  }
+
+  /** A non-200 reply closes an EventSource for good instead of reconnecting. */
+  failConnection() {
+    this.readyState = FakeEventSource.CLOSED;
+    this.onerror?.();
+  }
+
+  /** A dropped connection keeps the stream alive while the browser retries. */
+  dropConnection() {
+    this.readyState = FakeEventSource.CONNECTING;
+    this.onerror?.();
   }
 }
 
@@ -140,8 +157,8 @@ const seriesPayload: SeriesResponse = {
   refusals: { recorded: false, days: [] },
 };
 
-async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+async function settle(ms = 0) {
+  await vi.advanceTimersByTimeAsync(ms);
   await tick();
 }
 
@@ -164,14 +181,20 @@ function mountDashboard(handler: (url: string) => FetchResponse) {
   const target = document.createElement('div');
   document.body.append(target);
   const component = mount(Dashboard, { target });
+  flushSync();
   return { calls, component, target };
 }
 
-function clickRange(target: ParentNode, label: string) {
+function rangeButton(target: ParentNode, label: string): HTMLButtonElement {
   const button = [...target.querySelectorAll<HTMLButtonElement>('.range-control button')].find(
     (item) => item.textContent?.trim() === label,
   );
   if (!button) throw new Error(`Missing range button: ${label}`);
+  return button;
+}
+
+function clickRange(target: ParentNode, label: string) {
+  const button = rangeButton(target, label);
   flushSync(() => button.click());
 }
 
@@ -230,6 +253,16 @@ describe('selected-day background refresh', () => {
 });
 
 describe('session expiry', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    FakeEventSource.instances = [];
+  });
+
   it('replaces the offline error with the session-expired banner when a request answers 401', async () => {
     const { calls, component, target } = mountDashboard(() => statusResponse(401));
 
@@ -245,12 +278,10 @@ describe('session expiry', () => {
     } finally {
       unmount(component);
       target.remove();
-      vi.unstubAllGlobals();
-      FakeEventSource.instances = [];
     }
   });
 
-  it('issues no further requests and keeps the event stream closed after expiry', async () => {
+  it('locks the header controls and issues no further requests after expiry', async () => {
     let denySession = false;
     const { calls, component, target } = mountDashboard((url) => {
       if (url.startsWith('/api/v1/overview'))
@@ -265,6 +296,7 @@ describe('session expiry', () => {
       await settle();
       expect(target.textContent).toContain('Your first reading will appear here');
       expect(target.textContent).not.toContain('Session expired');
+      expect(target.textContent).toContain('Live');
 
       denySession = true;
       clickRange(target, '90d');
@@ -273,20 +305,64 @@ describe('session expiry', () => {
         'Session expired — reopen the private dashboard URL printed by the CLI.',
       );
 
+      // A dead session must not leave a live-looking header behind the banner.
+      expect(target.textContent).not.toContain('Live');
+      expect(rangeButton(target, '1y').disabled).toBe(true);
+      expect(target.querySelector<HTMLButtonElement>('.share-button')?.disabled).toBe(true);
+
       const requestsAfterExpiry = calls.length;
       const source = FakeEventSource.instances[0];
       if (!source) throw new Error('Missing event source');
       source.emitScan({ ...scanStatus, revision: 8 });
       clickRange(target, '1y');
-      await new Promise((resolve) => setTimeout(resolve, 450));
+      await settle(450);
       expect(calls.length).toBe(requestsAfterExpiry);
       expect(source.closed).toBe(true);
       expect(FakeEventSource.instances).toHaveLength(1);
     } finally {
       unmount(component);
       target.remove();
-      vi.unstubAllGlobals();
-      FakeEventSource.instances = [];
+    }
+  });
+
+  it('probes once when the event stream closes for good and surfaces the expiry', async () => {
+    let denySession = false;
+    const { calls, component, target } = mountDashboard((url) => {
+      if (denySession) return statusResponse(401);
+      if (url.startsWith('/api/v1/overview')) return jsonResponse(overviewPayload);
+      if (url.startsWith('/api/v1/series')) return jsonResponse(seriesPayload);
+      if (url.startsWith('/api/v1/quota')) return statusResponse(404);
+      if (url.startsWith('/api/v1/data-quality')) return jsonResponse({ rows: 10, invalidRows: 0 });
+      return statusResponse(404);
+    });
+
+    try {
+      await settle();
+      const source = FakeEventSource.instances[0];
+      if (!source) throw new Error('Missing event source');
+
+      // A retrying stream is not evidence of an expired session.
+      const requestsBeforeDrop = calls.length;
+      source.dropConnection();
+      await settle();
+      expect(calls.length).toBe(requestsBeforeDrop);
+      expect(target.textContent).not.toContain('Session expired');
+
+      // A stream the browser closed for good is, so one probe reports the verdict.
+      denySession = true;
+      source.failConnection();
+      await settle();
+      expect(calls.length).toBe(requestsBeforeDrop + 1);
+      expect(target.textContent).toContain(
+        'Session expired — reopen the private dashboard URL printed by the CLI.',
+      );
+
+      source.failConnection();
+      await settle(450);
+      expect(calls.length).toBe(requestsBeforeDrop + 1);
+    } finally {
+      unmount(component);
+      target.remove();
     }
   });
 });

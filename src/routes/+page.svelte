@@ -411,10 +411,17 @@
 
   function connectEvents() {
     eventSource?.close();
-    eventSource = new EventSource('/api/v1/events');
-    eventSource.addEventListener('scan', handleScanEvent);
-    eventSource.onerror = () => {
-      // EventSource reconnects automatically. The dashboard remains usable meanwhile.
+    const source = new EventSource('/api/v1/events');
+    eventSource = source;
+    source.addEventListener('scan', handleScanEvent);
+    source.onerror = () => {
+      // A dropped stream reconnects on its own. A non-200 reply, which is what an
+      // expired session returns, closes the stream for good, so probe once to learn
+      // whether the session died instead of leaving stale numbers looking live.
+      if (sessionExpired || source.readyState !== EventSource.CLOSED) return;
+      void getJson('/api/v1/overview').catch(() => {
+        // The probe exists for its 401 side effect. Other failures keep the last view.
+      });
     };
   }
 
@@ -587,7 +594,7 @@
     </a>
 
     <div class="topbar-meta">
-      {#if overview}
+      {#if overview && !sessionExpired}
         <span
           class:scanning={overview.scan.state === 'scanning' ||
             overview.scan.state === 'discovering'}
@@ -606,7 +613,7 @@
             class:active={rangeDays === days}
             aria-pressed={rangeDays === days}
             aria-busy={rangeState.busy}
-            disabled={rangeState.disabled}
+            disabled={rangeState.disabled || sessionExpired}
             onclick={() => loadDashboard(false, days)}
           >
             {days === 365 ? '1y' : `${days}d`}
@@ -621,10 +628,12 @@
       >
       <button
         class="share-button"
-        disabled={!shareReady}
-        title={shareReady
-          ? `Share ${selectedDayLabel.toLowerCase()}`
-          : 'Select a measured day to create a share card'}
+        disabled={!shareReady || sessionExpired}
+        title={sessionExpired
+          ? 'The dashboard session ended'
+          : shareReady
+            ? `Share ${selectedDayLabel.toLowerCase()}`
+            : 'Select a measured day to create a share card'}
         onclick={() => (shareOpen = true)}
       >
         <span aria-hidden="true">↗</span> Share
