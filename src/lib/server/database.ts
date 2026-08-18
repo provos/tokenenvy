@@ -5,7 +5,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { normalizeModelFamily, outputSizeStratum } from '../core/model';
 import type { ParsedEvent } from '../core/parser';
-import type { ModelFamily, QuotaResponse, ScanStatus } from '../types';
+import type { FailureClass, ModelFamily, QuotaResponse, ScanStatus } from '../types';
 
 export interface DatabaseOptions {
   path: string;
@@ -52,6 +52,18 @@ export interface StoredRefusal {
   sessionId: string;
   timestampMs: number;
   outcome: 'recovered' | 'user_visible' | 'unknown';
+}
+
+/**
+ * Only platform faults are surfaced. `safeguard_block` is reported through
+ * refusals and `client` covers local faults that say nothing about the service.
+ */
+export interface StoredFailure {
+  eventId: string;
+  requestId: string | null;
+  sessionId: string;
+  timestampMs: number;
+  failureClass: Extract<FailureClass, 'overloaded' | 'server_error'>;
 }
 
 export interface QuotaSampleInput {
@@ -161,6 +173,7 @@ export class Database {
         cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
         synthetic INTEGER NOT NULL DEFAULT 0,
         refusal_outcome TEXT,
+        failure_class TEXT,
         quality_flags TEXT
       );
       CREATE INDEX IF NOT EXISTS events_request_idx ON events(request_id);
@@ -228,6 +241,16 @@ export class Database {
         updated_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS refusal_history_timestamp_idx ON refusal_history(timestamp_ms);
+      CREATE TABLE IF NOT EXISTS failure_history (
+        event_id TEXT PRIMARY KEY,
+        request_id TEXT,
+        session_id TEXT NOT NULL,
+        timestamp_ms INTEGER NOT NULL,
+        failure_class TEXT NOT NULL,
+        archived_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS failure_history_timestamp_idx ON failure_history(timestamp_ms);
       CREATE TABLE IF NOT EXISTS quota_samples (
         window TEXT NOT NULL,
         observed_at INTEGER NOT NULL,
@@ -244,7 +267,29 @@ export class Database {
     if (eventColumns.some(({ name }) => name === 'refusal_category')) {
       this.db.exec('ALTER TABLE events DROP COLUMN refusal_category');
     }
-    this.db.pragma('user_version = 2');
+    const version = Number(this.db.pragma('user_version', { simple: true })) || 0;
+    const missingFailureClass = !eventColumns.some(({ name }) => name === 'failure_class');
+    if (missingFailureClass) this.db.exec('ALTER TABLE events ADD COLUMN failure_class TEXT');
+    // Created after the column so an upgraded database can index it too.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS events_failure_timestamp_idx
+        ON events(timestamp_ms) WHERE failure_class IS NOT NULL;
+    `);
+    // The reset and the version bump commit together. Recording the version
+    // afterwards would let a crash in between wipe the live index a second time
+    // on the next open.
+    this.db.transaction(() => {
+      if (version < 3) {
+        const ingested = (
+          this.db.prepare('SELECT COUNT(*) count FROM files').get() as { count: number }
+        ).count;
+        // `INSERT OR IGNORE` skips rows that already exist, so the new column can
+        // only be populated by re-reading every transcript. Durable history is
+        // archived first and self-heals its stale quality reasons on the rebuild.
+        if (ingested > 0) this.resetLive();
+      }
+      this.db.pragma('user_version = 3');
+    })();
     this.db.pragma('optimize');
   }
 
@@ -333,11 +378,11 @@ export class Database {
       INSERT OR IGNORE INTO events(
         event_id, parent_id, request_id, session_id, timestamp_ms, type, model,
         output_tokens, input_tokens, cache_read_tokens, cache_creation_tokens,
-        synthetic, refusal_outcome, quality_flags
+        synthetic, refusal_outcome, failure_class, quality_flags
       ) VALUES (
         @eventId, @parentId, @requestId, @sessionId, @timestampMs, @type, @model,
         @outputTokens, @inputTokens, @cacheReadTokens, @cacheCreationTokens,
-        @synthetic, @refusalOutcome, @qualityFlags
+        @synthetic, @refusalOutcome, @failureClass, @qualityFlags
       )
     `);
     const insertOccurrence = this.db.prepare(
@@ -380,7 +425,10 @@ export class Database {
       return { sources: changes, archived };
     })();
     const changed =
-      result.sources > 0 || result.archived.requests > 0 || result.archived.refusals > 0;
+      result.sources > 0 ||
+      result.archived.requests > 0 ||
+      result.archived.refusals > 0 ||
+      result.archived.failures > 0;
     if (result.sources > 0 || result.archived.requests > 0) this.#requestRevision += 1;
     return changed;
   }
@@ -407,7 +455,11 @@ export class Database {
       .run();
   }
 
-  private archiveStableInternal(nowMs: number): { requests: number; refusals: number } {
+  private archiveStableInternal(nowMs: number): {
+    requests: number;
+    refusals: number;
+    failures: number;
+  } {
     const cutoff = nowMs - HISTORY_STABILITY_MS;
     const requestResult = this.db
       .prepare(
@@ -481,16 +533,51 @@ export class Database {
     `,
       )
       .run({ nowMs, cutoff });
+    const removedFailures = this.db
+      .prepare(
+        `
+      DELETE FROM failure_history
+      WHERE EXISTS (
+        SELECT 1 FROM events live
+        WHERE live.event_id = failure_history.event_id
+          AND live.failure_class IS NULL
+          AND live.timestamp_ms IS NOT NULL
+          AND live.timestamp_ms <= @cutoff
+      )
+    `,
+      )
+      .run({ cutoff });
+    const failureResult = this.db
+      .prepare(
+        `
+      INSERT INTO failure_history(
+        event_id, request_id, session_id, timestamp_ms, failure_class, archived_at, updated_at
+      )
+      SELECT event_id, request_id, session_id, timestamp_ms, failure_class, @nowMs, @nowMs
+      FROM events
+      WHERE failure_class IS NOT NULL AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
+      ON CONFLICT(event_id) DO UPDATE SET
+        request_id=excluded.request_id, session_id=excluded.session_id,
+        timestamp_ms=excluded.timestamp_ms, failure_class=excluded.failure_class,
+        updated_at=excluded.updated_at
+      WHERE failure_history.request_id IS NOT excluded.request_id
+        OR failure_history.session_id IS NOT excluded.session_id
+        OR failure_history.timestamp_ms IS NOT excluded.timestamp_ms
+        OR failure_history.failure_class IS NOT excluded.failure_class
+    `,
+      )
+      .run({ nowMs, cutoff });
     return {
       requests: requestResult.changes,
       refusals: removedRefusals.changes + refusalResult.changes,
+      failures: removedFailures.changes + failureResult.changes,
     };
   }
 
   archiveStable(nowMs = Date.now()): boolean {
     const changed = this.db.transaction(() => this.archiveStableInternal(nowMs))();
     if (changed.requests > 0) this.#requestRevision += 1;
-    return changed.requests > 0 || changed.refusals > 0;
+    return changed.requests > 0 || changed.refusals > 0 || changed.failures > 0;
   }
 
   rebuildRequests(nowMs = Date.now(), idleMs = 120_000): void {
@@ -507,6 +594,7 @@ export class Database {
       cache_read_tokens: number;
       cache_creation_tokens: number;
       synthetic: number;
+      failure_class: string | null;
     };
     const assistantRows = this.db
       .prepare(
@@ -514,7 +602,7 @@ export class Database {
         SELECT event.event_id, event.parent_id, event.request_id, event.session_id,
           event.timestamp_ms, parent.timestamp_ms parent_timestamp_ms, event.model,
           event.output_tokens, event.input_tokens, event.cache_read_tokens,
-          event.cache_creation_tokens, event.synthetic
+          event.cache_creation_tokens, event.synthetic, event.failure_class
         FROM events event
         LEFT JOIN events parent ON parent.event_id = event.parent_id
         WHERE event.type = 'assistant' AND event.request_id IS NOT NULL
@@ -565,7 +653,10 @@ export class Database {
         );
         const family = normalizeModelFamily(events.find(({ model }) => model)?.model);
         let qualityReason: string | null = null;
-        if (events.some(({ synthetic }) => synthetic !== 0)) qualityReason = 'synthetic';
+        // A transport failure shares its request id with the partial output that
+        // preceded it, so the pair must never be measured as throughput.
+        if (events.some(({ failure_class }) => failure_class != null)) qualityReason = 'api_error';
+        else if (events.some(({ synthetic }) => synthetic !== 0)) qualityReason = 'synthetic';
         else if (timestamps.length !== events.length) qualityReason = 'invalid_time';
         else if (starts.length === 0) qualityReason = 'missing_parent';
         else if (outputTokens <= 0) qualityReason = 'non_positive_tokens';
@@ -664,18 +755,40 @@ export class Database {
       timestamp_ms: number;
       refusal_outcome: StoredRefusal['outcome'];
     };
+    // The classifier and the API safeguard can both report the same request, in
+    // which case the classifier row wins because it carries the outcome detail.
+    // That is the only merge: two classifier refusals on one request are two
+    // distinct signals, and so are two safeguard rows. Rows without a request id
+    // are never merged, since a null id matches nothing.
     return (
       this.db
         .prepare(
           `
-          SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome
-          FROM events WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL
-          UNION ALL
-          SELECT history.event_id, history.request_id, history.session_id,
-            history.timestamp_ms, history.refusal_outcome
-          FROM refusal_history history
-          WHERE NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
-          ORDER BY timestamp_ms
+          WITH combined AS MATERIALIZED (
+            SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome,
+              CASE WHEN failure_class = 'safeguard_block' THEN 1 ELSE 0 END safeguard
+            FROM events WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL
+            UNION ALL
+            SELECT history.event_id, history.request_id, history.session_id,
+              history.timestamp_ms, history.refusal_outcome,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM failure_history archived
+                WHERE archived.event_id = history.event_id
+                  AND archived.failure_class = 'safeguard_block'
+              ) THEN 1 ELSE 0 END
+            FROM refusal_history history
+            WHERE NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
+          )
+          SELECT refusal.event_id, refusal.request_id, refusal.session_id,
+            refusal.timestamp_ms, refusal.refusal_outcome
+          FROM combined refusal
+          WHERE refusal.safeguard = 0
+            OR refusal.request_id IS NULL
+            OR NOT EXISTS (
+              SELECT 1 FROM combined classifier
+              WHERE classifier.request_id = refusal.request_id AND classifier.safeguard = 0
+            )
+          ORDER BY refusal.timestamp_ms
         `,
         )
         .all() as Row[]
@@ -685,6 +798,40 @@ export class Database {
       sessionId: row.session_id,
       timestampMs: row.timestamp_ms,
       outcome: row.refusal_outcome,
+    }));
+  }
+
+  getFailures(): StoredFailure[] {
+    type Row = {
+      event_id: string;
+      request_id: string | null;
+      session_id: string;
+      timestamp_ms: number;
+      failure_class: StoredFailure['failureClass'];
+    };
+    return (
+      this.db
+        .prepare(
+          `
+          SELECT event_id, request_id, session_id, timestamp_ms, failure_class
+          FROM events
+          WHERE failure_class IN ('overloaded', 'server_error') AND timestamp_ms IS NOT NULL
+          UNION ALL
+          SELECT history.event_id, history.request_id, history.session_id,
+            history.timestamp_ms, history.failure_class
+          FROM failure_history history
+          WHERE history.failure_class IN ('overloaded', 'server_error')
+            AND NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
+          ORDER BY timestamp_ms
+        `,
+        )
+        .all() as Row[]
+    ).map((row) => ({
+      eventId: row.event_id,
+      requestId: row.request_id,
+      sessionId: row.session_id,
+      timestampMs: row.timestamp_ms,
+      failureClass: row.failure_class,
     }));
   }
 

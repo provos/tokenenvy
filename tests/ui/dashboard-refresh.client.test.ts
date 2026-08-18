@@ -147,6 +147,14 @@ const overviewPayload: OverviewResponse = {
     perThousand: null,
     byDay: [],
   },
+  failures: {
+    recorded: false,
+    attempted: 0,
+    overloaded: 0,
+    serverError: 0,
+    perThousand: null,
+    byDay: [],
+  },
   scan: scanStatus,
 };
 
@@ -155,6 +163,7 @@ const seriesPayload: SeriesResponse = {
   days: 28,
   points: [],
   refusals: { recorded: false, days: [] },
+  failures: { recorded: false, days: [] },
 };
 
 async function settle(ms = 0) {

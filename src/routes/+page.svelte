@@ -820,6 +820,7 @@
                 today={overview.today}
                 visibleFamilies={selectedVisibleFamilies}
                 refusals={chartRefusals}
+                failures={series?.failures.days ?? []}
                 {selectedDate}
                 onselect={selectDay}
               />
@@ -936,41 +937,83 @@
             <div class="section-heading compact-heading">
               <div>
                 <p class="eyebrow">All recorded history</p>
-                <h2>Classifier refusals</h2>
+                <h2>Interruptions</h2>
               </div>
-              {#if overview.refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
             </div>
-            {#if overview.refusals.recorded}
-              <div class="refusal-total">
-                <strong>{overview.refusals.attempted}</strong><span>attempted</span>
+
+            <div class="interruption-block">
+              <div class="interruption-head">
+                <h3>Refused</h3>
+                <span>the model would not</span>
+                <!-- The pill qualifies refusals only; failures are counted from
+                     transport errors, not from explicit classifier signals. -->
+                {#if overview.refusals.recorded}<span class="recorded-pill">Explicit only</span
+                  >{/if}
               </div>
-              <div class="refusal-grid">
-                <span
-                  ><i class="recovered"></i><strong>{overview.refusals.recovered}</strong><small
-                    >recovered by fallback</small
-                  ></span
-                >
-                <span
-                  ><i class="visible"></i><strong>{overview.refusals.userVisible}</strong><small
-                    >user-visible</small
-                  ></span
-                >
-                <span
-                  ><i class="unknown"></i><strong>{overview.refusals.unknown}</strong><small
-                    >unknown outcome</small
-                  ></span
-                >
+              {#if overview.refusals.recorded}
+                <div class="refusal-total">
+                  <strong>{overview.refusals.attempted}</strong><span>attempted</span>
+                </div>
+                <div class="refusal-grid">
+                  <span
+                    ><i class="recovered"></i><strong>{overview.refusals.recovered}</strong><small
+                      >recovered by fallback</small
+                    ></span
+                  >
+                  <span
+                    ><i class="visible"></i><strong>{overview.refusals.userVisible}</strong><small
+                      >user-visible</small
+                    ></span
+                  >
+                  <span
+                    ><i class="unknown"></i><strong>{overview.refusals.unknown}</strong><small
+                      >unknown outcome</small
+                    ></span
+                  >
+                </div>
+                <p class="interruption-rate">
+                  {overview.refusals.perThousand === null
+                    ? 'Rate unavailable'
+                    : `${overview.refusals.perThousand.toFixed(2)} attempts per 1,000 measured requests`}.
+                </p>
+              {:else}
+                <p class="subtle-empty rail-empty">
+                  This log format does not expose explicit classifier outcomes.
+                </p>
+              {/if}
+            </div>
+
+            <div class="interruption-block">
+              <div class="interruption-head">
+                <h3>Failed</h3>
+                <span>the service could not</span>
               </div>
-              <p>
-                {overview.refusals.perThousand === null
-                  ? 'Rate unavailable'
-                  : `${overview.refusals.perThousand.toFixed(2)} attempts per 1,000 measured requests`}.
-              </p>
-            {:else}
-              <p class="subtle-empty rail-empty">
-                This log format does not expose explicit classifier outcomes.
-              </p>
-            {/if}
+              {#if overview.failures.recorded}
+                <div class="refusal-total">
+                  <strong>{overview.failures.attempted}</strong><span>attempted</span>
+                </div>
+                <div class="refusal-grid failure-grid">
+                  <span
+                    ><i class="overloaded"></i><strong>{overview.failures.overloaded}</strong><small
+                      >overloaded (529)</small
+                    ></span
+                  >
+                  <span
+                    ><i class="server-fault"></i><strong>{overview.failures.serverError}</strong
+                    ><small>server fault</small></span
+                  >
+                </div>
+                <p class="interruption-rate">
+                  {overview.failures.perThousand === null
+                    ? 'Rate unavailable'
+                    : `${overview.failures.perThousand.toFixed(2)} failures per 1,000 measured requests`}.
+                </p>
+              {:else}
+                <p class="subtle-empty rail-empty">
+                  This log format does not record API transport failures.
+                </p>
+              {/if}
+            </div>
           </section>
         </aside>
       </section>

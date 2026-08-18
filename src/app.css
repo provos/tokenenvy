@@ -22,6 +22,8 @@
   --mint: #5fd6bd;
   --amber: #f0bd68;
   --danger: #ff826f;
+  /* Platform failures ride a cool hue so they never read as a refusal. */
+  --fault: #6ea9f5;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.26);
   --radius: 22px;
 }
@@ -43,6 +45,7 @@
   --mint: #258c78;
   --amber: #a96e10;
   --danger: #c84635;
+  --fault: #2f6ec2;
   --shadow: 0 24px 70px rgba(53, 42, 28, 0.1);
 }
 
@@ -854,7 +857,31 @@ main {
   stroke-dasharray: 2 2;
 }
 
-.chart-refusal-legend {
+.failure-marker circle,
+.failure-marker line {
+  stroke: var(--fault);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.failure-marker circle {
+  fill: color-mix(in srgb, var(--fault) 12%, var(--panel-solid));
+}
+
+.failure-marker line {
+  stroke-linecap: round;
+}
+
+.failure-marker.server-fault circle {
+  fill: color-mix(in srgb, var(--fault) 74%, var(--panel-solid));
+}
+
+.failure-marker.server-fault line {
+  stroke: var(--panel-solid);
+}
+
+.chart-refusal-legend,
+.chart-failure-legend {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -864,13 +891,19 @@ main {
   font-size: 10px;
 }
 
-.chart-refusal-legend small {
+.chart-refusal-legend small,
+.chart-failure-legend small {
   color: var(--text-faint);
 }
 
 .refusal-legend-marker {
   color: var(--amber);
   font-size: 10px;
+}
+
+.failure-legend-marker {
+  color: var(--fault);
+  font-size: 11px;
 }
 
 .ci-whisker {
@@ -1127,6 +1160,7 @@ td .model-dot {
 .weekly-grid small,
 .weekly-panel > p,
 .refusal-panel > p,
+.interruption-rate,
 .quota-reading span {
   color: var(--text-faint);
   font-size: 10px;
@@ -1225,6 +1259,13 @@ td .model-dot {
 .refusal-grid i.unknown {
   background: var(--amber);
 }
+.refusal-grid i.overloaded {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--fault);
+}
+.refusal-grid i.server-fault {
+  background: var(--fault);
+}
 
 .refusal-grid strong {
   font:
@@ -1238,6 +1279,58 @@ td .model-dot {
   color: var(--text-faint);
   font-size: 9px;
   line-height: 1.2;
+}
+
+.failure-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.interruption-block {
+  margin-top: 17px;
+}
+
+.interruption-block + .interruption-block {
+  margin-top: 21px;
+  padding-top: 19px;
+  border-top: 1px solid var(--line);
+}
+
+.interruption-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.interruption-block h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.interruption-head span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+/* The pill belongs to the refusal block, so it trails its own heading. */
+.interruption-head .recorded-pill {
+  margin-left: auto;
+  color: var(--mint);
+  font-size: 11px;
+}
+
+.interruption-block .refusal-total {
+  margin: 12px 0 11px;
+}
+
+.interruption-rate {
+  margin: 12px 0 0;
+}
+
+.interruption-block .rail-empty {
+  margin: 11px 0 0;
+  padding: 17px 5px;
 }
 
 .trust-grid {

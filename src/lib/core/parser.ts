@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { normalizeModelFamily } from './model';
+import type { FailureClass } from '../types';
 
 export interface ParsedEvent {
   eventId: string;
@@ -15,6 +16,7 @@ export interface ParsedEvent {
   cacheCreationTokens: number;
   synthetic: boolean;
   refusalOutcome: 'recovered' | 'user_visible' | 'unknown' | null;
+  failureClass: FailureClass | null;
   qualityFlags: string | null;
 }
 
@@ -55,11 +57,35 @@ export function parseTranscriptEvent(
       ? (message.usage as Record<string, unknown>)
       : {};
   const occurrenceSeed = `${sourceId}:${lineOffset}:${createHash('sha256').update(rawLine).digest('hex')}`;
+  // `<synthetic>` is the CLI's placeholder on rows it wrote itself, such as API
+  // error rows. It names no model, so normalizing it would invent a real-looking
+  // `other` family for a request that never reported one.
+  const rawModel = typeof message.model === 'string' ? message.model : null;
+
+  // Transport failures are classified from structured fields only. The error
+  // text in message.content is never read so no prompt or response wording can
+  // reach the index.
+  let failureClass: FailureClass | null = null;
+  if (raw.isApiErrorMessage === true) {
+    const errorKind = typeof raw.error === 'string' ? raw.error : null;
+    const status = typeof raw.apiErrorStatus === 'number' ? raw.apiErrorStatus : null;
+    if (errorKind === 'authentication_failed') failureClass = 'client';
+    else if (errorKind === 'invalid_request') failureClass = 'safeguard_block';
+    else if (status === 529) failureClass = 'overloaded';
+    // A measured status outside 5xx (400, 408, 429, …) is a caller-side or
+    // quota fault, so it must not be counted as a service fault.
+    else if (status != null && (status < 500 || status > 599)) failureClass = 'client';
+    // Status-less rows keep `server_error`: the error kind is the only
+    // structured evidence available, and it reports a fault, not a rejection.
+    else failureClass = 'server_error';
+  }
 
   let refusalOutcome: ParsedEvent['refusalOutcome'] = null;
   if (subtype === 'model_refusal_fallback') refusalOutcome = 'recovered';
   else if (subtype === 'model_refusal_no_fallback') refusalOutcome = 'user_visible';
   else if (raw.apiRefusalCategory != null) refusalOutcome = 'unknown';
+  // An API-layer safety block is a refusal the user saw, with no fallback.
+  else if (failureClass === 'safeguard_block') refusalOutcome = 'user_visible';
 
   return {
     eventId: digest(uuid ? `event:${uuid}` : `occurrence:${occurrenceSeed}`),
@@ -68,13 +94,14 @@ export function parseTranscriptEvent(
     sessionId: digest(`session:${sessionId ?? sourceId}`),
     timestampMs: Number.isFinite(timestamp) ? timestamp : null,
     type,
-    model: typeof message.model === 'string' ? normalizeModelFamily(message.model) : null,
+    model: rawModel && rawModel !== '<synthetic>' ? normalizeModelFamily(rawModel) : null,
     outputTokens: safeCount(usage.output_tokens),
     inputTokens: safeCount(usage.input_tokens),
     cacheReadTokens: safeCount(usage.cache_read_input_tokens),
     cacheCreationTokens: safeCount(usage.cache_creation_input_tokens),
     synthetic: raw.isSynthetic === true || (raw.isMeta === true && type === 'assistant'),
     refusalOutcome,
+    failureClass,
     qualityFlags: uuid ? null : 'uuid_missing',
   };
 }

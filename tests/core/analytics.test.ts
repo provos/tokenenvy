@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Analytics } from '../../src/lib/core/analytics';
+import { filterRefusalTimeline } from '../../src/lib/components/chart';
 import { Database } from '../../src/lib/server/database';
 import { Scanner } from '../../src/lib/server/scanner';
 
@@ -206,6 +207,27 @@ describe('analytics', () => {
     database.retractSources(database.listSourceIds());
     analytics.series(30, 'UTC', new Date('2026-08-14T18:00:00Z'));
     expect(getRequests).toHaveBeenCalledTimes(3);
+    database.close();
+  });
+
+  it('reads the data-quality summary once for both interruption rates', async () => {
+    const { database, analytics } = await fixture([
+      { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T11:59:59.000Z' },
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        requestId: 'r1',
+        sessionId: 's1',
+        timestamp: '2026-08-14T12:00:00.000Z',
+        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+      },
+    ]);
+    const getDataQuality = vi.spyOn(database, 'getDataQuality');
+    const overview = analytics.overview('UTC', new Date('2026-08-14T18:00:00Z'));
+    // Refusals and failures share one measured-request denominator.
+    expect(getDataQuality).toHaveBeenCalledTimes(1);
+    expect(overview.refusals.perThousand).toBe(overview.failures.perThousand);
     database.close();
   });
 
@@ -691,6 +713,342 @@ describe('analytics', () => {
 
     const detail = new Analytics(database).day('2026-07-15', 'UTC');
     expect(detail?.speedIndex).toMatchObject({ eligible: true, value: 200 });
+    database.close();
+  });
+
+  it('classifies API failures from structured fields and excludes them from throughput', async () => {
+    const apiError = (
+      uuid: string,
+      requestId: string,
+      timestamp: string,
+      fields: Record<string, unknown>,
+    ) => ({
+      type: 'assistant',
+      uuid,
+      parentUuid: 'u1',
+      requestId,
+      sessionId: 's1',
+      timestamp,
+      isApiErrorMessage: true,
+      ...fields,
+      message: {
+        model: '<synthetic>',
+        usage: { output_tokens: 0 },
+        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+      },
+    });
+    const { database, analytics } = await fixture([
+      { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T12:00:00.000Z' },
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        requestId: 'r1',
+        sessionId: 's1',
+        timestamp: '2026-08-14T12:00:02.000Z',
+        message: { model: 'claude-sonnet-4-20250514', usage: { output_tokens: 2 } },
+      },
+      apiError('e1', 'r1', '2026-08-14T12:00:13.300Z', {
+        error: 'server_error',
+        apiErrorStatus: 529,
+      }),
+      { type: 'user', uuid: 'u2', sessionId: 's1', timestamp: '2026-08-14T13:00:00.000Z' },
+      {
+        type: 'assistant',
+        uuid: 'a2',
+        parentUuid: 'u2',
+        requestId: 'r2',
+        sessionId: 's1',
+        timestamp: '2026-08-14T13:00:02.000Z',
+        message: { model: 'claude-sonnet-4-20250514', usage: { output_tokens: 100 } },
+      },
+      apiError('e3', 'r3', '2026-08-14T14:00:00.000Z', {
+        error: 'server_error',
+        apiErrorStatus: 500,
+      }),
+      apiError('e4', 'r4', '2026-08-14T15:00:00.000Z', { error: 'unknown' }),
+      apiError('e5', 'r5', '2026-08-14T16:00:00.000Z', { error: 'authentication_failed' }),
+      apiError('e6', 'r6', '2026-08-14T17:00:00.000Z', { error: 'invalid_request' }),
+      // A 529 outranks an unknown error kind, so this stays platform overload.
+      apiError('e7', 'r7', '2026-08-14T18:00:00.000Z', {
+        error: 'unknown',
+        apiErrorStatus: 529,
+      }),
+      // A measured status outside 5xx is not a service fault, whatever the CLI
+      // called the error kind.
+      apiError('e8', 'r8', '2026-08-14T18:30:00.000Z', {
+        error: 'server_error',
+        apiErrorStatus: 429,
+      }),
+      apiError('e9', 'r9', '2026-08-14T18:40:00.000Z', {
+        error: 'server_error',
+        apiErrorStatus: 400,
+      }),
+    ]);
+
+    expect(
+      database.db
+        .prepare('SELECT failure_class, COUNT(*) count FROM events GROUP BY failure_class')
+        .all(),
+    ).toEqual([
+      { failure_class: null, count: 4 },
+      { failure_class: 'client', count: 3 },
+      { failure_class: 'overloaded', count: 2 },
+      { failure_class: 'safeguard_block', count: 1 },
+      // Only the 500 and the status-less row remain server faults.
+      { failure_class: 'server_error', count: 2 },
+    ]);
+    // A local login fault, a 4xx and an API safeguard block are never service
+    // failures.
+    expect(analytics.failures('UTC')).toEqual({
+      recorded: true,
+      attempted: 4,
+      overloaded: 2,
+      serverError: 2,
+      // Rated against measured requests: every other request is excluded as
+      // `api_error`, leaving exactly one that was actually measured.
+      perThousand: (4 / 1) * 1_000,
+      byDay: [{ date: '2026-08-14', attempted: 4, overloaded: 2, serverError: 2 }],
+    });
+    // The safeguard block is the refusal that reached the user.
+    expect(analytics.refusals('UTC')).toMatchObject({
+      recorded: true,
+      attempted: 1,
+      recovered: 0,
+      userVisible: 1,
+      unknown: 0,
+    });
+    expect(
+      database.getRequests().map(({ qualityReason, tokensPerSecond }) => ({
+        qualityReason,
+        tokensPerSecond,
+      })),
+    ).toEqual([
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: null, tokensPerSecond: 50 },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+      { qualityReason: 'api_error', tokensPerSecond: null },
+    ]);
+    const detail = analytics.day('2026-08-14', 'UTC');
+    expect(detail?.summary.count).toBe(1);
+    expect(detail?.exclusions).toEqual({ api_error: 8 });
+
+    const now = new Date('2026-08-14T20:00:00Z');
+    expect(analytics.overview('UTC', now).failures).toMatchObject({ attempted: 4 });
+    expect(analytics.series(28, 'UTC', now).failures).toEqual({
+      recorded: true,
+      days: [{ date: '2026-08-14', attempted: 4, overloaded: 2, serverError: 2 }],
+    });
+    database.close();
+  });
+
+  it('keeps one refusal per request when a safeguard block joins a classifier signal', async () => {
+    const safeguard = (uuid: string, requestId: string | null, timestamp: string) => ({
+      type: 'assistant',
+      uuid,
+      requestId,
+      sessionId: 's1',
+      timestamp,
+      error: 'invalid_request',
+      isApiErrorMessage: true,
+      message: {
+        model: '<synthetic>',
+        usage: { output_tokens: 0 },
+        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+      },
+    });
+    const { database, analytics } = await fixture([
+      safeguard('s1', 'shared', '2020-08-14T12:00:00.000Z'),
+      {
+        type: 'system',
+        subtype: 'model_refusal_no_fallback',
+        uuid: 'c1',
+        requestId: 'shared',
+        sessionId: 's1',
+        timestamp: '2020-08-14T12:00:01.000Z',
+        apiRefusalCategory: 'PRIVATE_CATEGORY',
+      },
+      safeguard('s2', 'solo', '2020-08-14T12:10:00.000Z'),
+      // Rows without a request id can never be merged with one another.
+      safeguard('s3', null, '2020-08-14T12:20:00.000Z'),
+      {
+        type: 'system',
+        uuid: 'c2',
+        sessionId: 's1',
+        timestamp: '2020-08-14T12:30:00.000Z',
+        apiRefusalCategory: 'PRIVATE_CATEGORY',
+      },
+    ]);
+
+    expect(analytics.refusals('UTC')).toMatchObject({
+      attempted: 4,
+      recovered: 0,
+      userVisible: 3,
+      unknown: 1,
+    });
+    const shared = database
+      .getRefusals()
+      .filter((refusal) => refusal.requestId === database.digest('request:shared'));
+    expect(shared).toMatchObject([{ eventId: database.digest('event:c1') }]);
+    // Archived rows dedupe the same way once the live events are gone.
+    database.db.prepare('DELETE FROM events').run();
+    expect(database.getRefusals().map(({ eventId }) => eventId)).toEqual([
+      database.digest('event:c1'),
+      database.digest('event:s2'),
+      database.digest('event:s3'),
+      database.digest('event:c2'),
+    ]);
+    expect(analytics.failures('UTC').attempted).toBe(0);
+    database.close();
+  });
+
+  it('keeps distinct refusals that merely share a request id', async () => {
+    const safeguard = (uuid: string, requestId: string, timestamp: string) => ({
+      type: 'assistant',
+      uuid,
+      requestId,
+      sessionId: 's1',
+      timestamp,
+      error: 'invalid_request',
+      isApiErrorMessage: true,
+      message: {
+        model: '<synthetic>',
+        usage: { output_tokens: 0 },
+        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+      },
+    });
+    const classifier = (uuid: string, requestId: string, timestamp: string, subtype: string) => ({
+      type: 'system',
+      subtype,
+      uuid,
+      requestId,
+      sessionId: 's1',
+      timestamp,
+      apiRefusalCategory: 'PRIVATE_CATEGORY',
+    });
+    const { database, analytics } = await fixture([
+      // Two classifier signals on one request are two refusals, not one.
+      classifier('c1', 'both-classifier', '2020-08-14T12:00:00.000Z', 'model_refusal_fallback'),
+      classifier('c2', 'both-classifier', '2020-08-14T12:00:05.000Z', 'model_refusal_no_fallback'),
+      // Two safeguard blocks on one request are likewise two refusals.
+      safeguard('s1', 'both-safeguard', '2020-08-14T12:10:00.000Z'),
+      safeguard('s2', 'both-safeguard', '2020-08-14T12:10:05.000Z'),
+    ]);
+
+    const eventIds = () => database.getRefusals().map(({ eventId }) => eventId);
+    expect(eventIds()).toEqual([
+      database.digest('event:c1'),
+      database.digest('event:c2'),
+      database.digest('event:s1'),
+      database.digest('event:s2'),
+    ]);
+    expect(analytics.refusals('UTC')).toMatchObject({
+      attempted: 4,
+      recovered: 1,
+      userVisible: 3,
+      unknown: 0,
+    });
+    // The archived union must not collapse them either.
+    database.db.prepare('DELETE FROM events').run();
+    expect(eventIds()).toEqual([
+      database.digest('event:c1'),
+      database.digest('event:c2'),
+      database.digest('event:s1'),
+      database.digest('event:s2'),
+    ]);
+    database.close();
+  });
+
+  it('reports a refusal without a named model as unattributed, not as family other', async () => {
+    const safeguard = (uuid: string, requestId: string, timestamp: string) => ({
+      type: 'assistant',
+      uuid,
+      requestId,
+      sessionId: 's1',
+      timestamp,
+      error: 'invalid_request',
+      isApiErrorMessage: true,
+      message: {
+        model: '<synthetic>',
+        usage: { output_tokens: 0 },
+        content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+      },
+    });
+    const { database, analytics } = await fixture([
+      { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-08-14T12:00:00.000Z' },
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        requestId: 'r-opus',
+        sessionId: 's1',
+        timestamp: '2026-08-14T12:00:02.000Z',
+        message: { model: 'claude-opus-4-20250514', usage: { output_tokens: 100 } },
+      },
+      // A request that produced real output *and* an error row keeps its family.
+      { type: 'user', uuid: 'u2', sessionId: 's1', timestamp: '2026-08-14T13:00:00.000Z' },
+      {
+        type: 'assistant',
+        uuid: 'a2',
+        parentUuid: 'u2',
+        requestId: 'r-fable',
+        sessionId: 's1',
+        timestamp: '2026-08-14T13:00:02.000Z',
+        message: { model: 'claude-fable-1-20260101', usage: { output_tokens: 40 } },
+      },
+      safeguard('e-fable', 'r-fable', '2026-08-14T13:00:05.000Z'),
+      // A request whose only assistant row is an error names no model at all.
+      safeguard('e-solo', 'r-solo', '2026-08-14T14:00:00.000Z'),
+    ]);
+
+    // `<synthetic>` is stored as no model, so it cannot masquerade as a family.
+    expect(
+      database.db
+        .prepare("SELECT model FROM events WHERE type = 'assistant' ORDER BY timestamp_ms")
+        .all(),
+    ).toEqual([{ model: 'opus' }, { model: 'fable' }, { model: null }, { model: null }]);
+    expect(
+      database.getRequests().map(({ family, qualityReason }) => ({ family, qualityReason })),
+    ).toEqual([
+      { family: 'opus', qualityReason: null },
+      { family: 'fable', qualityReason: 'api_error' },
+      { family: 'other', qualityReason: 'api_error' },
+    ]);
+
+    const timeline = analytics.series(28, 'UTC', new Date('2026-08-14T20:00:00Z')).refusals;
+    expect(timeline.days).toEqual([
+      {
+        date: '2026-08-14',
+        families: [{ family: 'fable', attempted: 1, recovered: 0, userVisible: 1, unknown: 0 }],
+        unattributed: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
+      },
+    ]);
+    // `other` is never an available chip, so a refusal filed there would be
+    // counted in the sidebar and then drawn nowhere.
+    expect(timeline.days[0].families.map(({ family }) => family)).not.toContain('other');
+    expect(analytics.refusals('UTC').attempted).toBe(2);
+
+    // Unattributed refusals survive every family filter, including one that
+    // excludes the only family the day actually recorded.
+    expect(filterRefusalTimeline(timeline, ['opus'])).toEqual([
+      {
+        date: '2026-08-14',
+        selected: { attempted: 0, recovered: 0, userVisible: 0, unknown: 0 },
+        unattributed: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
+      },
+    ]);
+    expect(filterRefusalTimeline(timeline, ['fable'])).toEqual([
+      {
+        date: '2026-08-14',
+        selected: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
+        unattributed: { attempted: 1, recovered: 0, userVisible: 1, unknown: 0 },
+      },
+    ]);
     database.close();
   });
 });

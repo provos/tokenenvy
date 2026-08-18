@@ -67,6 +67,33 @@ function assistant(options: {
   };
 }
 
+function apiError(options: {
+  uuid: string;
+  parentUuid?: string;
+  requestId?: string;
+  sessionId?: string;
+  timestamp: string;
+  status?: number;
+  error?: string;
+}) {
+  return {
+    type: 'assistant',
+    uuid: options.uuid,
+    parentUuid: options.parentUuid ?? null,
+    requestId: options.requestId ?? 'request-a',
+    sessionId: options.sessionId ?? 'session-a',
+    timestamp: options.timestamp,
+    error: options.error ?? 'server_error',
+    isApiErrorMessage: true,
+    ...(options.status == null ? {} : { apiErrorStatus: options.status }),
+    message: {
+      model: '<synthetic>',
+      content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  };
+}
+
 describe('incremental scanner', () => {
   it('normalizes duplicate and overlapping monitored roots', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'speedometer-roots-'));
@@ -1169,7 +1196,7 @@ describe('incremental scanner', () => {
     legacy.close();
 
     const database = new Database({ path: dbPath, hmacKey: 'migration-key' });
-    expect(database.db.pragma('user_version', { simple: true })).toBe(2);
+    expect(database.db.pragma('user_version', { simple: true })).toBe(3);
     expect(database.db.pragma('table_info(files)')).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'root_id' })]),
     );
@@ -1177,5 +1204,192 @@ describe('incremental scanner', () => {
     expect(database.getRefusals()).toMatchObject([{ outcome: 'recovered' }]);
     expect(database.getDataQuality()).toMatchObject({ archivedRequests: 1, archivedRefusals: 1 });
     database.close();
+  });
+
+  it('excludes a request contaminated by an API failure from measured throughput', async () => {
+    const { directory, database, scanner } = await setup();
+    await writeFile(
+      join(directory, 'overloaded.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 2,
+          }),
+        ) +
+        line(
+          apiError({
+            uuid: 'e1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:13.300Z',
+            status: 529,
+          }),
+        ) +
+        line(user('u2', '2020-08-14T13:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a2',
+            parentUuid: 'u2',
+            requestId: 'req-healthy',
+            timestamp: '2020-08-14T13:00:02.000Z',
+            output: 100,
+          }),
+        ),
+    );
+    await scanner.scanAll();
+
+    // Without the failure check the partial output would measure 0.18 tok/s.
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'api_error', outputTokens: 2, tokensPerSecond: null },
+      { qualityReason: null, outputTokens: 100, tokensPerSecond: 50 },
+    ]);
+    expect(database.getDataQuality().exclusions).toMatchObject({ api_error: 1 });
+    expect(database.getFailures()).toMatchObject([
+      { failureClass: 'overloaded', timestampMs: Date.parse('2020-08-14T12:00:13.300Z') },
+    ]);
+    database.close();
+  });
+
+  it('re-ingests a v2 index so archived requests learn about API failures', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-v2-migration-'));
+    temporaryDirectories.push(directory);
+    const logs = join(directory, 'logs');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(logs));
+    const file = join(logs, 'session.jsonl');
+    await writeFile(
+      file,
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 2,
+          }),
+        ) +
+        line(
+          apiError({
+            uuid: 'e1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:13.300Z',
+            status: 529,
+          }),
+        ),
+    );
+    const dbPath = join(directory, 'index.sqlite3');
+    const seeded = new Database({ path: dbPath, hmacKey: 'v2-key' });
+    await new Scanner({ roots: [logs], database: seeded }).scanAll();
+    expect(seeded.getFailures()).toHaveLength(1);
+    seeded.close();
+
+    // Restore the v2 shape: no failure classification anywhere, and a request
+    // archived while the partial output still looked measurable.
+    const legacy = new BetterSqlite3(dbPath);
+    legacy.exec(`
+      DROP INDEX events_failure_timestamp_idx;
+      ALTER TABLE events DROP COLUMN failure_class;
+      DROP TABLE failure_history;
+      UPDATE requests SET quality_reason = NULL, tokens_per_second = 0.177;
+      UPDATE request_history SET quality_reason = NULL, tokens_per_second = 0.177;
+      PRAGMA user_version = 2;
+    `);
+    expect(legacy.prepare('SELECT COUNT(*) count FROM request_history').get()).toEqual({
+      count: 1,
+    });
+    legacy.close();
+
+    const database = new Database({ path: dbPath, hmacKey: 'v2-key' });
+    expect(database.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(database.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 0 });
+    expect(database.db.prepare('SELECT COUNT(*) count FROM files').get()).toEqual({ count: 0 });
+    expect(
+      database.db.prepare('SELECT quality_reason, tokens_per_second FROM request_history').all(),
+    ).toEqual([{ quality_reason: null, tokens_per_second: 0.177 }]);
+
+    await new Scanner({ roots: [logs], database }).scanAll();
+    expect(database.getFailures()).toMatchObject([{ failureClass: 'overloaded' }]);
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'api_error', tokensPerSecond: null },
+    ]);
+    expect(
+      database.db.prepare('SELECT quality_reason, tokens_per_second FROM request_history').all(),
+    ).toEqual([{ quality_reason: 'api_error', tokens_per_second: null }]);
+    database.close();
+
+    // A second open is a no-op: the live index survives at the current version.
+    const reopened = new Database({ path: dbPath, hmacKey: 'v2-key' });
+    expect(reopened.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(reopened.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 3 });
+    expect(reopened.getFailures()).toHaveLength(1);
+    reopened.close();
+    const bytes = (await readFile(dbPath)).toString('utf8');
+    expect(bytes).not.toContain('PRIVATE_API_ERROR_TEXT');
+  });
+
+  it('rolls back a crashed v3 migration instead of recording the new version', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-v3-rollback-'));
+    temporaryDirectories.push(directory);
+    const logs = join(directory, 'logs');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(logs));
+    await writeFile(
+      join(logs, 'session.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-a',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 40,
+          }),
+        ),
+    );
+    const dbPath = join(directory, 'index.sqlite3');
+    const seeded = new Database({ path: dbPath, hmacKey: 'rollback-key' });
+    await new Scanner({ roots: [logs], database: seeded }).scanAll();
+    seeded.close();
+
+    const legacy = new BetterSqlite3(dbPath);
+    legacy.exec(`
+      DROP INDEX events_failure_timestamp_idx;
+      ALTER TABLE events DROP COLUMN failure_class;
+      DROP TABLE failure_history;
+      PRAGMA user_version = 2;
+    `);
+    legacy.close();
+
+    // A crash after the destructive reset must not leave the version bumped:
+    // the next open has to redo the whole migration, not skip it.
+    const crash = vi.spyOn(Database.prototype, 'resetLive').mockImplementation(function (
+      this: Database,
+    ) {
+      this.db.prepare('DELETE FROM events').run();
+      this.db.prepare('DELETE FROM files').run();
+      throw new Error('crash mid-migration');
+    });
+    expect(() => new Database({ path: dbPath, hmacKey: 'rollback-key' })).toThrow(
+      'crash mid-migration',
+    );
+    crash.mockRestore();
+
+    const inspect = new BetterSqlite3(dbPath);
+    expect(inspect.pragma('user_version', { simple: true })).toBe(2);
+    expect(inspect.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 2 });
+    expect(inspect.prepare('SELECT COUNT(*) count FROM files').get()).toEqual({ count: 1 });
+    inspect.close();
+
+    // The retry completes, and the re-ingest restores the live index.
+    const recovered = new Database({ path: dbPath, hmacKey: 'rollback-key' });
+    expect(recovered.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(recovered.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 0 });
+    await new Scanner({ roots: [logs], database: recovered }).scanAll();
+    expect(recovered.getRequests()).toMatchObject([{ qualityReason: null, outputTokens: 40 }]);
+    recovered.close();
   });
 });

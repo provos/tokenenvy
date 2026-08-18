@@ -1,5 +1,6 @@
 import type {
   DailyPoint,
+  DatedFailureCounts,
   LongitudinalRefusalDay,
   ModelFamily,
   RefusalCounts,
@@ -91,6 +92,25 @@ export function refusalDayLabel(day: LongitudinalRefusalDay): string {
   return unattributed > 0
     ? `${selectedLabel}. ${unattributed} ${unattributed === 1 ? 'signal' : 'signals'} without a model match. Explicit signals only; lower bound.`
     : `${selectedLabel}. Explicit signals only; lower bound.`;
+}
+
+/**
+ * Failure events never carry a usable model, so this label deliberately says
+ * nothing about model families: the day stands on its own regardless of which
+ * family chips are selected.
+ */
+export function failureDayLabel(day: DatedFailureCounts): string {
+  // Only `overloaded` carries a measured status (529). Server faults are grouped
+  // from the reported error kind, so the wording claims no status class.
+  if (day.attempted === 0) {
+    return 'No API failures recorded. Calls that never completed; not model refusals.';
+  }
+  const parts = [
+    `${day.overloaded} overloaded`,
+    `${day.serverError} server ${day.serverError === 1 ? 'fault' : 'faults'}`,
+  ];
+  const attemptedLabel = `${day.attempted} API ${day.attempted === 1 ? 'failure' : 'failures'}: ${parts.join(', ')}`;
+  return `${attemptedLabel}. Calls that never completed; not model refusals.`;
 }
 
 export function speedIndexSummary(index: SpeedIndex): string {
