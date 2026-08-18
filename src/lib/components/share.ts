@@ -21,8 +21,13 @@ export const FAILURE_MARK = '⊗';
  * The governing split, carried onto every card: refusals are the model would
  * not, failures are the service could not. It never blames the reader and never
  * claims a status class that was not measured.
+ *
+ * The dashboard states this elliptically ("the model would not" / "the service
+ * could not") because the two glosses sit side by side and complete each other.
+ * A card carries only the failure half, and a caption is plain prose, so both
+ * finish the verb instead of leaning on a twin that is not there.
  */
-export const FAILURE_FRAMING = 'the service could not';
+export const FAILURE_FRAMING = 'the service could not complete';
 
 const SOCIAL_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -500,7 +505,8 @@ function serverFaultLabel(serverError: number): string {
 export function failureStampLabel(counts: ShareFailureCounts): string {
   const failures = normalizeShareFailures(counts);
   if (failures.attempted === 0) return '';
-  return `${failureNoun(failures.attempted)} · ${FAILURE_FRAMING}`;
+  const calls = `${failures.attempted} ${failures.attempted === 1 ? 'call' : 'calls'}`;
+  return `${calls} ${FAILURE_FRAMING}`;
 }
 
 /** The long form used in captions, receipts, and the card's accessible label. */

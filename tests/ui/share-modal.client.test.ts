@@ -153,7 +153,7 @@ describe('share modal client state', () => {
       );
       expect(target.textContent).toContain('explicit lower bound');
       expect(target.querySelector('.share-failure-stamp')?.textContent).toBe(
-        '\u229710 API failures \u00b7 the service could not',
+        '\u229710 calls the service could not complete',
       );
       const refreshedMood = modalState(target).mood;
       refreshedMood.value = '2';

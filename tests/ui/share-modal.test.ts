@@ -167,7 +167,7 @@ describe('share-card customization', () => {
     const normalizedBody = body.replace(/\s+/g, ' ');
 
     expect(body).toContain('class="share-failure-stamp"');
-    expect(normalizedBody).toContain('10 API failures · the service could not');
+    expect(normalizedBody).toContain('10 calls the service could not complete');
     expect(body).toContain('⊗');
     // The refusal axis is untouched: no summed total, no refusal wording.
     expect(body).not.toContain('share-preview-refusals');
@@ -177,7 +177,7 @@ describe('share-card customization', () => {
     );
     // The accessible label spells the split out, which the terse stamp does not.
     expect(normalizedBody).toContain(
-      '10 API failures · 7 overloaded · 3 server faults · the service could not',
+      '10 API failures · 7 overloaded · 3 server faults · the service could not complete',
     );
   });
 
@@ -195,7 +195,7 @@ describe('share-card customization', () => {
 
     expect(body).not.toContain('share-failure-stamp');
     expect(body).not.toContain('API failure');
-    expect(body).not.toContain('the service could not');
+    expect(body).not.toContain('the service could not complete');
   });
 
   it('says nothing at all when the log format records no failures', () => {
@@ -231,7 +231,7 @@ describe('share-card customization', () => {
       'Comparable days suggested Good. 1 user-visible refusal signal moved it to Rough. 10 API failures that never completed kept it at Rough. Pick the mood; the numbers stay put.',
     );
     expect(normalizedBody).toContain('2 refusal signals · 1 recovered · 1 user-visible');
-    expect(normalizedBody).toContain('10 API failures · the service could not');
+    expect(normalizedBody).toContain('10 calls the service could not complete');
     expect(normalizedBody).not.toContain('12 ');
   });
 
@@ -251,13 +251,15 @@ describe('share-card customization', () => {
     });
 
     expect(getShareCaption('friendly', 0, card, 'generic', null)).toContain(
-      '10 API failures · 7 overloaded · 3 server faults · the service could not.',
+      '10 API failures · 7 overloaded · 3 server faults · the service could not complete.',
     );
     expect(getShareTextReceipt('friendly', 0, card)).toContain(
-      '10 API failures · 7 overloaded · 3 server faults · the service could not',
+      '10 API failures · 7 overloaded · 3 server faults · the service could not complete',
     );
     const xCaption = getShareCaption('friendly', 0, card, 'x', null);
-    expect(xCaption).toContain('10 API failures: 7 overloaded/3 server; the service could not.');
+    expect(xCaption).toContain(
+      '10 API failures: 7 overloaded/3 server; the service could not complete.',
+    );
     expect(xCaption.length).toBeLessThanOrEqual(250);
 
     const quiet = buildShareCardData({

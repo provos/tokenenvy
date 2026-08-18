@@ -218,9 +218,9 @@ describe('longitudinal platform failures', () => {
   };
 
   it('summarises the whole range on its own axis', () => {
-    expect(longitudinalFailureStamp(stormy)).toBe('12 API failures · the service could not');
+    expect(longitudinalFailureStamp(stormy)).toBe('12 calls the service could not complete');
     expect(longitudinalFailureLine(stormy)).toBe(
-      '12 API failures · 9 overloaded · 3 server faults · the service could not',
+      '12 API failures · 9 overloaded · 3 server faults · the service could not complete',
     );
     expect(longitudinalFailureLine({ ...summary, failures: [] })).toBe('');
     expect(longitudinalFailureLine({ ...stormy, failuresRecorded: false })).toBe('');
@@ -252,10 +252,12 @@ describe('longitudinal platform failures', () => {
 
   it('carries the failure axis into every caption without crowding out the rest', () => {
     expect(longitudinalCaption(stormy, 'friendly', 0, null)).toContain(
-      '12 API failures · 9 overloaded · 3 server faults · the service could not.',
+      '12 API failures · 9 overloaded · 3 server faults · the service could not complete.',
     );
     const xCaption = longitudinalCaption(stormy, 'friendly', 0, null, 'x');
-    expect(xCaption).toContain('12 API failures: 9 overloaded/3 server; the service could not.');
+    expect(xCaption).toContain(
+      '12 API failures: 9 overloaded/3 server; the service could not complete.',
+    );
     expect(xCaption.length).toBeLessThanOrEqual(250);
     expect(longitudinalCaption({ ...summary, failures: [] }, 'friendly', 0, null)).not.toContain(
       'API failure',
@@ -269,7 +271,7 @@ describe('longitudinal platform failures', () => {
 
     expect(body.match(/class="failure-mark"/g)).toHaveLength(2);
     expect(body).toContain('class="share-failure-stamp"');
-    expect(body.replace(/\s+/g, ' ')).toContain('12 API failures · the service could not');
+    expect(body.replace(/\s+/g, ' ')).toContain('12 calls the service could not complete');
     expect(body).toContain('--stamp-mark:');
   });
 

@@ -232,9 +232,9 @@ describe('weekly Token Envy recap', () => {
       },
     };
 
-    expect(weeklyRecapFailureStamp(withFailures)).toBe('2 API failures · the service could not');
+    expect(weeklyRecapFailureStamp(withFailures)).toBe('2 calls the service could not complete');
     expect(weeklyRecapFailureLine(withFailures)).toBe(
-      '2 API failures · 2 overloaded · the service could not',
+      '2 API failures · 2 overloaded · the service could not complete',
     );
     expect(suggestedWeeklySentiment(withFailures)).toBe(0);
     expect(weeklyRecapSentimentDescription(withFailures)).toBe(
@@ -244,12 +244,12 @@ describe('weekly Token Envy recap', () => {
     expect(weeklyRecapRefusalLine(withFailures)).toBe('No explicit refusal signals this week');
 
     const caption = weeklyRecapCaption(withFailures, 'friendly', 0, null);
-    expect(caption).toContain('2 API failures · 2 overloaded · the service could not.');
+    expect(caption).toContain('2 API failures · 2 overloaded · the service could not complete.');
     expect(weeklyRecapTextReceipt(withFailures, 'friendly', 0)).toContain(
-      '2 API failures · 2 overloaded · the service could not',
+      '2 API failures · 2 overloaded · the service could not complete',
     );
     const xCaption = weeklyRecapCaption(withFailures, 'friendly', 0, null, 'x');
-    expect(xCaption).toContain('2 API failures: 2 overloaded; the service could not.');
+    expect(xCaption).toContain('2 API failures: 2 overloaded; the service could not complete.');
     expect(xCaption.length).toBeLessThanOrEqual(250);
   });
 
@@ -265,7 +265,7 @@ describe('weekly Token Envy recap', () => {
       },
     };
     expect(suggestedWeeklySentiment(sustained)).toBe(0);
-    expect(weeklyRecapFailureStamp(sustained)).toBe('10 API failures · the service could not');
+    expect(weeklyRecapFailureStamp(sustained)).toBe('10 calls the service could not complete');
 
     const alsoRefused: WeeklyRecapData = {
       ...sustained,
@@ -316,6 +316,6 @@ describe('weekly Token Envy recap', () => {
       },
     });
     expect(stormy.body).toContain('class="share-failure-stamp"');
-    expect(stormy.body.replace(/\s+/g, ' ')).toContain('10 API failures · the service could not');
+    expect(stormy.body.replace(/\s+/g, ' ')).toContain('10 calls the service could not complete');
   });
 });
