@@ -262,6 +262,26 @@ describe('share-card customization', () => {
     );
     expect(xCaption.length).toBeLessThanOrEqual(250);
 
+    // A total with no breakdown cannot happen while every counted class also
+    // increments one of the two, but a third platform class would reach here
+    // first and must not emit a dangling separator.
+    const unsplit = buildShareCardData({
+      date: detail.date,
+      median: detail.summary.median,
+      count: detail.summary.count,
+      sessions: detail.summary.sessions,
+      outputTokens: detail.summary.outputTokens,
+      isToday: true,
+      speedIndex: detail.speedIndex,
+      refusals: { recorded: true, attempted: 0, recovered: 0, userVisible: 0 },
+      failures: { recorded: true, attempted: 10, overloaded: 0, serverError: 0 },
+      models: [],
+      histogram: [],
+    });
+    const unsplitCaption = getShareCaption('friendly', 0, unsplit, 'x', null);
+    expect(unsplitCaption).toContain('10 API failures; the service could not complete.');
+    expect(unsplitCaption).not.toContain(': ;');
+
     const quiet = buildShareCardData({
       date: detail.date,
       median: detail.summary.median,

@@ -562,7 +562,12 @@ export function getCompactFailureLine(counts: ShareFailureCounts): string {
     failures.overloaded > 0 ? `${compactSocialNumber(failures.overloaded)} overloaded` : null,
     failures.serverError > 0 ? `${compactSocialNumber(failures.serverError)} server` : null,
   ].filter((outcome): outcome is string => outcome !== null);
-  return `${failureNoun(failures.attempted, compactSocialNumber)}: ${outcomes.join('/')}; ${FAILURE_FRAMING}.`;
+  // A total with no breakdown is unreachable while every counted class also
+  // increments one of the two, but adding a third platform class would land
+  // here first -- and a dangling `: ;` is a worse way to find that out than a
+  // total with no split.
+  const split = outcomes.length > 0 ? `: ${outcomes.join('/')}` : '';
+  return `${failureNoun(failures.attempted, compactSocialNumber)}${split}; ${FAILURE_FRAMING}.`;
 }
 
 export interface FailureStampTheme {
