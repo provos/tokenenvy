@@ -1301,7 +1301,9 @@ td .model-dot {
   gap: 8px;
 }
 
-.interruption-block h3 {
+/* The rail nests these under an h2, the drawer under an h3, so the level
+   differs by surface while the treatment does not. */
+.interruption-block :is(h3, h4) {
   margin: 0;
   font-size: 13px;
   line-height: 1.2;
@@ -1331,6 +1333,13 @@ td .model-dot {
 .interruption-block .rail-empty {
   margin: 11px 0 0;
   padding: 17px 5px;
+}
+
+/* Nothing happened, said once. Lighter than a total, heavier than a footnote. */
+.interruption-quiet {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .trust-grid {
@@ -1787,10 +1796,6 @@ td .model-dot {
   background: var(--panel);
 }
 
-.drawer-refusal-section .refusal-total {
-  margin: 18px 0 14px;
-}
-
 .drawer-refusal-note {
   margin: 11px 0 0;
   color: var(--text-faint);
@@ -1930,6 +1935,15 @@ td .model-dot {
   border-top: 1px solid var(--line);
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* Points the row back at the failure block above, so the two tallies read as
+   two units rather than as a disagreement. */
+.quality-note li small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 10px;
 }
 
 .drawer-loading,
