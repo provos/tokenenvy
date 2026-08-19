@@ -27,6 +27,8 @@ const initialSummary: LongitudinalSummary = {
   ],
   refusalsRecorded: true,
   refusals: [],
+  failuresRecorded: true,
+  failures: [],
 };
 
 const updatedSummary: LongitudinalSummary = {

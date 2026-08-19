@@ -6,6 +6,8 @@ import {
   safeWeeklyRecapProductLink,
   suggestedWeeklySentiment,
   weeklyRecapCaption,
+  weeklyRecapFailureLine,
+  weeklyRecapFailureStamp,
   weeklyRecapHeadline,
   weeklyRecapImageFilename,
   weeklyRecapIndexLine,
@@ -51,6 +53,13 @@ const recap: WeeklyRecapData = {
     recovered: 0,
     userVisible: 0,
     unknown: 0,
+    affectedDates: [],
+  },
+  failures: {
+    recorded: true,
+    attempted: 0,
+    overloaded: 0,
+    serverError: 0,
     affectedDates: [],
   },
 };
@@ -210,5 +219,103 @@ describe('weekly Token Envy recap', () => {
     expect(body).toContain('data-weekday="1" data-observed="true"');
     expect(body).toContain('data-weekday="2" data-observed="false"');
     expect(body).toContain('data-weekday="5" data-observed="true"');
+  });
+  it('reports platform failures on their own axis, more gently than refusals', () => {
+    const withFailures: WeeklyRecapData = {
+      ...recap,
+      failures: {
+        recorded: true,
+        attempted: 2,
+        overloaded: 2,
+        serverError: 0,
+        affectedDates: [{ date: '2026-08-13', attempted: 2, overloaded: 2, serverError: 0 }],
+      },
+    };
+
+    expect(weeklyRecapFailureStamp(withFailures)).toBe('2 calls the service could not complete');
+    expect(weeklyRecapFailureLine(withFailures)).toBe(
+      '2 API failures · 2 overloaded · the service could not complete',
+    );
+    expect(suggestedWeeklySentiment(withFailures)).toBe(0);
+    expect(weeklyRecapSentimentDescription(withFailures)).toBe(
+      'My prior 28 days suggested Good. 2 API failures that never completed moved it to Neutral. Pick the mood; the numbers stay put.',
+    );
+    // The refusal axis is untouched and nothing is summed across the two.
+    expect(weeklyRecapRefusalLine(withFailures)).toBe('No explicit refusal signals this week');
+
+    const caption = weeklyRecapCaption(withFailures, 'friendly', 0, null);
+    expect(caption).toContain('2 API failures · 2 overloaded · the service could not complete.');
+    expect(weeklyRecapTextReceipt(withFailures, 'friendly', 0)).toContain(
+      '2 API failures · 2 overloaded · the service could not complete',
+    );
+    const xCaption = weeklyRecapCaption(withFailures, 'friendly', 0, null, 'x');
+    expect(xCaption).toContain('2 API failures: 2 overloaded; the service could not complete.');
+    expect(xCaption.length).toBeLessThanOrEqual(250);
+  });
+
+  it('caps a sustained weekly outage at Neutral and never at Brutal', () => {
+    const sustained: WeeklyRecapData = {
+      ...recap,
+      failures: {
+        recorded: true,
+        attempted: 10,
+        overloaded: 7,
+        serverError: 3,
+        affectedDates: [{ date: '2026-08-13', attempted: 10, overloaded: 7, serverError: 3 }],
+      },
+    };
+    expect(suggestedWeeklySentiment(sustained)).toBe(0);
+    expect(weeklyRecapFailureStamp(sustained)).toBe('10 calls the service could not complete');
+
+    const alsoRefused: WeeklyRecapData = {
+      ...sustained,
+      refusals: {
+        recorded: true,
+        attempted: 2,
+        recovered: 0,
+        userVisible: 2,
+        unknown: 0,
+        affectedDates: [
+          { date: '2026-08-13', attempted: 2, recovered: 0, userVisible: 2, unknown: 0 },
+        ],
+      },
+    };
+    // Refusals already chose Brutal; the outage cannot push past it or lift it.
+    expect(suggestedWeeklySentiment(alsoRefused)).toBe(-2);
+    expect(weeklyRecapSentimentDescription(alsoRefused)).toBe(
+      'My prior 28 days suggested Good. 2 user-visible refusal signals moved it to Brutal. 10 API failures that never completed kept it at Brutal. Pick the mood; the numbers stay put.',
+    );
+  });
+
+  it('keeps the weekly card clean when the service held up', () => {
+    expect(weeklyRecapFailureStamp(recap)).toBe('');
+    expect(weeklyRecapFailureLine(recap)).toBe('');
+    expect(suggestedWeeklySentiment(recap)).toBe(1);
+
+    const quiet = render(WeeklyRecapModal, {
+      props: { open: true, recap, outputTokens: 25_000, onclose: () => undefined },
+    });
+    expect(quiet.body).not.toContain('share-failure-stamp');
+    expect(quiet.body).not.toContain('API failure');
+
+    const stormy = render(WeeklyRecapModal, {
+      props: {
+        open: true,
+        recap: {
+          ...recap,
+          failures: {
+            recorded: true,
+            attempted: 10,
+            overloaded: 7,
+            serverError: 3,
+            affectedDates: [{ date: '2026-08-13', attempted: 10, overloaded: 7, serverError: 3 }],
+          },
+        },
+        outputTokens: 25_000,
+        onclose: () => undefined,
+      },
+    });
+    expect(stormy.body).toContain('class="share-failure-stamp"');
+    expect(stormy.body.replace(/\s+/g, ' ')).toContain('10 calls the service could not complete');
   });
 });

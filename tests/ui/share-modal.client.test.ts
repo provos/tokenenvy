@@ -2,7 +2,7 @@
 
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
-import type { ShareRefusalCounts } from '../../src/lib/components/share';
+import type { ShareFailureCounts, ShareRefusalCounts } from '../../src/lib/components/share';
 import type { DayDetailResponse } from '../../src/lib/types';
 import ShareModalHarness from './fixtures/ShareModalHarness.svelte';
 
@@ -70,6 +70,20 @@ const updatedRefusals: ShareRefusalCounts = {
   userVisible: 1,
 };
 
+const initialFailures: ShareFailureCounts = {
+  recorded: true,
+  attempted: 0,
+  overloaded: 0,
+  serverError: 0,
+};
+
+const updatedFailures: ShareFailureCounts = {
+  recorded: true,
+  attempted: 10,
+  overloaded: 7,
+  serverError: 3,
+};
+
 function click(target: ParentNode, selector: string) {
   const button = target.querySelector<HTMLButtonElement>(selector);
   if (!button) throw new Error(`Missing button: ${selector}`);
@@ -95,7 +109,14 @@ describe('share modal client state', () => {
     document.body.append(target);
     const component = mount(ShareModalHarness, {
       target,
-      props: { initialDetail, updatedDetail, initialRefusals, updatedRefusals },
+      props: {
+        initialDetail,
+        updatedDetail,
+        initialRefusals,
+        updatedRefusals,
+        initialFailures,
+        updatedFailures,
+      },
     });
 
     try {
@@ -103,6 +124,8 @@ describe('share modal client state', () => {
       await tick();
       expect(modalState(target)).toMatchObject({ metric: '70', busy: 'false' });
       expect(modalState(target).mood.getAttribute('aria-valuetext')).toBe('Positive');
+      // A quiet day carries no failure stamp at all.
+      expect(target.querySelector('.share-failure-stamp')).toBeNull();
 
       const mood = modalState(target).mood;
       mood.value = '0';
@@ -117,6 +140,7 @@ describe('share modal client state', () => {
       expect(modalState(target).mood.getAttribute('aria-valuetext')).toBe('Neutral');
       expect(target.textContent).not.toContain('Refreshing this day before sharing');
       expect(target.textContent).not.toContain('3 refusals');
+      expect(target.querySelector('.share-failure-stamp')).toBeNull();
       expect(renderSpy).toHaveBeenCalledTimes(renderCount);
 
       flushSync(() => click(target, '.share-modal .icon-button'));
@@ -128,6 +152,9 @@ describe('share modal client state', () => {
         '3 refusal signals · 1 recovered · 1 user-visible · 1 unresolved',
       );
       expect(target.textContent).toContain('explicit lower bound');
+      expect(target.querySelector('.share-failure-stamp')?.textContent).toBe(
+        '\u229710 calls the service could not complete',
+      );
       const refreshedMood = modalState(target).mood;
       refreshedMood.value = '2';
       flushSync(() => refreshedMood.dispatchEvent(new Event('input', { bubbles: true })));

@@ -1,11 +1,14 @@
 import type {
   DailyPoint,
+  DatedFailureCounts,
   LongitudinalRefusalDay,
   ModelFamily,
   RefusalCounts,
   RefusalTimeline,
   SpeedIndex,
 } from '$lib/types';
+// `share.ts` pulls in no chart module, so this stays a one-way dependency.
+import { failureNoun, serverFaultLabel } from './share';
 
 export const FAMILY_COLORS: Record<ModelFamily, string> = {
   opus: '#ff7359',
@@ -91,6 +94,22 @@ export function refusalDayLabel(day: LongitudinalRefusalDay): string {
   return unattributed > 0
     ? `${selectedLabel}. ${unattributed} ${unattributed === 1 ? 'signal' : 'signals'} without a model match. Explicit signals only; lower bound.`
     : `${selectedLabel}. Explicit signals only; lower bound.`;
+}
+
+/**
+ * Failure events never carry a usable model, so this label deliberately says
+ * nothing about model families: the day stands on its own regardless of which
+ * family chips are selected.
+ */
+export function failureDayLabel(day: DatedFailureCounts): string {
+  // Only `overloaded` carries a measured status (529). Server faults are grouped
+  // from the reported error kind, so the wording claims no status class.
+  if (day.attempted === 0) {
+    return 'No API failures recorded. Calls that never completed; not model refusals.';
+  }
+  const parts = [`${day.overloaded} overloaded`, serverFaultLabel(day.serverError)];
+  const attemptedLabel = `${failureNoun(day.attempted)}: ${parts.join(', ')}`;
+  return `${attemptedLabel}. Calls that never completed; not model refusals.`;
 }
 
 export function speedIndexSummary(index: SpeedIndex): string {

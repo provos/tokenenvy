@@ -6,6 +6,7 @@ import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { normalizeModelFamily, outputSizeStratum } from '../core/model';
 import type { ParsedEvent } from '../core/parser';
 import type { ModelFamily, QuotaResponse, ScanStatus } from '../types';
+import { PLATFORM_FAILURE_CLASSES } from '../types';
 
 export interface DatabaseOptions {
   path: string;
@@ -40,6 +41,13 @@ export interface StoredRequest {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   family: ModelFamily;
+  /**
+   * Whether any assistant row in the request actually named a model. A request
+   * whose only rows are API-error rows names none, and `family` then holds the
+   * `other` placeholder that keeps the column non-null and the API contract
+   * fixed. Consumers that must not invent an attribution read this first.
+   */
+  familyKnown: boolean;
   stratum: number;
   tokensPerSecond: number | null;
   provisional: boolean;
@@ -52,6 +60,18 @@ export interface StoredRefusal {
   sessionId: string;
   timestampMs: number;
   outcome: 'recovered' | 'user_visible' | 'unknown';
+}
+
+/**
+ * Only platform faults are surfaced. `safeguard_block` is reported through
+ * refusals and `client` covers local faults that say nothing about the service.
+ */
+export interface StoredFailure {
+  eventId: string;
+  requestId: string | null;
+  sessionId: string;
+  timestampMs: number;
+  failureClass: (typeof PLATFORM_FAILURE_CLASSES)[number];
 }
 
 export interface QuotaSampleInput {
@@ -116,6 +136,7 @@ export class Database {
   readonly db: BetterSqliteDatabase;
   readonly #key: Buffer;
   #requestRevision = 0;
+  #dataQuality: { revision: number; summary: DataQualitySummary } | null = null;
   #scanStatus: ScanStatus = { ...EMPTY_SCAN_STATUS };
 
   constructor(options: DatabaseOptions | string) {
@@ -161,6 +182,7 @@ export class Database {
         cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
         synthetic INTEGER NOT NULL DEFAULT 0,
         refusal_outcome TEXT,
+        failure_class TEXT,
         quality_flags TEXT
       );
       CREATE INDEX IF NOT EXISTS events_request_idx ON events(request_id);
@@ -186,6 +208,7 @@ export class Database {
         cache_read_tokens INTEGER NOT NULL,
         cache_creation_tokens INTEGER NOT NULL,
         family TEXT NOT NULL,
+        family_known INTEGER NOT NULL DEFAULT 1,
         stratum INTEGER NOT NULL,
         tokens_per_second REAL,
         provisional INTEGER NOT NULL,
@@ -193,6 +216,8 @@ export class Database {
       );
       CREATE INDEX IF NOT EXISTS requests_finished_idx ON requests(finished_at);
       CREATE INDEX IF NOT EXISTS requests_family_idx ON requests(family);
+      CREATE INDEX IF NOT EXISTS requests_included_idx ON requests(request_id)
+        WHERE quality_reason IS NULL AND provisional = 0;
       CREATE TABLE IF NOT EXISTS monitored_roots (
         root_id TEXT PRIMARY KEY,
         priority INTEGER NOT NULL,
@@ -209,6 +234,7 @@ export class Database {
         cache_read_tokens INTEGER NOT NULL,
         cache_creation_tokens INTEGER NOT NULL,
         family TEXT NOT NULL,
+        family_known INTEGER NOT NULL DEFAULT 1,
         stratum INTEGER NOT NULL,
         tokens_per_second REAL,
         provisional INTEGER NOT NULL DEFAULT 0,
@@ -218,16 +244,32 @@ export class Database {
       );
       CREATE INDEX IF NOT EXISTS request_history_finished_idx ON request_history(finished_at);
       CREATE INDEX IF NOT EXISTS request_history_family_idx ON request_history(family);
+      -- Both partial indexes cover the measured-request predicate exactly. They
+      -- are created unconditionally on every open because getMeasuredRequestCount
+      -- names them in an INDEXED BY clause.
+      CREATE INDEX IF NOT EXISTS request_history_included_idx ON request_history(request_id)
+        WHERE quality_reason IS NULL AND provisional = 0;
       CREATE TABLE IF NOT EXISTS refusal_history (
         event_id TEXT PRIMARY KEY,
         request_id TEXT,
         session_id TEXT NOT NULL,
         timestamp_ms INTEGER NOT NULL,
         refusal_outcome TEXT NOT NULL,
+        safeguard INTEGER NOT NULL DEFAULT 0,
         archived_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS refusal_history_timestamp_idx ON refusal_history(timestamp_ms);
+      CREATE TABLE IF NOT EXISTS failure_history (
+        event_id TEXT PRIMARY KEY,
+        request_id TEXT,
+        session_id TEXT NOT NULL,
+        timestamp_ms INTEGER NOT NULL,
+        failure_class TEXT NOT NULL,
+        archived_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS failure_history_timestamp_idx ON failure_history(timestamp_ms);
       CREATE TABLE IF NOT EXISTS quota_samples (
         window TEXT NOT NULL,
         observed_at INTEGER NOT NULL,
@@ -236,16 +278,66 @@ export class Database {
         PRIMARY KEY(window, observed_at)
       );
     `);
-    const fileColumns = this.db.pragma('table_info(files)') as Array<{ name: string }>;
-    if (!fileColumns.some(({ name }) => name === 'root_id')) {
-      this.db.exec("ALTER TABLE files ADD COLUMN root_id TEXT NOT NULL DEFAULT ''");
-    }
     const eventColumns = this.db.pragma('table_info(events)') as Array<{ name: string }>;
     if (eventColumns.some(({ name }) => name === 'refusal_category')) {
       this.db.exec('ALTER TABLE events DROP COLUMN refusal_category');
     }
-    this.db.pragma('user_version = 2');
+    const version = Number(this.db.pragma('user_version', { simple: true })) || 0;
+    this.addColumnIfMissing('files', 'root_id', "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing('events', 'failure_class', 'TEXT');
+    // Defaulting to "the family is real" matches every row written before the
+    // column existed: `family` has always been non-null, so an older index has
+    // no rows that are known to name no model. The next rebuild decides the
+    // flag from the events themselves.
+    this.addColumnIfMissing('requests', 'family_known', 'INTEGER NOT NULL DEFAULT 1');
+    this.addColumnIfMissing('request_history', 'family_known', 'INTEGER NOT NULL DEFAULT 1');
+    // An archived refusal used to recover this flag by joining `failure_history`.
+    // Carrying the derived value across once keeps rows whose transcript has
+    // rotated away deduplicating exactly as they did before, and is the last
+    // read of that join. Rows archived from now on store the flag directly.
+    if (this.addColumnIfMissing('refusal_history', 'safeguard', 'INTEGER NOT NULL DEFAULT 0')) {
+      this.db.exec(`
+        UPDATE refusal_history SET safeguard = 1
+        WHERE EXISTS (
+          SELECT 1 FROM failure_history archived
+          WHERE archived.event_id = refusal_history.event_id
+            AND archived.failure_class = 'safeguard_block'
+        )
+      `);
+    }
+    // The invalidation and the version bump commit together. Recording the
+    // version first would let a crash in between leave an index that believes
+    // it is current while every transcript still needs re-reading, and the new
+    // column would stay empty forever.
+    this.db.transaction(() => {
+      if (version < 3) {
+        // `failure_class` is derived per event, so it can only appear by
+        // reading the transcripts again. Ingest upserts, so that re-read
+        // repairs the rows in place; nothing is deleted and the archived
+        // history self-heals its stale quality reasons on the next rebuild.
+        this.invalidateFileCheckpoints();
+      }
+      this.db.pragma('user_version = 3');
+    })();
+    // Created after the column so an upgraded database can index it too.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS events_failure_timestamp_idx
+        ON events(timestamp_ms) WHERE failure_class IS NOT NULL;
+    `);
     this.db.pragma('optimize');
+  }
+
+  /**
+   * Adds a column an older index predates, reporting whether it was missing so
+   * a caller can backfill it. `table`, `column` and `definition` are internal
+   * literals from `migrate` alone, never user input, so interpolating them is
+   * safe.
+   */
+  private addColumnIfMissing(table: string, column: string, definition: string): boolean {
+    const columns = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+    if (columns.some(({ name }) => name === column)) return false;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    return true;
   }
 
   close(): void {
@@ -329,16 +421,31 @@ export class Database {
         mtime_ms=excluded.mtime_ms, tail_hash=excluded.tail_hash,
         rows_read=excluded.rows_read, invalid_rows=excluded.invalid_rows
     `);
+    // Re-parsing a line is deterministic and `event_id` is a content-addressed
+    // digest, so writing the derived columns again is idempotent by
+    // construction. This makes ingest last-writer-wins where `INSERT OR IGNORE`
+    // was implicitly first-writer-wins, which is what lets a newly derived
+    // column be backfilled by re-reading transcripts instead of wiping the
+    // index and rebuilding it from empty.
     const insertEvent = this.db.prepare(`
-      INSERT OR IGNORE INTO events(
+      INSERT INTO events(
         event_id, parent_id, request_id, session_id, timestamp_ms, type, model,
         output_tokens, input_tokens, cache_read_tokens, cache_creation_tokens,
-        synthetic, refusal_outcome, quality_flags
+        synthetic, refusal_outcome, failure_class, quality_flags
       ) VALUES (
         @eventId, @parentId, @requestId, @sessionId, @timestampMs, @type, @model,
         @outputTokens, @inputTokens, @cacheReadTokens, @cacheCreationTokens,
-        @synthetic, @refusalOutcome, @qualityFlags
+        @synthetic, @refusalOutcome, @failureClass, @qualityFlags
       )
+      ON CONFLICT(event_id) DO UPDATE SET
+        parent_id=excluded.parent_id, request_id=excluded.request_id,
+        session_id=excluded.session_id, timestamp_ms=excluded.timestamp_ms,
+        type=excluded.type, model=excluded.model,
+        output_tokens=excluded.output_tokens, input_tokens=excluded.input_tokens,
+        cache_read_tokens=excluded.cache_read_tokens,
+        cache_creation_tokens=excluded.cache_creation_tokens,
+        synthetic=excluded.synthetic, refusal_outcome=excluded.refusal_outcome,
+        failure_class=excluded.failure_class, quality_flags=excluded.quality_flags
     `);
     const insertOccurrence = this.db.prepare(
       'INSERT OR REPLACE INTO occurrences(source_id, line_offset, event_id) VALUES (?, ?, ?)',
@@ -363,6 +470,10 @@ export class Database {
         );
       }
     })();
+    // Ingest changes the file, event and occurrence counts that the data
+    // quality summary reports, even though it leaves `requests` for the rebuild
+    // that follows it.
+    this.advanceRevision();
   }
 
   retractSource(sourceId: string, nowMs = Date.now()): boolean {
@@ -380,9 +491,36 @@ export class Database {
       return { sources: changes, archived };
     })();
     const changed =
-      result.sources > 0 || result.archived.requests > 0 || result.archived.refusals > 0;
-    if (result.sources > 0 || result.archived.requests > 0) this.#requestRevision += 1;
+      result.sources > 0 ||
+      result.archived.requests > 0 ||
+      result.archived.refusals > 0 ||
+      result.archived.failures > 0;
+    if (changed) this.advanceRevision();
     return changed;
+  }
+
+  /**
+   * Forces the next scan to read every indexed transcript again from its first
+   * byte and upsert the events in place. This is how a newly derived event
+   * column is backfilled without deleting anything: the existing rows stay
+   * queryable for the whole re-read instead of the dashboard sitting empty
+   * until a full re-ingest finishes.
+   *
+   * Zeroing `offset` alone re-reads nothing, because `Scanner.scanFile` returns
+   * early when the recorded size and mtime still match the file on disk, so
+   * those have to stop matching; -1 cannot collide with a real stat. The tail
+   * hash describes the offset it was taken at and goes with it. The row
+   * counters reset because the append path adds each scan's rows to the stored
+   * totals, which would otherwise count every re-read row a second time.
+   */
+  invalidateFileCheckpoints(): void {
+    this.db
+      .prepare(
+        `UPDATE files SET size = -1, offset = 0, mtime_ms = -1, tail_hash = '',
+           rows_read = 0, invalid_rows = 0`,
+      )
+      .run();
+    this.advanceRevision();
   }
 
   resetLive(nowMs = Date.now()): void {
@@ -393,7 +531,7 @@ export class Database {
       this.db.prepare('DELETE FROM files').run();
       this.db.prepare('DELETE FROM requests').run();
     })();
-    this.#requestRevision += 1;
+    this.advanceRevision();
   }
 
   private deleteOrphanEvents(): void {
@@ -407,47 +545,17 @@ export class Database {
       .run();
   }
 
-  private archiveStableInternal(nowMs: number): { requests: number; refusals: number } {
-    const cutoff = nowMs - HISTORY_STABILITY_MS;
-    const requestResult = this.db
-      .prepare(
-        `
-      INSERT INTO request_history(
-        request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
-        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
-        tokens_per_second, provisional, quality_reason, archived_at, updated_at
-      )
-      SELECT request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
-        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
-        tokens_per_second, 0, quality_reason, @nowMs, @nowMs
-      FROM requests
-      WHERE finished_at IS NOT NULL AND finished_at <= @cutoff
-      ON CONFLICT(request_id) DO UPDATE SET
-        session_id=excluded.session_id, started_at=excluded.started_at,
-        finished_at=excluded.finished_at, duration_ms=excluded.duration_ms,
-        output_tokens=excluded.output_tokens, input_tokens=excluded.input_tokens,
-        cache_read_tokens=excluded.cache_read_tokens,
-        cache_creation_tokens=excluded.cache_creation_tokens,
-        family=excluded.family, stratum=excluded.stratum,
-        tokens_per_second=excluded.tokens_per_second, provisional=0,
-        quality_reason=excluded.quality_reason, updated_at=excluded.updated_at
-      WHERE request_history.session_id IS NOT excluded.session_id
-        OR request_history.started_at IS NOT excluded.started_at
-        OR request_history.finished_at IS NOT excluded.finished_at
-        OR request_history.duration_ms IS NOT excluded.duration_ms
-        OR request_history.output_tokens IS NOT excluded.output_tokens
-        OR request_history.input_tokens IS NOT excluded.input_tokens
-        OR request_history.cache_read_tokens IS NOT excluded.cache_read_tokens
-        OR request_history.cache_creation_tokens IS NOT excluded.cache_creation_tokens
-        OR request_history.family IS NOT excluded.family
-        OR request_history.stratum IS NOT excluded.stratum
-        OR request_history.tokens_per_second IS NOT excluded.tokens_per_second
-        OR request_history.provisional IS NOT 0
-        OR request_history.quality_reason IS NOT excluded.quality_reason
-    `,
-      )
-      .run({ nowMs, cutoff });
-    const removedRefusals = this.db
+  /**
+   * Prunes archived refusals whose live event no longer reports one, then
+   * archives every stable live refusal.
+   *
+   * `safeguard` is stored rather than recovered later by joining
+   * `failure_history` for the same event. That join forced the two history
+   * tables to archive and prune in lockstep and made the failure axis retain
+   * rows it can never report, purely so the refusal axis could read them back.
+   */
+  private archiveRefusals(nowMs: number, cutoff: number): number {
+    const removed = this.db
       .prepare(
         `
       DELETE FROM refusal_history
@@ -461,36 +569,142 @@ export class Database {
     `,
       )
       .run({ cutoff });
-    const refusalResult = this.db
+    const archived = this.db
       .prepare(
         `
       INSERT INTO refusal_history(
-        event_id, request_id, session_id, timestamp_ms, refusal_outcome, archived_at, updated_at
+        event_id, request_id, session_id, timestamp_ms, refusal_outcome, safeguard,
+        archived_at, updated_at
       )
-      SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome, @nowMs, @nowMs
+      SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome,
+        CASE WHEN failure_class = 'safeguard_block' THEN 1 ELSE 0 END, @nowMs, @nowMs
       FROM events
       WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
       ON CONFLICT(event_id) DO UPDATE SET
         request_id=excluded.request_id, session_id=excluded.session_id,
         timestamp_ms=excluded.timestamp_ms, refusal_outcome=excluded.refusal_outcome,
-        updated_at=excluded.updated_at
+        safeguard=excluded.safeguard, updated_at=excluded.updated_at
       WHERE refusal_history.request_id IS NOT excluded.request_id
         OR refusal_history.session_id IS NOT excluded.session_id
         OR refusal_history.timestamp_ms IS NOT excluded.timestamp_ms
         OR refusal_history.refusal_outcome IS NOT excluded.refusal_outcome
+        OR refusal_history.safeguard IS NOT excluded.safeguard
+    `,
+      )
+      .run({ nowMs, cutoff });
+    return removed.changes + archived.changes;
+  }
+
+  /**
+   * Prunes archived failures whose live event no longer qualifies, then
+   * archives every stable live platform fault.
+   *
+   * Only platform faults are archived, because only those can be reported:
+   * `safeguard_block` reaches the dashboard as a refusal and `client` is a
+   * local fault. The prune is the exact negation of that predicate, so a class
+   * corrected away — and the two non-platform classes an older index archived
+   * while the refusal axis still read them back — are removed on the next pass.
+   */
+  private archiveFailures(nowMs: number, cutoff: number): number {
+    const classes = Object.fromEntries(
+      PLATFORM_FAILURE_CLASSES.map((failureClass, index) => [`class${index}`, failureClass]),
+    );
+    const platform = PLATFORM_FAILURE_CLASSES.map((_, index) => `@class${index}`).join(', ');
+    const removed = this.db
+      .prepare(
+        `
+      DELETE FROM failure_history
+      WHERE EXISTS (
+        SELECT 1 FROM events live
+        WHERE live.event_id = failure_history.event_id
+          AND (live.failure_class IS NULL OR live.failure_class NOT IN (${platform}))
+          AND live.timestamp_ms IS NOT NULL
+          AND live.timestamp_ms <= @cutoff
+      )
+    `,
+      )
+      .run({ ...classes, cutoff });
+    const archived = this.db
+      .prepare(
+        `
+      INSERT INTO failure_history(
+        event_id, request_id, session_id, timestamp_ms, failure_class, archived_at, updated_at
+      )
+      SELECT event_id, request_id, session_id, timestamp_ms, failure_class, @nowMs, @nowMs
+      FROM events
+      WHERE failure_class IN (${platform}) AND timestamp_ms IS NOT NULL AND timestamp_ms <= @cutoff
+      ON CONFLICT(event_id) DO UPDATE SET
+        request_id=excluded.request_id, session_id=excluded.session_id,
+        timestamp_ms=excluded.timestamp_ms, failure_class=excluded.failure_class,
+        updated_at=excluded.updated_at
+      WHERE failure_history.request_id IS NOT excluded.request_id
+        OR failure_history.session_id IS NOT excluded.session_id
+        OR failure_history.timestamp_ms IS NOT excluded.timestamp_ms
+        OR failure_history.failure_class IS NOT excluded.failure_class
+    `,
+      )
+      .run({ ...classes, nowMs, cutoff });
+    return removed.changes + archived.changes;
+  }
+
+  private archiveStableInternal(nowMs: number): {
+    requests: number;
+    refusals: number;
+    failures: number;
+  } {
+    const cutoff = nowMs - HISTORY_STABILITY_MS;
+    const requestResult = this.db
+      .prepare(
+        `
+      INSERT INTO request_history(
+        request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, family_known,
+        stratum, tokens_per_second, provisional, quality_reason, archived_at, updated_at
+      )
+      SELECT request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, family_known,
+        stratum, tokens_per_second, 0, quality_reason, @nowMs, @nowMs
+      FROM requests
+      WHERE finished_at IS NOT NULL AND finished_at <= @cutoff
+      ON CONFLICT(request_id) DO UPDATE SET
+        session_id=excluded.session_id, started_at=excluded.started_at,
+        finished_at=excluded.finished_at, duration_ms=excluded.duration_ms,
+        output_tokens=excluded.output_tokens, input_tokens=excluded.input_tokens,
+        cache_read_tokens=excluded.cache_read_tokens,
+        cache_creation_tokens=excluded.cache_creation_tokens,
+        family=excluded.family, family_known=excluded.family_known,
+        stratum=excluded.stratum,
+        tokens_per_second=excluded.tokens_per_second, provisional=0,
+        quality_reason=excluded.quality_reason, updated_at=excluded.updated_at
+      WHERE request_history.session_id IS NOT excluded.session_id
+        OR request_history.started_at IS NOT excluded.started_at
+        OR request_history.finished_at IS NOT excluded.finished_at
+        OR request_history.duration_ms IS NOT excluded.duration_ms
+        OR request_history.output_tokens IS NOT excluded.output_tokens
+        OR request_history.input_tokens IS NOT excluded.input_tokens
+        OR request_history.cache_read_tokens IS NOT excluded.cache_read_tokens
+        OR request_history.cache_creation_tokens IS NOT excluded.cache_creation_tokens
+        OR request_history.family IS NOT excluded.family
+        OR request_history.family_known IS NOT excluded.family_known
+        OR request_history.stratum IS NOT excluded.stratum
+        OR request_history.tokens_per_second IS NOT excluded.tokens_per_second
+        OR request_history.provisional IS NOT 0
+        OR request_history.quality_reason IS NOT excluded.quality_reason
     `,
       )
       .run({ nowMs, cutoff });
     return {
       requests: requestResult.changes,
-      refusals: removedRefusals.changes + refusalResult.changes,
+      refusals: this.archiveRefusals(nowMs, cutoff),
+      failures: this.archiveFailures(nowMs, cutoff),
     };
   }
 
   archiveStable(nowMs = Date.now()): boolean {
     const changed = this.db.transaction(() => this.archiveStableInternal(nowMs))();
-    if (changed.requests > 0) this.#requestRevision += 1;
-    return changed.requests > 0 || changed.refusals > 0;
+    const archived = changed.requests > 0 || changed.refusals > 0 || changed.failures > 0;
+    if (archived) this.advanceRevision();
+    return archived;
   }
 
   rebuildRequests(nowMs = Date.now(), idleMs = 120_000): void {
@@ -507,6 +721,7 @@ export class Database {
       cache_read_tokens: number;
       cache_creation_tokens: number;
       synthetic: number;
+      failure_class: string | null;
     };
     const assistantRows = this.db
       .prepare(
@@ -514,7 +729,7 @@ export class Database {
         SELECT event.event_id, event.parent_id, event.request_id, event.session_id,
           event.timestamp_ms, parent.timestamp_ms parent_timestamp_ms, event.model,
           event.output_tokens, event.input_tokens, event.cache_read_tokens,
-          event.cache_creation_tokens, event.synthetic
+          event.cache_creation_tokens, event.synthetic, event.failure_class
         FROM events event
         LEFT JOIN events parent ON parent.event_id = event.parent_id
         WHERE event.type = 'assistant' AND event.request_id IS NOT NULL
@@ -532,9 +747,9 @@ export class Database {
     const insert = this.db.prepare(`
       INSERT INTO requests(
         request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
-        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
-        tokens_per_second, provisional, quality_reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, family_known,
+        stratum, tokens_per_second, provisional, quality_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.db.transaction(() => {
@@ -563,9 +778,24 @@ export class Database {
           ...events.map(({ cache_creation_tokens }) => cache_creation_tokens),
           0,
         );
-        const family = normalizeModelFamily(events.find(({ model }) => model)?.model);
+        // `events.model` is already a normalized family, or NULL on a row that
+        // named no model at all (an API-error row reports `<synthetic>`). The
+        // placeholder keeps the column non-null, and `family_known` records
+        // whether it stands for a real attribution rather than being inferred
+        // later from an unrelated enum.
+        //
+        // Re-normalizing is not for that: indexes written before 0.1.5 stored
+        // the raw model id, and the in-place upgrade lets those rows survive
+        // instead of deleting them, so one can still reach this line until its
+        // transcript has been read again.
+        const named = events.find(({ model }) => model)?.model ?? null;
+        const family = named === null ? 'other' : normalizeModelFamily(named);
+        const familyKnown = named !== null;
         let qualityReason: string | null = null;
-        if (events.some(({ synthetic }) => synthetic !== 0)) qualityReason = 'synthetic';
+        // A transport failure shares its request id with the partial output that
+        // preceded it, so the pair must never be measured as throughput.
+        if (events.some(({ failure_class }) => failure_class != null)) qualityReason = 'api_error';
+        else if (events.some(({ synthetic }) => synthetic !== 0)) qualityReason = 'synthetic';
         else if (timestamps.length !== events.length) qualityReason = 'invalid_time';
         else if (starts.length === 0) qualityReason = 'missing_parent';
         else if (outputTokens <= 0) qualityReason = 'non_positive_tokens';
@@ -587,6 +817,7 @@ export class Database {
           cacheReadTokens,
           cacheCreationTokens,
           family,
+          familyKnown ? 1 : 0,
           outputSizeStratum(outputTokens),
           tokensPerSecond,
           provisional ? 1 : 0,
@@ -595,6 +826,16 @@ export class Database {
       }
       this.archiveStableInternal(nowMs);
     })();
+    this.advanceRevision();
+  }
+
+  /**
+   * Advances the revision that cached views are keyed on. Every write that
+   * changes something those views report — request rows, archived rows, events
+   * or file checkpoints — has to pass through here, because a write that
+   * skipped it would let a cache serve numbers the database no longer holds.
+   */
+  private advanceRevision(): void {
     this.#requestRevision += 1;
   }
 
@@ -614,6 +855,7 @@ export class Database {
       cache_read_tokens: number;
       cache_creation_tokens: number;
       family: ModelFamily;
+      family_known: number;
       stratum: number;
       tokens_per_second: number | null;
       provisional: number;
@@ -624,14 +866,15 @@ export class Database {
         .prepare(
           `
       SELECT request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
-        input_tokens, cache_read_tokens, cache_creation_tokens, family, stratum,
-        tokens_per_second, provisional, quality_reason
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, family_known,
+        stratum, tokens_per_second, provisional, quality_reason
       FROM requests
       UNION ALL
       SELECT history.request_id, history.session_id, history.started_at, history.finished_at,
         history.duration_ms, history.output_tokens, history.input_tokens,
         history.cache_read_tokens, history.cache_creation_tokens, history.family,
-        history.stratum, history.tokens_per_second, history.provisional, history.quality_reason
+        history.family_known, history.stratum, history.tokens_per_second,
+        history.provisional, history.quality_reason
       FROM request_history history
       WHERE NOT EXISTS (SELECT 1 FROM requests live WHERE live.request_id = history.request_id)
       ORDER BY finished_at
@@ -649,6 +892,7 @@ export class Database {
       cacheReadTokens: row.cache_read_tokens,
       cacheCreationTokens: row.cache_creation_tokens,
       family: row.family,
+      familyKnown: row.family_known !== 0,
       stratum: row.stratum,
       tokensPerSecond: row.tokens_per_second,
       provisional: row.provisional !== 0,
@@ -664,18 +908,35 @@ export class Database {
       timestamp_ms: number;
       refusal_outcome: StoredRefusal['outcome'];
     };
+    // The classifier and the API safeguard can both report the same request, in
+    // which case the classifier row wins because it carries the outcome detail.
+    // That is the only merge: two classifier refusals on one request are two
+    // distinct signals, and so are two safeguard rows. Rows without a request id
+    // are never merged, since a null id matches nothing.
     return (
       this.db
         .prepare(
           `
-          SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome
-          FROM events WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL
-          UNION ALL
-          SELECT history.event_id, history.request_id, history.session_id,
-            history.timestamp_ms, history.refusal_outcome
-          FROM refusal_history history
-          WHERE NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
-          ORDER BY timestamp_ms
+          WITH combined AS MATERIALIZED (
+            SELECT event_id, request_id, session_id, timestamp_ms, refusal_outcome,
+              CASE WHEN failure_class = 'safeguard_block' THEN 1 ELSE 0 END safeguard
+            FROM events WHERE refusal_outcome IS NOT NULL AND timestamp_ms IS NOT NULL
+            UNION ALL
+            SELECT history.event_id, history.request_id, history.session_id,
+              history.timestamp_ms, history.refusal_outcome, history.safeguard
+            FROM refusal_history history
+            WHERE NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
+          )
+          SELECT refusal.event_id, refusal.request_id, refusal.session_id,
+            refusal.timestamp_ms, refusal.refusal_outcome
+          FROM combined refusal
+          WHERE refusal.safeguard = 0
+            OR refusal.request_id IS NULL
+            OR NOT EXISTS (
+              SELECT 1 FROM combined classifier
+              WHERE classifier.request_id = refusal.request_id AND classifier.safeguard = 0
+            )
+          ORDER BY refusal.timestamp_ms
         `,
         )
         .all() as Row[]
@@ -688,7 +949,84 @@ export class Database {
     }));
   }
 
+  getFailures(): StoredFailure[] {
+    type Row = {
+      event_id: string;
+      request_id: string | null;
+      session_id: string;
+      timestamp_ms: number;
+      failure_class: StoredFailure['failureClass'];
+    };
+    const placeholders = PLATFORM_FAILURE_CLASSES.map(() => '?').join(', ');
+    return (
+      this.db
+        .prepare(
+          `
+          SELECT event_id, request_id, session_id, timestamp_ms, failure_class
+          FROM events
+          WHERE failure_class IN (${placeholders}) AND timestamp_ms IS NOT NULL
+          UNION ALL
+          SELECT history.event_id, history.request_id, history.session_id,
+            history.timestamp_ms, history.failure_class
+          FROM failure_history history
+          WHERE history.failure_class IN (${placeholders})
+            AND NOT EXISTS (SELECT 1 FROM events live WHERE live.event_id = history.event_id)
+          ORDER BY timestamp_ms
+        `,
+        )
+        .all(...PLATFORM_FAILURE_CLASSES, ...PLATFORM_FAILURE_CLASSES) as Row[]
+    ).map((row) => ({
+      eventId: row.event_id,
+      requestId: row.request_id,
+      sessionId: row.session_id,
+      timestampMs: row.timestamp_ms,
+      failureClass: row.failure_class,
+    }));
+  }
+
+  /**
+   * Counts the requests that were actually measured, which is the denominator
+   * both interruption rates divide by. `getDataQuality` reports the same number
+   * but only as a by-product of four other aggregates, and callers that want
+   * nothing else should not pay for them.
+   *
+   * `INDEXED BY` is a correctness-neutral hint the planner needs rather than a
+   * preference: both partial indexes cover this predicate exactly, but for a
+   * bare COUNT the planner scores them no better than a full table scan and
+   * keeps the scan. Naming them is roughly 2.5x faster on a full-size index.
+   * `migrate` creates both on every open, so they are always there to name.
+   */
+  getMeasuredRequestCount(): number {
+    return (
+      this.db
+        .prepare(
+          `
+        SELECT
+          (SELECT COUNT(*) FROM requests INDEXED BY requests_included_idx
+            WHERE quality_reason IS NULL AND provisional = 0)
+          + (SELECT COUNT(*) FROM request_history history
+              INDEXED BY request_history_included_idx
+              WHERE history.quality_reason IS NULL AND history.provisional = 0
+                AND NOT EXISTS (
+                  SELECT 1 FROM requests live WHERE live.request_id = history.request_id
+                ))
+          AS count
+      `,
+        )
+        .get() as { count: number }
+    ).count;
+  }
+
   getDataQuality(): DataQualitySummary {
+    // The dashboard asks for the overview and the data-quality panel in one
+    // round trip, so a single-threaded server would otherwise run this twice
+    // per refresh. Every write that changes anything counted below advances the
+    // index revision, so a hit here can only serve numbers still on disk.
+    const revision = this.#requestRevision;
+    if (this.#dataQuality?.revision === revision) {
+      const cached = this.#dataQuality.summary;
+      return { ...cached, exclusions: { ...cached.exclusions } };
+    }
     const files = this.db
       .prepare(
         'SELECT COUNT(*) files, COALESCE(SUM(rows_read), 0) rows, COALESCE(SUM(invalid_rows), 0) invalid FROM files',
@@ -744,7 +1082,7 @@ export class Database {
     const archivedRefusals = (
       this.db.prepare('SELECT COUNT(*) count FROM refusal_history').get() as { count: number }
     ).count;
-    return {
+    const summary: DataQualitySummary = {
       files: files.files,
       rows: files.rows,
       invalidRows: files.invalid,
@@ -757,6 +1095,8 @@ export class Database {
       archivedRefusals,
       exclusions,
     };
+    this.#dataQuality = { revision, summary };
+    return { ...summary, exclusions: { ...exclusions } };
   }
 
   setScanStatus(status: ScanStatus): void {

@@ -34,6 +34,13 @@ const initialRecap: WeeklyRecapData = {
     unknown: 0,
     affectedDates: [],
   },
+  failures: {
+    recorded: true,
+    attempted: 0,
+    overloaded: 0,
+    serverError: 0,
+    affectedDates: [],
+  },
 };
 
 const updatedRecap: WeeklyRecapData = {

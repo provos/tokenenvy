@@ -1,11 +1,17 @@
 <script lang="ts">
-  import type { DailyPoint, LongitudinalRefusalDay, ModelFamily } from '$lib/types';
+  import type {
+    DailyPoint,
+    DatedFailureCounts,
+    LongitudinalRefusalDay,
+    ModelFamily,
+  } from '$lib/types';
   import {
     areaPath,
     chartMaximum,
     chartTickIndices,
     chartTickLabel,
     dayLabel,
+    failureDayLabel,
     FAMILY_COLORS,
     linePath,
     refusalDayLabel,
@@ -17,6 +23,12 @@
     today: string;
     visibleFamilies: ModelFamily[];
     refusals?: LongitudinalRefusalDay[];
+    /**
+     * Platform failures are always unattributed, so they are intentionally not
+     * filtered by `visibleFamilies` — hiding them behind a family chip would
+     * remove the evidence exactly when someone is investigating a slowdown.
+     */
+    failures?: DatedFailureCounts[];
     selectedDate: string | null;
     onselect: (date: string) => void;
   }
@@ -27,20 +39,36 @@
     today,
     visibleFamilies,
     refusals = [],
+    failures = [],
     selectedDate,
     onselect,
   }: Props = $props();
   const width = 820;
   const height = 286;
-  const pad = { top: 40, right: 18, bottom: 54, left: 52 };
   let chart = $state<SVGSVGElement>();
   let keyboardDate = $state<string | null>(null);
+  // The failure row sits above the refusal row, so it needs its own headroom.
+  let pad = $derived({
+    top: failures.length ? 58 : 40,
+    right: 18,
+    bottom: 54,
+    left: 52,
+  });
   let measuredDates = $derived([...new Set(points.map((point) => point.date))].sort());
   let dates = $derived(
-    [...new Set([...measuredDates, ...refusals.map((refusal) => refusal.date)])].sort(),
+    [
+      ...new Set([
+        ...measuredDates,
+        ...refusals.map((refusal) => refusal.date),
+        ...failures.map((failure) => failure.date),
+      ]),
+    ].sort(),
   );
   let refusalsByDate = $derived(
     new Map(refusals.map((refusal) => [refusal.date, refusal] as const)),
+  );
+  let failuresByDate = $derived(
+    new Map(failures.map((failure) => [failure.date, failure] as const)),
   );
   let filtered = $derived(points.filter((point) => visibleFamilies.includes(point.family)));
   let max = $derived(chartMaximum(filtered));
@@ -96,6 +124,10 @@
   function refusalFor(date: string): LongitudinalRefusalDay | undefined {
     return refusalsByDate.get(date);
   }
+
+  function failureFor(date: string): DatedFailureCounts | undefined {
+    return failuresByDate.get(date);
+  }
 </script>
 
 <div class="chart-shell">
@@ -114,6 +146,22 @@
       days.
     </desc>
     <g transform={`translate(${pad.left} ${pad.top})`}>
+      {#each failures as failure (failure.date)}
+        {#if failure.attempted > 0}
+          {@const x = xFor(failure.date)}
+          {@const markerX = Math.max(8, Math.min(width - 8, x))}
+          <g
+            class="failure-marker"
+            class:server-fault={failure.serverError > 0}
+            transform={`translate(${markerX} -36)`}
+            aria-hidden="true"
+          >
+            <circle cx="0" cy="0" r="6.5" />
+            <line x1="-3" y1="-3" x2="3" y2="3" />
+            <line x1="-3" y1="3" x2="3" y2="-3" />
+          </g>
+        {/if}
+      {/each}
       {#each refusals as refusal (refusal.date)}
         {@const x = xFor(refusal.date)}
         {@const selectedVisible = refusal.selected.userVisible > 0}
@@ -216,6 +264,7 @@
         {@const x = xFor(date)}
         {@const tickLabel = chartTickLabel(date, today, timezone)}
         {@const refusal = refusalFor(date)}
+        {@const failure = failureFor(date)}
         {#if measuredDates.includes(date)}
           <rect
             class="day-target"
@@ -228,7 +277,7 @@
             tabindex={keyboardDate === date ? 0 : -1}
             role="button"
             aria-pressed={selectedDate === date}
-            aria-label={`Select ${tickLabel.accessible} for the daily summary${refusal ? `. ${refusalDayLabel(refusal)}` : ''}`}
+            aria-label={`Select ${tickLabel.accessible} for the daily summary${refusal ? `. ${refusalDayLabel(refusal)}` : ''}${failure && failure.attempted > 0 ? `. ${failureDayLabel(failure)}` : ''}`}
             onclick={() => {
               keyboardDate = date;
               onselect(date);
@@ -280,6 +329,21 @@
   </ul>
 {/if}
 
+{#if failures.length}
+  <div class="chart-failure-legend">
+    <span class="failure-legend-marker" aria-hidden="true">⊗</span>
+    <span>API failures by day — the service could not, whatever the model</span>
+    {#if failures.some((day) => day.serverError > 0)}
+      <small>A filled mark includes a server fault.</small>
+    {/if}
+  </div>
+  <ul class="sr-only" aria-label="API failures by day">
+    {#each failures as failure (failure.date)}
+      <li>{dayLabel(failure.date, timezone)}: {failureDayLabel(failure)}</li>
+    {/each}
+  </ul>
+{/if}
+
 <details class="table-alternative">
   <summary>View as accessible table</summary>
   <div class="table-scroll">
@@ -288,7 +352,7 @@
         <tr
           ><th>Date</th><th>Model</th><th>Median</th><th>Middle 50%</th><th>Requests</th><th
             >Refusals</th
-          ></tr
+          ><th>Failures</th></tr
         >
       </thead>
       <tbody>
@@ -312,6 +376,11 @@
               >{refusalFor(point.date)
                 ? refusalDayLabel(refusalFor(point.date)!)
                 : 'No explicit signal recorded'}</td
+            >
+            <td
+              >{failureFor(point.date)
+                ? failureDayLabel(failureFor(point.date)!)
+                : 'No API failure recorded'}</td
             >
           </tr>
         {/each}

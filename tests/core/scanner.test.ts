@@ -67,6 +67,33 @@ function assistant(options: {
   };
 }
 
+function apiError(options: {
+  uuid: string;
+  parentUuid?: string;
+  requestId?: string;
+  sessionId?: string;
+  timestamp: string;
+  status?: number;
+  error?: string;
+}) {
+  return {
+    type: 'assistant',
+    uuid: options.uuid,
+    parentUuid: options.parentUuid ?? null,
+    requestId: options.requestId ?? 'request-a',
+    sessionId: options.sessionId ?? 'session-a',
+    timestamp: options.timestamp,
+    error: options.error ?? 'server_error',
+    isApiErrorMessage: true,
+    ...(options.status == null ? {} : { apiErrorStatus: options.status }),
+    message: {
+      model: '<synthetic>',
+      content: [{ type: 'text', text: 'PRIVATE_API_ERROR_TEXT' }],
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  };
+}
+
 describe('incremental scanner', () => {
   it('normalizes duplicate and overlapping monitored roots', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'speedometer-roots-'));
@@ -1169,7 +1196,7 @@ describe('incremental scanner', () => {
     legacy.close();
 
     const database = new Database({ path: dbPath, hmacKey: 'migration-key' });
-    expect(database.db.pragma('user_version', { simple: true })).toBe(2);
+    expect(database.db.pragma('user_version', { simple: true })).toBe(3);
     expect(database.db.pragma('table_info(files)')).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'root_id' })]),
     );
@@ -1177,5 +1204,378 @@ describe('incremental scanner', () => {
     expect(database.getRefusals()).toMatchObject([{ outcome: 'recovered' }]);
     expect(database.getDataQuality()).toMatchObject({ archivedRequests: 1, archivedRefusals: 1 });
     database.close();
+  });
+
+  it('serves the data-quality summary from cache until the index changes', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'quality-cache-key' });
+    const prepare = vi.spyOn(database.db, 'prepare');
+    expect(database.getDataQuality()).toMatchObject({ files: 0, rows: 0, invalidRows: 0 });
+    const statements = prepare.mock.calls.length;
+    expect(statements).toBeGreaterThan(0);
+    // The dashboard asks for the overview and the panel in one round trip, so
+    // the second read of an unchanged index must not repeat the queries.
+    expect(database.getDataQuality()).toMatchObject({ files: 0, rows: 0, invalidRows: 0 });
+    expect(prepare).toHaveBeenCalledTimes(statements);
+
+    // Ingest writes no request rows, but it does change the file, row and event
+    // counts the summary reports, so the cache has to fall.
+    database.applyFileScan({
+      checkpoint: {
+        sourceId: 'source',
+        rootId: 'root',
+        identity: '1:2',
+        size: 64,
+        offset: 64,
+        mtimeMs: 1_000,
+        tailHash: 'hash',
+        rowsRead: 3,
+        invalidRows: 1,
+      },
+      events: [],
+      replace: false,
+    });
+    expect(database.getDataQuality()).toMatchObject({ files: 1, rows: 3, invalidRows: 1 });
+    expect(prepare.mock.calls.length).toBeGreaterThan(statements);
+    prepare.mockRestore();
+    database.close();
+  });
+
+  it('normalizes a legacy raw model id that the in-place upgrade no longer deletes', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'legacy-model-key' });
+    // Indexes written before 0.1.5 stored the raw model id in `events.model`.
+    // The upgrade keeps those rows instead of wiping them, so a rebuild can
+    // still meet one before its transcript has been read again.
+    database.db.exec(`
+      INSERT INTO events(
+        event_id, request_id, session_id, timestamp_ms, type, model, output_tokens
+      ) VALUES ('legacy', 'req', 'sess', 1597406402000, 'assistant',
+        'claude-3-5-sonnet-20241022', 40)
+    `);
+    database.rebuildRequests(1597406500000, 10);
+    expect(database.getRequests()).toMatchObject([{ family: 'sonnet', familyKnown: true }]);
+    database.close();
+  });
+
+  it('carries safeguard origin onto refusals archived before the column existed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-safeguard-migration-'));
+    temporaryDirectories.push(directory);
+    const dbPath = join(directory, 'index.sqlite3');
+    const seeded = new Database({ path: dbPath, hmacKey: 'safeguard-key' });
+    seeded.db.exec(`
+      INSERT INTO refusal_history(
+        event_id, request_id, session_id, timestamp_ms, refusal_outcome, safeguard,
+        archived_at, updated_at
+      ) VALUES
+        ('blocked', 'shared', 'session', 1597406400000, 'user_visible', 0, 1, 1),
+        ('classified', 'shared', 'session', 1597406401000, 'recovered', 0, 1, 1);
+      INSERT INTO failure_history(
+        event_id, request_id, session_id, timestamp_ms, failure_class, archived_at, updated_at
+      ) VALUES ('blocked', 'shared', 'session', 1597406400000, 'safeguard_block', 1, 1);
+      ALTER TABLE refusal_history DROP COLUMN safeguard;
+    `);
+    seeded.close();
+
+    // The flag used to be recovered by joining `failure_history`. Reopening
+    // stores it instead, so the safeguard row keeps losing to the classifier
+    // row on the same request even though nothing joins the two tables now.
+    const database = new Database({ path: dbPath, hmacKey: 'safeguard-key' });
+    expect(
+      database.db
+        .prepare('SELECT event_id, safeguard FROM refusal_history ORDER BY event_id')
+        .all(),
+    ).toEqual([
+      { event_id: 'blocked', safeguard: 1 },
+      { event_id: 'classified', safeguard: 0 },
+    ]);
+    expect(database.getRefusals()).toMatchObject([{ eventId: 'classified' }]);
+    database.close();
+  });
+
+  it('excludes a request contaminated by an API failure from measured throughput', async () => {
+    const { directory, database, scanner } = await setup();
+    await writeFile(
+      join(directory, 'overloaded.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 2,
+          }),
+        ) +
+        line(
+          apiError({
+            uuid: 'e1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:13.300Z',
+            status: 529,
+          }),
+        ) +
+        line(user('u2', '2020-08-14T13:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a2',
+            parentUuid: 'u2',
+            requestId: 'req-healthy',
+            timestamp: '2020-08-14T13:00:02.000Z',
+            output: 100,
+          }),
+        ),
+    );
+    await scanner.scanAll();
+
+    // Without the failure check the partial output would measure 0.18 tok/s.
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'api_error', outputTokens: 2, tokensPerSecond: null },
+      { qualityReason: null, outputTokens: 100, tokensPerSecond: 50 },
+    ]);
+    expect(database.getDataQuality().exclusions).toMatchObject({ api_error: 1 });
+    expect(database.getFailures()).toMatchObject([
+      { failureClass: 'overloaded', timestampMs: Date.parse('2020-08-14T12:00:13.300Z') },
+    ]);
+    database.close();
+  });
+
+  it('repairs stale derived columns in place when a transcript is read again', async () => {
+    const { directory, database, scanner } = await setup();
+    await writeFile(
+      join(directory, 'session.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-a',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 40,
+          }),
+        ) +
+        line(
+          apiError({
+            uuid: 'e1',
+            parentUuid: 'u1',
+            requestId: 'req-a',
+            timestamp: '2020-08-14T12:00:13.300Z',
+            status: 529,
+          }),
+        ),
+    );
+    await scanner.scanAll();
+    const eventIds = database.db.prepare('SELECT event_id FROM events ORDER BY event_id').all();
+    expect(eventIds).toHaveLength(3);
+
+    // The shape an index has when a column is derived after its rows were
+    // written: the events are all there, and the new column is empty.
+    database.db.prepare('UPDATE events SET failure_class = NULL').run();
+    database.rebuildRequests(Date.now(), 10);
+    expect(database.getFailures()).toEqual([]);
+    expect(database.getRequests()).toMatchObject([{ qualityReason: null }]);
+
+    database.invalidateFileCheckpoints();
+    await scanner.scanAll();
+    // Ingest updated the existing rows instead of ignoring them, so no event
+    // was duplicated, dropped, or left stale.
+    expect(database.db.prepare('SELECT event_id FROM events ORDER BY event_id').all()).toEqual(
+      eventIds,
+    );
+    expect(database.getFailures()).toMatchObject([{ failureClass: 'overloaded' }]);
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'api_error', tokensPerSecond: null },
+    ]);
+    expect(database.db.prepare('SELECT quality_reason FROM request_history').all()).toEqual([
+      { quality_reason: 'api_error' },
+    ]);
+    expect(database.getDataQuality()).toMatchObject({
+      files: 1,
+      rows: 3,
+      uniqueEvents: 3,
+      duplicateOccurrences: 0,
+    });
+    database.close();
+  });
+
+  it('upgrades a v2 index in place so its events stay queryable while re-read', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-v2-migration-'));
+    temporaryDirectories.push(directory);
+    const logs = join(directory, 'logs');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(logs));
+    const file = join(logs, 'session.jsonl');
+    await writeFile(
+      file,
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 2,
+          }),
+        ) +
+        line(
+          apiError({
+            uuid: 'e1',
+            parentUuid: 'u1',
+            requestId: 'req-overload',
+            timestamp: '2020-08-14T12:00:13.300Z',
+            status: 529,
+          }),
+        ),
+    );
+    const dbPath = join(directory, 'index.sqlite3');
+    const seeded = new Database({ path: dbPath, hmacKey: 'v2-key' });
+    await new Scanner({ roots: [logs], database: seeded }).scanAll();
+    expect(seeded.getFailures()).toHaveLength(1);
+    seeded.close();
+
+    // Restore the v2 shape: no failure classification anywhere, and a request
+    // archived while the partial output still looked measurable.
+    const legacy = new BetterSqlite3(dbPath);
+    legacy.exec(`
+      DROP INDEX events_failure_timestamp_idx;
+      ALTER TABLE events DROP COLUMN failure_class;
+      DROP TABLE failure_history;
+      UPDATE requests SET quality_reason = NULL, tokens_per_second = 0.177;
+      UPDATE request_history SET quality_reason = NULL, tokens_per_second = 0.177;
+      PRAGMA user_version = 2;
+    `);
+    expect(legacy.prepare('SELECT COUNT(*) count FROM request_history').get()).toEqual({
+      count: 1,
+    });
+    legacy.close();
+
+    const before = new BetterSqlite3(dbPath);
+    const eventIds = before
+      .prepare('SELECT event_id FROM events ORDER BY event_id')
+      .all() as Array<{ event_id: string }>;
+    before.close();
+
+    const database = new Database({ path: dbPath, hmacKey: 'v2-key' });
+    expect(database.db.pragma('user_version', { simple: true })).toBe(3);
+    // Nothing is deleted: the upgrade keeps every event queryable and only
+    // arranges for the transcripts to be read again.
+    expect(database.db.prepare('SELECT event_id FROM events ORDER BY event_id').all()).toEqual(
+      eventIds,
+    );
+    expect(eventIds).toHaveLength(3);
+    expect(database.db.prepare('SELECT COUNT(*) count FROM files').get()).toEqual({ count: 1 });
+    // The checkpoint no longer matches any real file, so the next scan re-reads
+    // from byte zero instead of returning early on an unchanged size and mtime.
+    expect(database.db.prepare('SELECT * FROM files').get()).toMatchObject({
+      size: -1,
+      offset: 0,
+      mtime_ms: -1,
+      tail_hash: '',
+      rows_read: 0,
+      invalid_rows: 0,
+    });
+    expect(
+      database.db.prepare('SELECT quality_reason, tokens_per_second FROM request_history').all(),
+    ).toEqual([{ quality_reason: null, tokens_per_second: 0.177 }]);
+
+    await new Scanner({ roots: [logs], database }).scanAll();
+    // The re-read upserted the same rows in place rather than adding copies,
+    // and counted the file's rows once.
+    expect(database.db.prepare('SELECT event_id FROM events ORDER BY event_id').all()).toEqual(
+      eventIds,
+    );
+    expect(database.getDataQuality()).toMatchObject({
+      files: 1,
+      rows: 3,
+      uniqueEvents: 3,
+      duplicateOccurrences: 0,
+    });
+    expect(
+      database.db.prepare('SELECT failure_class FROM events WHERE failure_class IS NOT NULL').all(),
+    ).toEqual([{ failure_class: 'overloaded' }]);
+    expect(database.getFailures()).toMatchObject([{ failureClass: 'overloaded' }]);
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'api_error', tokensPerSecond: null },
+    ]);
+    expect(
+      database.db.prepare('SELECT quality_reason, tokens_per_second FROM request_history').all(),
+    ).toEqual([{ quality_reason: 'api_error', tokens_per_second: null }]);
+    database.close();
+
+    // A second open is a no-op: the live index survives at the current version.
+    const reopened = new Database({ path: dbPath, hmacKey: 'v2-key' });
+    expect(reopened.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(reopened.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 3 });
+    expect(reopened.getFailures()).toHaveLength(1);
+    reopened.close();
+    const bytes = (await readFile(dbPath)).toString('utf8');
+    expect(bytes).not.toContain('PRIVATE_API_ERROR_TEXT');
+  });
+
+  it('rolls back a crashed v3 migration instead of recording the new version', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-v3-rollback-'));
+    temporaryDirectories.push(directory);
+    const logs = join(directory, 'logs');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(logs));
+    await writeFile(
+      join(logs, 'session.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'req-a',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 40,
+          }),
+        ),
+    );
+    const dbPath = join(directory, 'index.sqlite3');
+    const seeded = new Database({ path: dbPath, hmacKey: 'rollback-key' });
+    await new Scanner({ roots: [logs], database: seeded }).scanAll();
+    seeded.close();
+
+    const legacy = new BetterSqlite3(dbPath);
+    legacy.exec(`
+      DROP INDEX events_failure_timestamp_idx;
+      ALTER TABLE events DROP COLUMN failure_class;
+      DROP TABLE failure_history;
+      PRAGMA user_version = 2;
+    `);
+    legacy.close();
+
+    // A crash after the checkpoints were invalidated must not leave the version
+    // bumped: an index that believes it is current would never re-read the
+    // transcripts, and the new column would stay empty forever.
+    const crash = vi
+      .spyOn(Database.prototype, 'invalidateFileCheckpoints')
+      .mockImplementation(function (this: Database) {
+        this.db.prepare('UPDATE files SET size = -1, offset = 0, mtime_ms = -1').run();
+        throw new Error('crash mid-migration');
+      });
+    expect(() => new Database({ path: dbPath, hmacKey: 'rollback-key' })).toThrow(
+      'crash mid-migration',
+    );
+    crash.mockRestore();
+
+    const inspect = new BetterSqlite3(dbPath);
+    expect(inspect.pragma('user_version', { simple: true })).toBe(2);
+    expect(inspect.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 2 });
+    // The half-finished invalidation rolled back with the version bump: the
+    // checkpoint still describes the whole file it had already read.
+    const checkpoint = inspect.prepare('SELECT size, offset FROM files').get() as {
+      size: number;
+      offset: number;
+    };
+    expect(checkpoint.offset).toBeGreaterThan(0);
+    expect(checkpoint.size).toBe(checkpoint.offset);
+    inspect.close();
+
+    // The retry completes, and the re-read repairs the surviving rows in place.
+    const recovered = new Database({ path: dbPath, hmacKey: 'rollback-key' });
+    expect(recovered.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(recovered.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 2 });
+    await new Scanner({ roots: [logs], database: recovered }).scanAll();
+    expect(recovered.getRequests()).toMatchObject([{ qualityReason: null, outputTokens: 40 }]);
+    expect(recovered.getDataQuality()).toMatchObject({ files: 1, uniqueEvents: 2 });
+    recovered.close();
   });
 });

@@ -2,18 +2,24 @@
   import type { DayDetailResponse } from '$lib/types';
   import { dayLabel, FAMILY_COLORS } from './chart';
   import { focusDialog, trapDialogTab } from './focus';
-  import type { ShareRefusalCounts } from './share';
+  import type { ShareFailureCounts, ShareRefusalCounts } from './share';
 
   interface Props {
     open: boolean;
     loading: boolean;
     detail: DayDetailResponse | null;
     refusals: ShareRefusalCounts;
+    /**
+     * Platform failures for the same day. A second axis beside refusals, never
+     * summed with them: refusals are the model would not, failures are the
+     * service could not.
+     */
+    failures: ShareFailureCounts;
     error?: string | null;
     onclose: () => void;
   }
 
-  let { open, loading, detail, refusals, error = null, onclose }: Props = $props();
+  let { open, loading, detail, refusals, failures, error = null, onclose }: Props = $props();
   let panel = $state<HTMLElement>();
   let histogramMax = $derived(Math.max(1, ...(detail?.histogram.map((bin) => bin.count) ?? [1])));
   let hourlyMax = $derived(Math.max(1, ...(detail?.hourly.map((hour) => hour.median ?? 0) ?? [1])));
@@ -23,6 +29,12 @@
   let refusalUnknown = $derived(
     Math.max(0, refusals.attempted - refusals.recovered - refusals.userVisible),
   );
+  /**
+   * The failure total counts error rows; this counts the requests those rows
+   * spoiled, which is a different unit and legitimately a different number.
+   * Both stay on screen, and the failure note below says why they differ.
+   */
+  let apiErrorExclusions = $derived(detail?.exclusions.api_error ?? 0);
 
   $effect(() => {
     if (open && panel) {
@@ -103,41 +115,107 @@
           </p>
         {/if}
 
-        <section class="drawer-section drawer-refusal-section" aria-label="Refusals for this day">
+        <!--
+          The rail states the same split for all recorded history, so the drawer
+          repeats its shape rather than inventing a second one: two blocks whose
+          glosses complete each other, never a single summed total. The rail's
+          per-1,000 rate is dropped here on purpose -- a rate over one day is
+          noise, and the drawer's note slot is worth more than the number.
+        -->
+        <section
+          class="drawer-section drawer-refusal-section"
+          aria-label="Interruptions on this day"
+        >
           <div class="section-heading compact-heading">
             <div>
               <p class="eyebrow">This day</p>
-              <h3>Classifier refusals</h3>
+              <h3>Interruptions</h3>
             </div>
-            {#if refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
           </div>
-          {#if refusals.recorded}
-            <div class="refusal-total">
-              <strong>{refusals.attempted.toLocaleString()}</strong><span>attempted</span>
+
+          <div class="interruption-block" role="group" aria-label="Refusals for this day">
+            <div class="interruption-head">
+              <h4>Refused</h4>
+              <span>the model would not</span>
+              <!-- The pill qualifies refusals only; failures come from transport
+                   errors, not from explicit classifier signals. -->
+              {#if refusals.recorded}<span class="recorded-pill">Explicit only</span>{/if}
             </div>
-            <div class="refusal-grid">
-              <span
-                ><i class="recovered"></i><strong>{refusals.recovered.toLocaleString()}</strong
-                ><small>recovered by fallback</small></span
-              >
-              <span
-                ><i class="visible"></i><strong>{refusals.userVisible.toLocaleString()}</strong
-                ><small>user-visible</small></span
-              >
-              <span
-                ><i class="unknown"></i><strong>{refusalUnknown.toLocaleString()}</strong><small
-                  >unknown outcome</small
-                ></span
-              >
+            {#if !refusals.recorded}
+              <p class="subtle-empty rail-empty">
+                This log format does not expose explicit classifier outcomes.
+              </p>
+            {:else if refusals.attempted === 0}
+              <!-- A quiet day is the common case, so it stays one line instead of
+                   a headline zero over three empty outcome cells. -->
+              <p class="interruption-quiet">No refusal signals on this day.</p>
+            {:else}
+              <div class="refusal-total">
+                <strong>{refusals.attempted.toLocaleString()}</strong><span>attempted</span>
+              </div>
+              <div class="refusal-grid">
+                <span
+                  ><i class="recovered"></i><strong>{refusals.recovered.toLocaleString()}</strong
+                  ><small>recovered by fallback</small></span
+                >
+                <span
+                  ><i class="visible"></i><strong>{refusals.userVisible.toLocaleString()}</strong
+                  ><small>user-visible</small></span
+                >
+                <span
+                  ><i class="unknown"></i><strong>{refusalUnknown.toLocaleString()}</strong><small
+                    >unknown outcome</small
+                  ></span
+                >
+              </div>
+              <p class="drawer-refusal-note">
+                Explicit transcript signals only; these counts are a lower bound.
+              </p>
+            {/if}
+          </div>
+
+          <div class="interruption-block" role="group" aria-label="Platform failures for this day">
+            <div class="interruption-head">
+              <h4>Failed</h4>
+              <span>the service could not</span>
             </div>
-            <p class="drawer-refusal-note">
-              Explicit transcript signals only; these counts are a lower bound.
-            </p>
-          {:else}
-            <p class="subtle-empty">
-              This log format does not expose explicit classifier outcomes.
-            </p>
-          {/if}
+            {#if !failures.recorded}
+              <p class="subtle-empty rail-empty">
+                This log format does not record API transport failures.
+              </p>
+            {:else if failures.attempted === 0}
+              <p class="interruption-quiet">No failed calls on this day.</p>
+            {:else}
+              <!--
+                The unit is spelled out because the exclusions list a few sections
+                down reports `api error` in requests, and the two numbers do not
+                have to match. Naming both units is what keeps that honest.
+              -->
+              <div class="refusal-total">
+                <strong>{failures.attempted.toLocaleString()}</strong><span>failed calls</span>
+              </div>
+              <div class="refusal-grid failure-grid">
+                <span
+                  ><i class="overloaded"></i><strong>{failures.overloaded.toLocaleString()}</strong
+                  ><small>overloaded (529)</small></span
+                >
+                <span
+                  ><i class="server-fault"></i><strong
+                    >{failures.serverError.toLocaleString()}</strong
+                  ><small>server fault</small></span
+                >
+              </div>
+              <p class="drawer-refusal-note">
+                {#if apiErrorExclusions > 0}
+                  Counted per error row. The requests they left unmeasured appear below as “api
+                  error”; a row carrying no request id never became one.
+                {:else}
+                  Counted per error row. None of them carried a request id, so no measured request
+                  was excluded for them.
+                {/if}
+              </p>
+            {/if}
+          </div>
         </section>
 
         <section class="drawer-section">
@@ -216,18 +294,26 @@
         <section class="drawer-section quality-note">
           <div>
             <p class="eyebrow">Data quality</p>
+            <!--
+              Requests, not events: every reason here is counted once per request,
+              and saying so is what stops the `api error` tally from reading as a
+              second, contradictory failure count.
+            -->
             <h3>
               {totalExcluded
-                ? `${totalExcluded.toLocaleString()} events excluded`
-                : 'All observed events eligible'}
+                ? `${totalExcluded.toLocaleString()} requests excluded`
+                : 'All observed requests eligible'}
             </h3>
           </div>
           {#if totalExcluded}
             <ul>
               {#each Object.entries(detail.exclusions) as [reason, count] (reason)}
                 <li>
-                  <span>{reason.replaceAll('_', ' ')}</span><strong>{count.toLocaleString()}</strong
-                  >
+                  <span
+                    >{reason.replaceAll('_', ' ')}{#if reason === 'api_error'}<small
+                        >requests a failed call left unmeasured</small
+                      >{/if}</span
+                  ><strong>{count.toLocaleString()}</strong>
                 </li>
               {/each}
             </ul>

@@ -4,13 +4,18 @@
   import type { DayDetailResponse } from '$lib/types';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { dayLabel } from './chart';
+  import FailureStamp from './FailureStamp.svelte';
   import { focusDialog, trapDialogTab } from './focus';
   import HistogramBackdrop from './HistogramBackdrop.svelte';
   import {
     buildShareCardData,
     DEFAULT_SHARE_PRODUCT_URL,
+    drawFailureStamp,
+    failureStampLabel,
+    failureStampStyle,
     getShareActivityLine,
     getShareCaption,
+    getShareFailureLine,
     getShareImageFilename,
     getShareModelLine,
     getShareMoodLine,
@@ -31,6 +36,7 @@
     type SharePlatform,
     type ShareSentiment,
     type ShareSentimentTheme,
+    type ShareFailureCounts,
     type ShareRefusalCounts,
     type ShareTone,
   } from './share';
@@ -40,6 +46,8 @@
     open: boolean;
     detail: DayDetailResponse;
     refusals: ShareRefusalCounts;
+    /** Platform failures for the same day. A separate axis, never summed with refusals. */
+    failures: ShareFailureCounts;
     isToday: boolean;
     onclose: () => void;
   }
@@ -49,6 +57,7 @@
     tagline: string;
     moodLine: string;
     refusalLine: string;
+    failureStamp: string;
     sentiment: ShareSentiment;
     theme: ShareSentimentTheme;
     tone: ShareTone;
@@ -57,13 +66,14 @@
   interface ShareInputSnapshot {
     detail: DayDetailResponse;
     refusals: ShareRefusalCounts;
+    failures: ShareFailureCounts;
     isToday: boolean;
   }
 
   const SANS_FONT = 'Inter, ui-sans-serif, system-ui, sans-serif';
   const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 
-  let { open, detail, refusals, isToday, onclose }: Props = $props();
+  let { open, detail, refusals, failures, isToday, onclose }: Props = $props();
   let tone = $state<ShareTone>('friendly');
   let sentiment = $state<ShareSentiment>(0);
   let status = $state<string | null>(null);
@@ -87,6 +97,7 @@
         exclusions: { ...detail.exclusions },
       },
       refusals: { ...refusals },
+      failures: { ...failures },
       isToday,
     };
   }
@@ -101,6 +112,7 @@
       isToday: input.isToday,
       speedIndex: input.detail.speedIndex,
       refusals: input.refusals,
+      failures: input.failures,
       models: input.detail.models,
       histogram: input.detail.histogram,
     });
@@ -124,6 +136,8 @@
         ? 'attempted'
         : 'none',
   );
+  let failureStamp = $derived(failureStampLabel(card.failures));
+  let failureLine = $derived(getShareFailureLine(card.failures));
   let sentimentDescription = $derived(
     getShareSentimentDescription(card, inputSnapshot.detail.speedIndex.reason),
   );
@@ -136,13 +150,14 @@
       `${Math.round(card.median)} effective output tokens per second`,
       moodLine,
       refusalImageLine || null,
+      failureLine || null,
       SHARE_INSTALL_CTA,
     ]
       .filter((line): line is string => Boolean(line))
       .join('. ') + '.',
   );
   let previewStyle = $derived(
-    `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar};${SHARE_CARD_LAYOUT_STYLE}`,
+    `--share-bg-start:${sentimentTheme.backgroundStart};--share-bg-middle:${sentimentTheme.backgroundMiddle};--share-bg-end:${sentimentTheme.backgroundEnd};--share-accent:${sentimentTheme.accent};--share-secondary:${sentimentTheme.secondary};--share-text:${sentimentTheme.text};--share-muted:${sentimentTheme.mutedText};--share-glow:${sentimentTheme.glow};--share-bars:${sentimentTheme.bar};--share-median:${sentimentTheme.medianBar};${failureStampStyle(sentimentTheme)};${SHARE_CARD_LAYOUT_STYLE}`,
   );
   let canExport = $derived(preparedFile !== null);
 
@@ -191,6 +206,7 @@
       tagline,
       moodLine,
       refusalLine: refusalImageLine,
+      failureStamp,
       sentiment,
       theme: sentimentTheme,
       tone,
@@ -250,6 +266,7 @@
       tagline: currentTagline,
       moodLine: currentMood,
       refusalLine: currentRefusals,
+      failureStamp: currentFailureStamp,
       sentiment: currentSentiment,
       theme: currentTheme,
     } = snapshot;
@@ -288,6 +305,15 @@
     context.fillStyle = currentTheme.mutedText;
     context.font = `500 24px ${SANS_FONT}`;
     context.fillText(formatShareDate(currentCard.date), layout.width - layout.marginX, 61);
+
+    // The outage stamp trails the date: a note about the service on this day,
+    // not another line of refusal alarm. Absent days draw nothing at all.
+    drawFailureStamp(context, {
+      right: layout.width - layout.marginX,
+      top: 74,
+      label: currentFailureStamp,
+      theme: currentTheme,
+    });
 
     context.textAlign = 'center';
     context.fillStyle = currentTheme.text;
@@ -853,7 +879,10 @@
             <strong>Token Envy</strong>
             <small>{SECURITY_BLUEPRINTS_CARD_LINE}</small>
           </div>
-          <span>{formatShareDate(card.date)}</span>
+          <div class="share-preview-context">
+            <span>{formatShareDate(card.date)}</span>
+            <FailureStamp label={failureStamp} />
+          </div>
         </div>
         <div class="share-preview-center">
           <HistogramBackdrop bins={card.histogram} median={card.median} />

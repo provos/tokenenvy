@@ -4,8 +4,11 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { SECURITY_BLUEPRINTS_CARD_LINE } from './brand';
   import { compactNumber } from './chart';
+  import FailureStamp from './FailureStamp.svelte';
   import { focusDialog, trapDialogTab } from './focus';
   import {
+    drawFailureStamp,
+    failureStampStyle,
     getShareSentimentTheme,
     normalizeShareSentiment,
     SHARE_SENTIMENTS,
@@ -19,6 +22,8 @@
     WEEKLY_RECAP_PRODUCT_URL,
     weeklyRecapCaption,
     weeklyRecapDayLabel,
+    weeklyRecapFailureLine,
+    weeklyRecapFailureStamp,
     weeklyRecapHeadline,
     weeklyRecapImageFilename,
     weeklyRecapIndexLine,
@@ -70,6 +75,10 @@
           ...recap.refusals,
           affectedDates: recap.refusals.affectedDates.map((day) => ({ ...day })),
         },
+        failures: {
+          ...recap.failures,
+          affectedDates: recap.failures.affectedDates.map((day) => ({ ...day })),
+        },
       },
       outputTokens,
     };
@@ -91,13 +100,15 @@
   let refusalWeekdays = $derived(weeklyRefusalWeekdays(snapshotRecap));
   let refusalLine = $derived(weeklyRecapRefusalLine(snapshotRecap));
   let refusalNote = $derived(weeklyRecapRefusalNote(snapshotRecap));
+  let failureStamp = $derived(weeklyRecapFailureStamp(snapshotRecap));
+  let failureLine = $derived(weeklyRecapFailureLine(snapshotRecap));
   let sentimentDescription = $derived(weeklyRecapSentimentDescription(snapshotRecap));
   let ready = $derived(weeklyRecapReady(snapshotRecap));
   let caption = $derived(
     weeklyRecapCaption(snapshotRecap, tone, sentiment, productLink?.href ?? null),
   );
   let previewLabel = $derived(
-    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${Math.round(snapshotRecap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${snapshotRecap.requestCount} measured requests across ${snapshotRecap.sessions} sessions.${refusalLine ? ` ${refusalLine}. ${refusalNote}` : ''} ${WEEKLY_RECAP_INSTALL_CTA}. Personal baseline only.`,
+    `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${Math.round(snapshotRecap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${snapshotRecap.requestCount} measured requests across ${snapshotRecap.sessions} sessions.${refusalLine ? ` ${refusalLine}. ${refusalNote}` : ''}${failureLine ? ` ${failureLine}.` : ''} ${WEEKLY_RECAP_INSTALL_CTA}. Personal baseline only.`,
   );
   let canExport = $derived(preparedFile !== null && ready && !preparing);
   const weekdayIndices = [0, 1, 2, 3, 4, 5, 6] as const;
@@ -234,6 +245,15 @@
     context.fillStyle = currentTheme.mutedText;
     context.font = '500 23px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(weeklyRecapPeriod(currentRecap), 1130, 65);
+
+    // Trails the period: a note about the service this week, held apart from the
+    // refusal line so the two axes never read as one number.
+    drawFailureStamp(context, {
+      right: 1130,
+      top: 74,
+      label: weeklyRecapFailureStamp(currentRecap),
+      theme: currentTheme,
+    });
 
     context.textAlign = 'center';
     context.fillStyle = currentTheme.text;
@@ -591,7 +611,7 @@
         class="weekly-recap-preview"
         role="img"
         aria-label={previewLabel}
-        style={`--weekly-bg-start:${theme.backgroundStart};--weekly-bg-middle:${theme.backgroundMiddle};--weekly-bg-end:${theme.backgroundEnd};--weekly-accent:${theme.accent};--weekly-secondary:${theme.secondary};--weekly-text:${theme.text};--weekly-muted:${theme.mutedText};--weekly-glow:${theme.glow}`}
+        style={`--weekly-bg-start:${theme.backgroundStart};--weekly-bg-middle:${theme.backgroundMiddle};--weekly-bg-end:${theme.backgroundEnd};--weekly-accent:${theme.accent};--weekly-secondary:${theme.secondary};--weekly-text:${theme.text};--weekly-muted:${theme.mutedText};--weekly-glow:${theme.glow};${failureStampStyle(theme)}`}
       >
         <div class="weekly-recap-signal" aria-hidden="true">
           {#each weekdayIndices as index (index)}
@@ -611,7 +631,10 @@
             <strong>Token Envy · Week so far</strong>
             <small>{SECURITY_BLUEPRINTS_CARD_LINE}</small>
           </div>
-          <span>{period}</span>
+          <div class="share-preview-context">
+            <span>{period}</span>
+            <FailureStamp label={failureStamp} />
+          </div>
         </div>
         <div class="weekly-recap-center">
           <p>{headline}</p>

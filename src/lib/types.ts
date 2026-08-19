@@ -51,6 +51,7 @@ export interface OverviewResponse {
     recap: WeeklyRecap;
   };
   refusals: RefusalSummary;
+  failures: FailureSummary;
   scan: ScanStatus;
 }
 
@@ -67,6 +68,7 @@ export interface WeeklyRecap {
   fastestDay: { date: string; median: number } | null;
   slowestDay: { date: string; median: number } | null;
   refusals: PeriodRefusalSummary;
+  failures: PeriodFailureSummary;
 }
 
 export interface WeeklyModelMix {
@@ -81,6 +83,7 @@ export interface SeriesResponse {
   days: number;
   points: DailyPoint[];
   refusals: RefusalTimeline;
+  failures: FailureTimeline;
 }
 
 export interface RefusalCounts {
@@ -114,6 +117,56 @@ export interface RefusalTimeline {
   days: RefusalTimelineDay[];
 }
 
+/**
+ * Transport-layer failures reported by the CLI as `isApiErrorMessage` rows.
+ * `overloaded` and `server_error` are platform faults ("could not"); they are
+ * counted separately from classifier refusals ("would not"). `safeguard_block`
+ * is an API-layer refusal folded into RefusalCounts, and `client` covers a
+ * missing login or any measured non-5xx status, which say nothing about service
+ * quality. `server_error` therefore holds 5xx and status-less rows only.
+ */
+export type FailureClass = 'overloaded' | 'server_error' | 'safeguard_block' | 'client';
+
+/**
+ * The subset of `FailureClass` that counts as a platform fault. Single source of
+ * truth for both the narrowed type and the queries that select those rows.
+ */
+export const PLATFORM_FAILURE_CLASSES = [
+  'overloaded',
+  'server_error',
+] as const satisfies readonly FailureClass[];
+
+/**
+ * Failure events carry `model: "<synthetic>"`, so they can never be attributed
+ * to a model family. They are reported unattributed and stay visible under
+ * every family filter.
+ */
+export interface FailureCounts {
+  attempted: number;
+  overloaded: number;
+  serverError: number;
+}
+
+export interface DatedFailureCounts extends FailureCounts {
+  date: string;
+}
+
+export interface FailureSummary extends FailureCounts {
+  recorded: boolean;
+  perThousand: number | null;
+  byDay: DatedFailureCounts[];
+}
+
+export interface FailureTimeline {
+  recorded: boolean;
+  days: DatedFailureCounts[];
+}
+
+export interface PeriodFailureSummary extends FailureCounts {
+  recorded: boolean;
+  affectedDates: DatedFailureCounts[];
+}
+
 export interface LongitudinalRefusalDay {
   date: string;
   selected: RefusalCounts;
@@ -144,6 +197,8 @@ export interface LongitudinalSummary {
   points: LongitudinalPoint[];
   refusalsRecorded: boolean;
   refusals: LongitudinalRefusalDay[];
+  failuresRecorded: boolean;
+  failures: DatedFailureCounts[];
 }
 
 export interface HistogramBin {

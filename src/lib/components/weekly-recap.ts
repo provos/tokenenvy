@@ -1,9 +1,12 @@
 import type { WeeklyModelMix, WeeklyRecap } from '$lib/types';
 import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
-import { adjustSentimentForRefusals } from './refusal-mood';
 import {
+  adjustSentimentForInterruptions,
   compactSocialNumber,
-  getRefusalMoodAdjustmentLine,
+  failureStampLabel,
+  getCompactFailureLine,
+  getInterruptionMoodLines,
+  getShareFailureLine,
   getShareSentimentTheme,
   fitSocialCaption,
   SHARE_PRIVACY_NOTE,
@@ -60,7 +63,11 @@ export function weeklyPerformanceSentiment(recap: WeeklyRecapData): ShareSentime
 }
 
 export function suggestedWeeklySentiment(recap: WeeklyRecapData): ShareSentiment {
-  return adjustSentimentForRefusals(weeklyPerformanceSentiment(recap), recap.refusals).suggested;
+  return adjustSentimentForInterruptions(
+    weeklyPerformanceSentiment(recap),
+    recap.refusals,
+    recap.failures,
+  ).suggested;
 }
 
 export function weeklyRecapHeadline(
@@ -84,13 +91,17 @@ export function weeklyRecapIndexLine(recap: WeeklyRecapData): string {
 
 export function weeklyRecapSentimentDescription(recap: WeeklyRecapData): string {
   const base = weeklyPerformanceSentiment(recap);
-  const adjustment = adjustSentimentForRefusals(base, recap.refusals);
+  const { refusals, failures } = adjustSentimentForInterruptions(
+    base,
+    recap.refusals,
+    recap.failures,
+  );
   const baseMood = getShareSentimentTheme(base).label;
   const basis = recap.speedIndex.eligible
     ? `My prior 28 days suggested ${baseMood}.`
     : 'Neutral for now. The 28-day baseline needs more data.';
-  const refusalAdjustment = getRefusalMoodAdjustmentLine(adjustment);
-  return `${basis}${refusalAdjustment ? ` ${refusalAdjustment}` : ''} Pick the mood; the numbers stay put.`;
+  const adjustments = getInterruptionMoodLines(refusals, failures);
+  return `${basis}${adjustments ? ` ${adjustments}` : ''} Pick the mood; the numbers stay put.`;
 }
 
 export function weeklyRecapRefusalLine(recap: WeeklyRecapData): string {
@@ -108,6 +119,15 @@ export function weeklyRecapRefusalLine(recap: WeeklyRecapData): string {
 
 export function weeklyRecapRefusalNote(recap: WeeklyRecapData): string {
   return recap.refusals.recorded ? WEEKLY_RECAP_REFUSAL_NOTE : '';
+}
+
+/** Empty on a clean week, so the card never carries an empty failure slot. */
+export function weeklyRecapFailureLine(recap: WeeklyRecapData): string {
+  return getShareFailureLine(recap.failures);
+}
+
+export function weeklyRecapFailureStamp(recap: WeeklyRecapData): string {
+  return failureStampLabel(recap.failures);
 }
 
 export function weeklyRecapPeriod(recap: WeeklyRecapData): string {
@@ -154,6 +174,8 @@ export function weeklyRecapCaption(
   const refusalLine = weeklyRecapRefusalLine(recap);
   const refusalNote = weeklyRecapRefusalNote(recap);
   const refusal = `${refusalLine}.${refusalNote ? ` ${refusalNote}.` : ''}`;
+  const failureLine = weeklyRecapFailureLine(recap);
+  const failure = failureLine ? ` ${failureLine}.` : '';
   const link = productUrl ? ` ${productUrl}` : '';
 
   if (platform === 'x' || platform === 'bluesky') {
@@ -186,6 +208,7 @@ export function weeklyRecapCaption(
       [
         `${compactSocialNumber(recap.median ?? 0)} tok/s median · ${comparison}.`,
         compactRefusal,
+        getCompactFailureLine(recap.failures),
         'How was your Claude week?',
         SHARE_SOCIAL_PRIVACY,
         SHARE_SOCIAL_BRAND,
@@ -195,7 +218,7 @@ export function weeklyRecapCaption(
     );
   }
 
-  return `${headline}. ${median} ${weeklyRecapIndexLine(recap)}. ${refusal} ${WEEKLY_RECAP_CHALLENGE} ${SHARE_PRIVACY_NOTE} #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
+  return `${headline}. ${median} ${weeklyRecapIndexLine(recap)}. ${refusal}${failure} ${WEEKLY_RECAP_CHALLENGE} ${SHARE_PRIVACY_NOTE} #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
 }
 
 export function weeklyRecapTextReceipt(
@@ -214,6 +237,7 @@ export function weeklyRecapTextReceipt(
     `${recap.requestCount.toLocaleString('en-US')} measured ${recap.requestCount === 1 ? 'request' : 'requests'} · ${recap.sessions.toLocaleString('en-US')} ${recap.sessions === 1 ? 'session' : 'sessions'}`,
     refusalLine,
     weeklyRecapRefusalNote(recap),
+    weeklyRecapFailureLine(recap),
     SHARE_PRIVACY_NOTE,
     WEEKLY_RECAP_INSTALL_CTA,
     SECURITY_BLUEPRINTS_CAPTION,
