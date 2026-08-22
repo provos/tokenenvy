@@ -1,5 +1,10 @@
 <script module lang="ts">
-  import type { ModelFamily as SharedModelFamily, QuotaWindow, ScanStatus } from '$lib/types';
+  import type {
+    ModelFamily as SharedModelFamily,
+    QuotaModelWindows,
+    QuotaWindow,
+    ScanStatus,
+  } from '$lib/types';
 
   const scanStates = new Set<ScanStatus['state']>(['idle', 'discovering', 'scanning', 'error']);
   const quotaFreshnessMs = 15 * 60_000;
@@ -224,6 +229,7 @@
   let sevenDayQuotaStale = $derived(
     quota?.sevenDay ? quotaWindowIsStale(quota.sevenDay, quotaClock) : false,
   );
+  let quotaModels = $derived(quota?.models ?? []);
   let displayedScanStatus = $derived(latestScanStatus ?? overview?.scan ?? null);
   let availableFamilies = $derived(
     allFamilies.filter(
@@ -292,6 +298,14 @@
       hour: 'numeric',
       minute: '2-digit',
     }).format(timestamp);
+  }
+
+  /** Each model runs its own quota system, so staleness is judged per window. */
+  function quotaModelStale(entry: QuotaModelWindows): boolean {
+    return (
+      (entry.fiveHour ? quotaWindowIsStale(entry.fiveHour, quotaClock) : false) ||
+      (entry.sevenDay ? quotaWindowIsStale(entry.sevenDay, quotaClock) : false)
+    );
   }
 
   async function getJson<T>(url: string, optional = false): Promise<T | null> {
@@ -1017,6 +1031,27 @@
                   <div><i style={`--quota-progress:${quota.sevenDay.usedPercentage}%`}></i></div>
                 {/if}
               </div>
+            {/if}
+            {#if quotaModels.length}
+              <ul class="quota-models" aria-label="Reported rate limits per model">
+                {#each quotaModels as entry (entry.model)}
+                  <li class:stale={quotaModelStale(entry)}>
+                    <span class="quota-model-name">{entry.model}</span>
+                    <span class="quota-model-windows">
+                      <span
+                        >{entry.fiveHour
+                          ? `${entry.fiveHour.usedPercentage.toFixed(0)}% 5h`
+                          : '— 5h'}</span
+                      >
+                      <span
+                        >{entry.sevenDay
+                          ? `${entry.sevenDay.usedPercentage.toFixed(0)}% 7d`
+                          : '— 7d'}</span
+                      >
+                    </span>
+                  </li>
+                {/each}
+              </ul>
             {/if}
           </section>
 

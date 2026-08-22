@@ -17,6 +17,7 @@ describe('CLI arguments', () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('Token Envy');
       expect(result.stdout).toContain('--no-open');
+      expect(result.stdout).toContain('install-statusline');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -137,12 +138,12 @@ describe('CLI arguments', () => {
 });
 
 describe('status-line projection', () => {
-  it('keeps only valid rate-limit windows', () => {
+  it('keeps only valid rate-limit windows and the model id', () => {
     const result = extractRateLimits(
       {
         session_id: 'private-session',
         transcript_path: '/private/path',
-        model: { display_name: 'private-model' },
+        model: { id: 'claude-fable-5', display_name: 'private-model' },
         rate_limits: {
           five_hour: { used_percentage: 12.4, resets_at: 1_800_000_000 },
           seven_day: { used_percentage: 54, resets_at: '2027-01-15T12:00:00Z' },
@@ -155,9 +156,21 @@ describe('status-line projection', () => {
     expect(result).toEqual({
       fiveHour: { usedPercentage: 12.4, resetsAt: '2027-01-15T08:00:00.000Z' },
       sevenDay: { usedPercentage: 54, resetsAt: '2027-01-15T12:00:00.000Z' },
+      model: 'claude-fable-5',
       observedAt: '2026-08-14T12:00:00.000Z',
     });
     expect(JSON.stringify(result)).not.toContain('private');
+  });
+
+  it('omits the model field unless the payload carries a string id', () => {
+    const base = {
+      rate_limits: { seven_day: { used_percentage: 40, resets_at: '2027-01-15T12:00:00Z' } },
+    };
+    expect(extractRateLimits({ ...base, model: { display_name: 'Claude' } })).not.toHaveProperty(
+      'model',
+    );
+    expect(extractRateLimits({ ...base, model: { id: 5 } })).not.toHaveProperty('model');
+    expect(extractRateLimits({ ...base })).not.toHaveProperty('model');
   });
 
   it('drops malformed or out-of-range windows', () => {

@@ -190,6 +190,23 @@ const quotaPayload: QuotaResponse = {
     resetsAt: '2026-08-21T12:00:00.000Z',
     stale: false,
   },
+  models: [
+    {
+      model: 'claude-fable-5',
+      fiveHour: {
+        usedPercentage: 3,
+        observedAt: '2026-08-14T12:00:00.000Z',
+        resetsAt: '2026-08-14T15:00:00.000Z',
+        stale: false,
+      },
+      sevenDay: {
+        usedPercentage: 40,
+        observedAt: '2026-08-14T12:00:00.000Z',
+        resetsAt: '2026-08-21T12:00:00.000Z',
+        stale: false,
+      },
+    },
+  ],
 };
 
 function deferred<T>() {

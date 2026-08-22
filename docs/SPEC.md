@@ -34,7 +34,13 @@ directory, and makes no automatic network requests.
   model signals remain separate. All refusal counts are labeled as lower bounds.
 - Transcript-only weekly numbers are labelled observed usage, never quota.
   Exact five-hour and seven-day percentages are available only through an
-  explicitly configured local status-line companion.
+  explicitly configured local status-line companion, installed by the explicit
+  `tokenenvy install-statusline` subcommand. That subcommand writes only the
+  `statusLine` key of the user-level Claude Code settings file (honoring
+  `CLAUDE_CONFIG_DIR`), refuses to replace a non-Token-Envy status line, and
+  preserves all other settings. Quota samples also record the model id from the
+  status-line payload so per-model quota systems stay separable; that id is
+  metadata already used throughout the dashboard.
 - Precision/OTel mode is out of scope.
 
 ## Security and privacy invariants
@@ -44,6 +50,12 @@ directory, and makes no automatic network requests.
   than expanding it.
 - The derived index and local status-line connection live in `~/.tokenenvy`
   unless the user explicitly sets `TOKENENVY_DATA_DIR`.
+- The Claude Code settings file is modified only by the explicit
+  `install-statusline` subcommand; that change is limited to the `statusLine`
+  key, is written atomically, preserves other keys and file mode, updates an
+  existing Token Envy hook to the current executable path, and never overwrites
+  an existing non-Token-Envy status line. Startup only reads that file and never
+  fails because of it.
 - The HTTP server binds to loopback. Host and Origin are validated; CORS is not
   enabled; production browser access uses a per-launch bootstrap token and a
   sliding strict cookie that authenticated use renews.

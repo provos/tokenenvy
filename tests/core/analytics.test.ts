@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import RawSqlite from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Analytics } from '../../src/lib/core/analytics';
 import { filterRefusalTimeline } from '../../src/lib/components/chart';
@@ -180,6 +181,201 @@ describe('analytics', () => {
       fiveHour: { stale: false },
     });
     expect(analytics.quota(new Date('2026-08-14T15:00:00Z')).fiveHour?.stale).toBe(true);
+    database.close();
+  });
+
+  it('breaks quota windows down per model while keeping overall windows', async () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'quota-key' });
+    const analytics = new Analytics(database);
+    database.recordQuotaSample({
+      model: 'claude-opus-5',
+      observedAt: '2026-08-14T12:00:00Z',
+      fiveHour: { usedPercentage: 3, resetsAt: '2026-08-14T15:00:00Z' },
+      sevenDay: { usedPercentage: 40, resetsAt: '2026-08-21T00:00:00Z' },
+    });
+    database.recordQuotaSample({
+      model: 'claude-fable-5',
+      observedAt: '2026-08-14T12:05:00Z',
+      sevenDay: { usedPercentage: 100, resetsAt: '2026-08-21T00:00:00Z' },
+    });
+    // A sample without a model id stays in the overall windows only.
+    database.recordQuotaSample({
+      observedAt: '2026-08-14T12:10:00Z',
+      sevenDay: { usedPercentage: 22, resetsAt: '2026-08-21T00:00:00Z' },
+    });
+    const quota = analytics.quota(new Date('2026-08-14T12:10:00Z'));
+
+    expect(quota.fiveHour).toMatchObject({ usedPercentage: 3 });
+    expect(quota.sevenDay).toMatchObject({ usedPercentage: 22 });
+    expect(quota.models.map(({ model }) => model)).toEqual(['claude-fable-5', 'claude-opus-5']);
+    expect(quota.models).toMatchObject([
+      {
+        model: 'claude-fable-5',
+        fiveHour: null,
+        sevenDay: { usedPercentage: 100, stale: false },
+      },
+      {
+        model: 'claude-opus-5',
+        fiveHour: { usedPercentage: 3, stale: false },
+        sevenDay: { usedPercentage: 40, stale: false },
+      },
+    ]);
+    // Staleness applies per model: the older opus five-hour window ages out
+    // while the fresher fable seven-day sample survives the same clock.
+    const later = analytics.quota(new Date('2026-08-14T12:18:00Z'));
+    expect(later.models.find((entry) => entry.model === 'claude-opus-5')?.fiveHour?.stale).toBe(
+      true,
+    );
+    expect(later.models.find((entry) => entry.model === 'claude-fable-5')?.sevenDay?.stale).toBe(
+      false,
+    );
+    database.close();
+  });
+
+  it('adds the model column to an older quota_samples index without losing rows', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-quota-'));
+    dirs.push(directory);
+    const path = join(directory, 'index.sqlite');
+    const raw = new RawSqlite(path);
+    raw.exec(`
+      CREATE TABLE quota_samples (
+        window TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        used_percentage REAL NOT NULL,
+        resets_at INTEGER NOT NULL,
+        PRIMARY KEY(window, observed_at)
+      );
+    `);
+    raw
+      .prepare(
+        'INSERT INTO quota_samples(window, observed_at, used_percentage, resets_at) VALUES (?, ?, ?, ?)',
+      )
+      .run('seven_day', Date.parse('2026-08-14T12:00:00Z'), 55, Date.parse('2026-08-21T00:00:00Z'));
+    raw.close();
+
+    const database = new Database({ path, hmacKey: 'quota-key' });
+    const columns = database.db.pragma('table_info(quota_samples)') as Array<{ name: string }>;
+    expect(columns.map(({ name }) => name)).toContain('model');
+    // The rebuild also widens the primary key so same-millisecond samples from
+    // different models can no longer evict each other, and the per-model
+    // breakdown gets its covering index once the new table exists.
+    const keyColumns = database.db.pragma('table_info(quota_samples)') as Array<{
+      name: string;
+      pk: number;
+    }>;
+    expect(keyColumns.filter(({ pk }) => pk > 0).map(({ name }) => name)).toEqual([
+      'window',
+      'observed_at',
+      'model',
+    ]);
+    const indexes = database.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'quota_samples'")
+      .all() as Array<{ name: string }>;
+    expect(indexes.map(({ name }) => name)).toContain('quota_samples_model_window_idx');
+    // The pre-migration row survives and still feeds the overall windows.
+    const analytics = new Analytics(database);
+    expect(analytics.quota(new Date('2026-08-14T12:05:00Z')).sevenDay).toMatchObject({
+      usedPercentage: 55,
+      stale: false,
+    });
+    // New model-attributed samples join it without disturbing the older rows.
+    database.recordQuotaSample({
+      model: 'claude-fable-5',
+      observedAt: '2026-08-14T12:10:00Z',
+      sevenDay: { usedPercentage: 40, resetsAt: '2026-08-21T00:00:00Z' },
+    });
+    expect(analytics.quota(new Date('2026-08-14T12:10:00Z'))).toMatchObject({
+      sevenDay: { usedPercentage: 40 },
+      models: [{ model: 'claude-fable-5', fiveHour: null, sevenDay: { usedPercentage: 40 } }],
+    });
+    database.close();
+  });
+
+  it('widens a quota_samples primary key that predates the model in the key', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'speedometer-quota-'));
+    dirs.push(directory);
+    const path = join(directory, 'index.sqlite');
+    const raw = new RawSqlite(path);
+    // A database from the first per-model build: the column exists but sits
+    // outside the primary key, and unattributed samples are still NULL.
+    raw.exec(`
+      CREATE TABLE quota_samples (
+        window TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        used_percentage REAL NOT NULL,
+        resets_at INTEGER NOT NULL,
+        model TEXT,
+        PRIMARY KEY(window, observed_at)
+      );
+    `);
+    const insert = raw.prepare(
+      'INSERT INTO quota_samples(window, observed_at, used_percentage, resets_at, model) VALUES (?, ?, ?, ?, ?)',
+    );
+    insert.run(
+      'seven_day',
+      Date.parse('2026-08-14T12:00:00Z'),
+      55,
+      Date.parse('2026-08-21T00:00:00Z'),
+      null,
+    );
+    insert.run(
+      'five_hour',
+      Date.parse('2026-08-14T12:00:00Z'),
+      5,
+      Date.parse('2026-08-14T15:00:00Z'),
+      'claude-opus-5',
+    );
+    raw.close();
+
+    const database = new Database({ path, hmacKey: 'quota-key' });
+    const keyColumns = database.db.pragma('table_info(quota_samples)') as Array<{
+      name: string;
+      pk: number;
+    }>;
+    expect(keyColumns.filter(({ pk }) => pk > 0).map(({ name }) => name)).toEqual([
+      'window',
+      'observed_at',
+      'model',
+    ]);
+    // Rows survive with attribution, and the NULL model collapses onto the ''
+    // sentinel rather than a NULL the NOT NULL key column would reject.
+    expect(
+      database.db.prepare('SELECT model, used_percentage FROM quota_samples ORDER BY model').all(),
+    ).toEqual([
+      { model: '', used_percentage: 55 },
+      { model: 'claude-opus-5', used_percentage: 5 },
+    ]);
+    const analytics = new Analytics(database);
+    const quota = analytics.quota(new Date('2026-08-14T12:05:00Z'));
+    expect(quota.sevenDay).toMatchObject({ usedPercentage: 55 });
+    expect(quota.fiveHour).toMatchObject({ usedPercentage: 5 });
+    // The sentinel row feeds the overall windows without inventing a model.
+    expect(quota.models.map(({ model }) => model)).toEqual(['claude-opus-5']);
+    database.close();
+  });
+
+  it('keeps same-millisecond quota samples from different models', async () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'quota-key' });
+    const observedAt = '2026-08-14T12:00:00Z';
+    // Under the old (window, observed_at) key, INSERT OR REPLACE silently
+    // deleted whichever model posted first.
+    database.recordQuotaSample({
+      model: 'claude-opus-5',
+      observedAt,
+      fiveHour: { usedPercentage: 3, resetsAt: '2026-08-14T15:00:00Z' },
+    });
+    database.recordQuotaSample({
+      model: 'claude-fable-5',
+      observedAt,
+      fiveHour: { usedPercentage: 30, resetsAt: '2026-08-14T15:00:00Z' },
+    });
+    expect(database.db.prepare('SELECT COUNT(*) n FROM quota_samples').get()).toMatchObject({
+      n: 2,
+    });
+    expect(database.getQuota(new Date('2026-08-14T12:01:00Z')).models).toMatchObject([
+      { model: 'claude-fable-5', fiveHour: { usedPercentage: 30 } },
+      { model: 'claude-opus-5', fiveHour: { usedPercentage: 3 } },
+    ]);
     database.close();
   });
 
