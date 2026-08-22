@@ -1202,6 +1202,43 @@ td .model-dot {
   background: var(--mint);
 }
 
+.quota-models {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.quota-models li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quota-model-name {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quota-model-windows {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  color: var(--text);
+  font:
+    620 11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.quota-models li.stale .quota-model-windows {
+  color: var(--amber);
+}
+
 .recorded-pill {
   padding: 6px 8px;
   color: var(--mint);

@@ -38,7 +38,9 @@ directory, and makes no automatic network requests.
   `tokenenvy install-statusline` subcommand. That subcommand writes only the
   `statusLine` key of the user-level Claude Code settings file (honoring
   `CLAUDE_CONFIG_DIR`), refuses to replace a non-Token-Envy status line, and
-  preserves all other settings.
+  preserves all other settings. Quota samples also record the model id from the
+  status-line payload so per-model quota systems stay separable; that id is
+  metadata already used throughout the dashboard.
 - Precision/OTel mode is out of scope.
 
 ## Security and privacy invariants

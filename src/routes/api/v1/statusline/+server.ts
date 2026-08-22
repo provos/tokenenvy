@@ -2,6 +2,7 @@ import { getRuntime } from '$lib/server/runtime';
 import { error, json } from '@sveltejs/kit';
 
 const MAX_BODY_BYTES = 4096;
+const MAX_MODEL_ID_LENGTH = 64;
 
 function quotaWindow(value: unknown): { usedPercentage: number; resetsAt: string } | undefined {
   if (!value || typeof value !== 'object') return undefined;
@@ -12,6 +13,14 @@ function quotaWindow(value: unknown): { usedPercentage: number; resetsAt: string
     return undefined;
   if (!reset || !Number.isFinite(reset.getTime())) return undefined;
   return { usedPercentage, resetsAt: reset.toISOString() };
+}
+
+/** Model ids are metadata only; anything but a short non-empty string is dropped. */
+function sanitizeModel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_MODEL_ID_LENGTH);
 }
 
 export async function POST({ request }) {
@@ -31,10 +40,12 @@ export async function POST({ request }) {
   const fiveHour = quotaWindow(body.fiveHour);
   const sevenDay = quotaWindow(body.sevenDay);
   if (!fiveHour && !sevenDay) error(400, 'No valid rate-limit window supplied');
+  const model = sanitizeModel(body.model);
 
   getRuntime().recordQuotaSample({
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
+    ...(model ? { model } : {}),
     observedAt: new Date().toISOString(),
   });
   return json({ accepted: true }, { status: 202, headers: { 'cache-control': 'no-store' } });

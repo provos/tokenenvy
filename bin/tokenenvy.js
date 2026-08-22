@@ -23,7 +23,7 @@ const DEFAULT_PORT = 4173;
 const MAX_STDIN_BYTES = 1024 * 1024;
 
 /** @typedef {{ usedPercentage: number, resetsAt: string }} QuotaWindow */
-/** @typedef {{ fiveHour?: QuotaWindow, sevenDay?: QuotaWindow, observedAt: string }} QuotaSample */
+/** @typedef {{ fiveHour?: QuotaWindow, sevenDay?: QuotaWindow, model?: string, observedAt: string }} QuotaSample */
 /** @typedef {'server' | 'statusline' | 'install-statusline'} CliCommand */
 /** @typedef {{ command: CliCommand, logs: string[], port: number, timezone: string, open: boolean, rescan: boolean, help: boolean }} CliOptions */
 /** @typedef {'installed' | 'missing' | 'foreign' | 'unknown'} StatuslineHookStateName */
@@ -413,7 +413,9 @@ function normalizeWindow(value) {
 }
 
 /**
- * Return only the two documented rate-limit windows; all other stdin fields are discarded.
+ * Return only the two documented rate-limit windows plus the model id; all
+ * other stdin fields are discarded. Quota systems differ per model, so the id
+ * keeps samples from interleaving into one bucket.
  * @param {unknown} input
  * @param {Date} now
  * @returns {QuotaSample | null}
@@ -431,9 +433,11 @@ export function extractRateLimits(input, now = new Date()) {
   const fiveHour = normalizeWindow(limits.five_hour ?? limits.fiveHour ?? limits.five_hour_window);
   const sevenDay = normalizeWindow(limits.seven_day ?? limits.sevenDay ?? limits.seven_day_window);
   if (!fiveHour && !sevenDay) return null;
+  const model = typeof document.model?.id === 'string' ? document.model.id : null;
   return {
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
+    ...(model ? { model } : {}),
     observedAt: now.toISOString(),
   };
 }

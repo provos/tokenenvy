@@ -77,7 +77,7 @@ Use `tokenenvy install-statusline` when the package is installed globally. The i
 
 Token Envy touches `~/.claude/settings.json` only when you run `install-statusline`, and only the `statusLine` key. If a non-Token-Envy status-line command already exists, the installer refuses to replace it and prints the helper invocation to call from that command yourself.
 
-The helper extracts valid `five_hour` and `seven_day` fields from Claude's JSON and posts them to the loopback server with a per-launch secret. A 150 ms timeout protects the Claude Code process. Samples expire after 15 minutes or at their reset time.
+The helper extracts valid `five_hour` and `seven_day` fields from Claude's JSON and posts them to the loopback server with a per-launch secret. A 150 ms timeout protects the Claude Code process. Samples expire after 15 minutes or at their reset time. Each sample also records the model id from the payload, so the dashboard can report rate limits per model instead of blending quota systems.
 
 ## Effective output speed
 

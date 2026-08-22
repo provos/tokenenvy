@@ -236,11 +236,24 @@ export interface QuotaWindow {
   stale: boolean;
 }
 
+/**
+ * Latest windows for one recorded model id. Samples captured before model
+ * tracking (or without a model id) have no entry here; the top-level windows
+ * on QuotaResponse still cover them.
+ */
+export interface QuotaModelWindows {
+  model: string;
+  fiveHour: QuotaWindow | null;
+  sevenDay: QuotaWindow | null;
+}
+
 export interface QuotaResponse {
   available: boolean;
   source: 'statusline' | null;
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
+  /** Latest windows per model, ordered by model id. */
+  models: QuotaModelWindows[];
 }
 
 export interface ScanStatus {
