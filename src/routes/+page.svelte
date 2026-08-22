@@ -178,6 +178,16 @@
   let eventSource: EventSource | null = null;
   let dashboardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let quotaRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  type DashboardLoadSource = 'foreground' | 'background';
+  type DashboardLoadIntent = {
+    showLoading: boolean;
+    requestedDays: (typeof ranges)[number];
+    source: DashboardLoadSource;
+  };
+  let dashboardLoadInFlight = false;
+  let queuedDashboardLoad: DashboardLoadIntent | null = null;
+  let queuedDayRefresh: { date: string; revision: number | null } | null = null;
+  let dashboardDisposed = false;
   let loadSequence = 0;
   let quotaLoadSequence = 0;
   let dayLoadSequence = 0;
@@ -311,9 +321,22 @@
     }
   }
 
-  async function loadDashboard(showLoading = false, requestedDays = rangeDays) {
-    if (sessionExpired) return;
-    if (dashboardRefreshTimer) {
+  function mergeDashboardIntent(
+    current: DashboardLoadIntent | null,
+    next: DashboardLoadIntent,
+  ): DashboardLoadIntent {
+    if (!current || next.source === 'foreground' || current.source === 'background') return next;
+    return current;
+  }
+
+  async function loadDashboard(
+    showLoading = false,
+    requestedDays = rangeDays,
+    source: DashboardLoadSource = 'foreground',
+  ) {
+    if (sessionExpired || dashboardDisposed) return;
+    const intent = { showLoading, requestedDays, source } satisfies DashboardLoadIntent;
+    if (source === 'foreground' && dashboardRefreshTimer) {
       clearTimeout(dashboardRefreshTimer);
       dashboardRefreshTimer = null;
     }
@@ -321,12 +344,19 @@
       clearTimeout(quotaRefreshTimer);
       quotaRefreshTimer = null;
     }
+    if (showLoading) loading = true;
+    if (source === 'foreground')
+      pendingRangeDays = requestedDays === rangeDays ? null : requestedDays;
+    if (dashboardLoadInFlight) {
+      queuedDashboardLoad = mergeDashboardIntent(queuedDashboardLoad, intent);
+      return;
+    }
+
+    dashboardLoadInFlight = true;
     const sequence = ++loadSequence;
     const quotaSequence = ++quotaLoadSequence;
     const rangeChange = requestedDays !== rangeDays;
     const reconcileAvailability = rangeChange || !overview || !series || selectedDate === null;
-    if (showLoading) loading = true;
-    if (rangeChange) pendingRangeDays = requestedDays;
     if (!overview) error = null;
     try {
       const [nextOverview, nextSeries, nextQuota, nextDataQuality] = await Promise.all([
@@ -335,7 +365,7 @@
         getJson<QuotaResponse>('/api/v1/quota', true).catch(() => null),
         getJson<DataQualityResponse>('/api/v1/data-quality'),
       ]);
-      if (sequence !== loadSequence) return;
+      if (sequence !== loadSequence || sessionExpired || dashboardDisposed) return;
       const nextRevision = nextOverview?.scan.revision ?? null;
       analyticsRevision = nextRevision;
       overview =
@@ -360,24 +390,31 @@
         scheduleDashboardRefresh();
       }
     } catch (cause) {
-      if (sequence !== loadSequence) return;
+      if (sequence !== loadSequence || sessionExpired || dashboardDisposed) return;
       const message = cause instanceof Error ? cause.message : 'Could not reach the local scanner.';
       if (overview && series) refreshError = { message, requestedDays };
       else error = message;
     } finally {
-      if (sequence === loadSequence) {
-        loading = false;
-        pendingRangeDays = null;
+      dashboardLoadInFlight = false;
+      if (sequence === loadSequence && !dashboardDisposed) {
+        const next = queuedDashboardLoad;
+        queuedDashboardLoad = null;
+        if (!sessionExpired && next) {
+          void loadDashboard(next.showLoading, next.requestedDays, next.source);
+        } else {
+          loading = false;
+          pendingRangeDays = null;
+        }
       }
     }
   }
 
   async function refreshQuota() {
-    if (sessionExpired) return;
+    if (sessionExpired || dashboardDisposed) return;
     const sequence = ++quotaLoadSequence;
     try {
       const nextQuota = await getJson<QuotaResponse>('/api/v1/quota', true);
-      if (sequence === quotaLoadSequence) {
+      if (sequence === quotaLoadSequence && !sessionExpired && !dashboardDisposed) {
         quota = nextQuota;
         quotaClock = Date.now();
       }
@@ -391,10 +428,16 @@
       clearTimeout(quotaRefreshTimer);
       quotaRefreshTimer = null;
     }
-    if (dashboardRefreshTimer) clearTimeout(dashboardRefreshTimer);
+    if (dashboardLoadInFlight) {
+      void loadDashboard(false, pendingRangeDays ?? rangeDays, 'background');
+      return;
+    }
+    // Arm once. Resetting this timer for every streamed transcript change can
+    // postpone a refresh forever while several Claude sessions are active.
+    if (dashboardRefreshTimer) return;
     dashboardRefreshTimer = setTimeout(() => {
       dashboardRefreshTimer = null;
-      void loadDashboard(false, pendingRangeDays ?? rangeDays);
+      void loadDashboard(false, pendingRangeDays ?? rangeDays, 'background');
     }, 350);
   }
 
@@ -407,7 +450,7 @@
   }
 
   function handleScanEvent(event: MessageEvent<string>) {
-    if (sessionExpired) return;
+    if (sessionExpired || dashboardDisposed) return;
     const status = parseScanStatus(event.data);
     if (!status) return;
     latestScanStatus = status;
@@ -429,7 +472,7 @@
       // A dropped stream reconnects on its own. A non-200 reply, which is what an
       // expired session returns, closes the stream for good, so probe once to learn
       // whether the session died instead of leaving stale numbers looking live.
-      if (sessionExpired || source.readyState !== EventSource.CLOSED) return;
+      if (sessionExpired || dashboardDisposed || source.readyState !== EventSource.CLOSED) return;
       void getJson('/api/v1/overview').catch(() => {
         // The probe exists for its 401 side effect. Other failures keep the last view.
       });
@@ -445,6 +488,8 @@
       clearTimeout(quotaRefreshTimer);
       quotaRefreshTimer = null;
     }
+    queuedDashboardLoad = null;
+    queuedDayRefresh = null;
     eventSource?.close();
     eventSource = null;
   }
@@ -469,8 +514,10 @@
       return;
     }
 
-    const requestAlreadyCurrent =
-      dayLoading && selectedDate === target && dayRequestRevision === revision;
+    const requestAlreadyCurrent = dayLoading && selectedDate === target;
+    if (requestAlreadyCurrent && dayRequestRevision !== revision) {
+      queuedDayRefresh = { date: target, revision };
+    }
     const detailIsCurrent =
       dayDetail?.date === target && dayDetailRevision === revision && !dayError;
     if (!requestAlreadyCurrent && !detailIsCurrent) void selectDay(target, true);
@@ -482,8 +529,13 @@
     const dateChanged = selectedDate !== date;
     if (!force && !dateChanged && dayDetail?.date === date && dayDetailRevision === revision)
       return;
+    if (dayLoading && !dateChanged) {
+      if (force && dayRequestRevision !== revision) queuedDayRefresh = { date, revision };
+      return;
+    }
     const sequence = ++dayLoadSequence;
     if (dateChanged) {
+      queuedDayRefresh = null;
       drawerOpen = false;
       shareOpen = false;
       dayDetail = null;
@@ -495,11 +547,23 @@
     dayRequestRevision = revision;
     try {
       const detail = await getJson<DayDetailResponse>(`/api/v1/days/${encodeURIComponent(date)}`);
-      if (sequence !== dayLoadSequence || selectedDate !== date) return;
+      if (
+        sequence !== dayLoadSequence ||
+        selectedDate !== date ||
+        sessionExpired ||
+        dashboardDisposed
+      )
+        return;
       dayDetail = detail;
       dayDetailRevision = revision;
     } catch (cause) {
-      if (sequence !== dayLoadSequence || selectedDate !== date) return;
+      if (
+        sequence !== dayLoadSequence ||
+        selectedDate !== date ||
+        sessionExpired ||
+        dashboardDisposed
+      )
+        return;
       if (dayDetail?.date !== date) {
         dayDetail = null;
         dayDetailRevision = null;
@@ -509,6 +573,16 @@
       if (sequence === dayLoadSequence && selectedDate === date) {
         dayLoading = false;
         dayRequestRevision = null;
+        const next = queuedDayRefresh;
+        queuedDayRefresh = null;
+        if (
+          !sessionExpired &&
+          !dashboardDisposed &&
+          next?.date === date &&
+          next.revision !== dayDetailRevision
+        ) {
+          void selectDay(date, true);
+        }
       }
     }
   }
@@ -519,6 +593,7 @@
     dayDetail = null;
     dayDetailRevision = null;
     dayRequestRevision = null;
+    queuedDayRefresh = null;
     dayError = null;
     dayLoading = false;
     drawerOpen = false;
@@ -585,11 +660,12 @@
   });
 
   onDestroy(() => {
+    dashboardDisposed = true;
+    loadSequence += 1;
+    quotaLoadSequence += 1;
     dayLoadSequence += 1;
     longitudinalShareSequence += 1;
-    eventSource?.close();
-    if (dashboardRefreshTimer) clearTimeout(dashboardRefreshTimer);
-    if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
+    stopDashboardActivity();
   });
 </script>
 
