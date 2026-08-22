@@ -1,17 +1,11 @@
 import type { WeeklyModelMix, WeeklyRecap } from '$lib/types';
-import { SECURITY_BLUEPRINTS_CAPTION } from './brand';
 import {
   adjustSentimentForInterruptions,
   compactSocialNumber,
-  failureStampLabel,
-  getCompactFailureLine,
   getInterruptionMoodLines,
-  getShareFailureLine,
   getShareSentimentTheme,
-  fitSocialCaption,
-  SHARE_PRIVACY_NOTE,
-  SHARE_SOCIAL_BRAND,
-  SHARE_SOCIAL_PRIVACY,
+  failureNoun,
+  serverFaultLabel,
   type SharePlatform,
   type ShareSentiment,
   type ShareTone,
@@ -24,10 +18,11 @@ export interface WeeklyRecapProductLink {
   label: string;
 }
 
-export const WEEKLY_RECAP_INSTALL_CTA = 'Measure your week · npx tokenenvy';
+export const WEEKLY_RECAP_INSTALL_CTA = 'Measure your week: npx tokenenvy';
 export const WEEKLY_RECAP_PRODUCT_URL = 'https://www.npmjs.com/package/tokenenvy';
-export const WEEKLY_RECAP_CHALLENGE = 'How did Claude Code treat you this week?';
 export const WEEKLY_RECAP_REFUSAL_NOTE = 'Explicit signals only · lower bound';
+const WEEKLY_RECAP_PRIVACY = 'Runs locally. Prompts stay private.';
+const WEEKLY_RECAP_QUESTION = 'How did your week compare?';
 export const DASHBOARD_SHARE_CTA = {
   eyebrow: 'Your private speed receipt',
   title: 'Claude Code feels slow? Bring receipts.',
@@ -36,10 +31,10 @@ export const DASHBOARD_SHARE_CTA = {
 } as const;
 
 const WEEKLY_FRIENDLY_HEADLINES: Record<ShareSentiment, string> = {
-  [-2]: 'Claude Code made this a long week',
+  [-2]: 'Claude fought me all week',
   [-1]: 'Claude Code kept me waiting this week',
-  [0]: 'Claude Code kept a steady pace this week',
-  [1]: 'Claude Code kept me moving this week',
+  [0]: 'Claude held steady this week',
+  [1]: 'Claude behaved this week',
   [2]: 'Claude Code flew all week',
 };
 
@@ -80,13 +75,15 @@ export function weeklyRecapHeadline(
     : WEEKLY_FRIENDLY_HEADLINES[sentiment];
 }
 
-export function weeklyRecapIndexLine(recap: WeeklyRecapData): string {
+export function weeklyRecapComparisonLine(recap: WeeklyRecapData): string {
   const { speedIndex } = recap;
-  if (!speedIndex.eligible || speedIndex.value === null) return 'Building a 28-day baseline';
+  if (!speedIndex.eligible || speedIndex.value === null) {
+    return 'My 28-day baseline is still building';
+  }
   const value = Math.round(speedIndex.value);
   const delta = value - 100;
-  if (delta === 0) return 'Speed Index 100 · matched my prior 28 days';
-  return `Speed Index ${value} · ${Math.abs(delta)}% ${delta > 0 ? 'faster' : 'slower'} than my prior 28 days`;
+  if (delta === 0) return 'Matched my prior 28 days';
+  return `${Math.abs(delta)}% ${delta > 0 ? 'faster' : 'slower'} than my prior 28 days`;
 }
 
 export function weeklyRecapSentimentDescription(recap: WeeklyRecapData): string {
@@ -123,11 +120,18 @@ export function weeklyRecapRefusalNote(recap: WeeklyRecapData): string {
 
 /** Empty on a clean week, so the card never carries an empty failure slot. */
 export function weeklyRecapFailureLine(recap: WeeklyRecapData): string {
-  return getShareFailureLine(recap.failures);
+  const { attempted, overloaded, serverError } = recap.failures;
+  if (attempted === 0) return '';
+  const outcomes = [
+    overloaded > 0 ? `${overloaded} overloaded` : null,
+    serverError > 0 ? serverFaultLabel(serverError) : null,
+  ].filter((outcome): outcome is string => outcome !== null);
+  const total = failureNoun(attempted);
+  return outcomes.length > 0 ? `${total}: ${outcomes.join(' · ')}` : total;
 }
 
 export function weeklyRecapFailureStamp(recap: WeeklyRecapData): string {
-  return failureStampLabel(recap.failures);
+  return recap.failures.attempted > 0 ? failureNoun(recap.failures.attempted) : '';
 }
 
 export function weeklyRecapPeriod(recap: WeeklyRecapData): string {
@@ -169,56 +173,12 @@ export function weeklyRecapCaption(
   productUrl: string | null,
   platform: SharePlatform = 'generic',
 ): string {
-  const headline = weeklyRecapHeadline(recap, tone, sentiment);
-  const median = `Weekly median: ${Math.round(recap.median ?? 0)} effective tok/s.`;
-  const refusalLine = weeklyRecapRefusalLine(recap);
-  const refusalNote = weeklyRecapRefusalNote(recap);
-  const refusal = `${refusalLine}.${refusalNote ? ` ${refusalNote}.` : ''}`;
-  const failureLine = weeklyRecapFailureLine(recap);
-  const failure = failureLine ? ` ${failureLine}.` : '';
-  const link = productUrl ? ` ${productUrl}` : '';
-
-  if (platform === 'x' || platform === 'bluesky') {
-    const value = Math.round(recap.speedIndex.value ?? 100);
-    const delta = value - 100;
-    const comparison = recap.speedIndex.eligible
-      ? delta === 0
-        ? 'matched my 28d baseline'
-        : `${Math.abs(delta)}% ${delta > 0 ? 'above' : 'below'} my 28d baseline`
-      : '28d baseline still forming';
-    const compactRefusal = !recap.refusals.recorded
-      ? 'Refusal signals unavailable.'
-      : recap.refusals.attempted === 0
-        ? 'No explicit refusal signals this week; lower bound.'
-        : `${compactSocialNumber(recap.refusals.attempted)} refusal ${recap.refusals.attempted === 1 ? 'signal' : 'signals'}: ${[
-            recap.refusals.recovered > 0
-              ? `${compactSocialNumber(recap.refusals.recovered)} recovered`
-              : null,
-            recap.refusals.userVisible > 0
-              ? `${compactSocialNumber(recap.refusals.userVisible)} visible`
-              : null,
-            recap.refusals.unknown > 0
-              ? `${compactSocialNumber(recap.refusals.unknown)} unresolved`
-              : null,
-          ]
-            .filter(Boolean)
-            .join('/')}; lower bound.`;
-    return fitSocialCaption(
-      headline,
-      [
-        `${compactSocialNumber(recap.median ?? 0)} tok/s median · ${comparison}.`,
-        compactRefusal,
-        getCompactFailureLine(recap.failures),
-        'How was your Claude week?',
-        SHARE_SOCIAL_PRIVACY,
-        SHARE_SOCIAL_BRAND,
-      ],
-      platform === 'bluesky' ? productUrl : null,
-      platform === 'x' ? 250 : 300,
-    );
-  }
-
-  return `${headline}. ${median} ${weeklyRecapIndexLine(recap)}. ${refusal}${failure} ${WEEKLY_RECAP_CHALLENGE} ${SHARE_PRIVACY_NOTE} #TokenEnvy. ${SECURITY_BLUEPRINTS_CAPTION}${link}`;
+  if (platform === 'x') return weeklyRecapMicroPost(recap, tone, sentiment, 250);
+  if (platform === 'bluesky') return weeklyRecapBlueskyPost(recap, tone, sentiment, productUrl);
+  return weeklyRecapFullText(recap, tone, sentiment, productUrl, {
+    includeQuestion: platform === 'linkedin',
+    includeCleanFailures: false,
+  });
 }
 
 export function weeklyRecapTextReceipt(
@@ -227,24 +187,163 @@ export function weeklyRecapTextReceipt(
   sentiment: ShareSentiment,
   productUrl: string | null = null,
 ): string {
-  const refusalLine = weeklyRecapRefusalLine(recap);
-  return [
-    'Token Envy weekly receipt',
-    weeklyRecapPeriod(recap),
-    weeklyRecapHeadline(recap, tone, sentiment),
-    `${Math.round(recap.median ?? 0)} weekly median effective tok/s`,
-    weeklyRecapIndexLine(recap),
-    `${recap.requestCount.toLocaleString('en-US')} measured ${recap.requestCount === 1 ? 'request' : 'requests'} · ${recap.sessions.toLocaleString('en-US')} ${recap.sessions === 1 ? 'session' : 'sessions'}`,
-    refusalLine,
-    weeklyRecapRefusalNote(recap),
-    weeklyRecapFailureLine(recap),
-    SHARE_PRIVACY_NOTE,
+  return weeklyRecapFullText(recap, tone, sentiment, productUrl, {
+    includeQuestion: false,
+    includeCleanFailures: true,
+  });
+}
+
+interface WeeklyFullTextOptions {
+  includeQuestion: boolean;
+  includeCleanFailures: boolean;
+}
+
+function weeklyRecapFullText(
+  recap: WeeklyRecapData,
+  tone: ShareTone,
+  sentiment: ShareSentiment,
+  productUrl: string | null,
+  options: WeeklyFullTextOptions,
+): string {
+  const facts = weeklyRecapFactLines(recap, options.includeCleanFailures).map(
+    (line) => `- ${line}`,
+  );
+  const close = [
+    options.includeQuestion ? WEEKLY_RECAP_QUESTION : null,
     WEEKLY_RECAP_INSTALL_CTA,
-    SECURITY_BLUEPRINTS_CAPTION,
+    WEEKLY_RECAP_PRIVACY,
+  ].filter((line): line is string => line !== null);
+  return [
+    `${weeklyRecapShareLead(recap, tone, sentiment)}:`,
+    facts.join('\n'),
+    close.join('\n'),
     productUrl,
   ]
-    .filter((line): line is string => Boolean(line))
-    .join('\n');
+    .filter((block): block is string => Boolean(block))
+    .join('\n\n');
+}
+
+function weeklyRecapFactLines(recap: WeeklyRecapData, includeCleanFailures: boolean): string[] {
+  const failure = weeklyRecapFailureLine(recap);
+  return [
+    `${Math.round(recap.median ?? 0)} weekly median effective tok/s`,
+    weeklyRecapComparisonLine(recap),
+    `${recap.requestCount.toLocaleString('en-US')} measured ${recap.requestCount === 1 ? 'request' : 'requests'}`,
+    weeklyRecapSocialRefusalLine(recap),
+    failure || (includeCleanFailures ? 'No API failures recorded this week' : null),
+  ].filter((line): line is string => line !== null);
+}
+
+function weeklyRecapShareLead(
+  recap: WeeklyRecapData,
+  tone: ShareTone,
+  sentiment: ShareSentiment,
+  includeFailureClause = true,
+): string {
+  let headline = weeklyRecapHeadline(recap, tone, sentiment);
+  if (!weeklyRecapIsCompleteWeek(recap)) {
+    headline = headline.includes('all week')
+      ? headline.replace('all week', 'all week so far')
+      : headline.replace('this week', 'this week so far');
+  }
+  return includeFailureClause && recap.failures.attempted > 0
+    ? `${headline}, failed calls and all`
+    : headline;
+}
+
+function weeklyRecapSocialRefusalLine(recap: WeeklyRecapData, includePeriod = true): string {
+  const { refusals } = recap;
+  if (!refusals.recorded) return 'Explicit refusal signals unavailable';
+  if (refusals.attempted === 0) {
+    return `No explicit refusal signals${includePeriod ? ' this week' : ''} · lower bound`;
+  }
+  const outcomes = [
+    refusals.recovered > 0 ? `${refusals.recovered} recovered` : null,
+    refusals.userVisible > 0 ? `${refusals.userVisible} user-visible` : null,
+    refusals.unknown > 0 ? `${refusals.unknown} unresolved` : null,
+  ].filter((outcome): outcome is string => outcome !== null);
+  const signal = refusals.attempted === 1 ? 'signal' : 'signals';
+  const details = outcomes.length > 0 ? `: ${outcomes.join(' · ')}` : '';
+  return `${refusals.attempted} explicit refusal ${signal}${details} · lower bound`;
+}
+
+function weeklyRecapMicroPost(
+  recap: WeeklyRecapData,
+  tone: ShareTone,
+  sentiment: ShareSentiment,
+  maxLength: number,
+): string {
+  const lead = `${weeklyRecapShareLead(recap, tone, sentiment)}.`;
+  const comparison = lowerFirst(weeklyRecapComparisonLine(recap));
+  const metric = `${compactSocialNumber(recap.median ?? 0)} median effective tok/s · ${comparison}`;
+  const activity = `${compactSocialNumber(recap.requestCount)} requests`;
+  const refusal = weeklyRecapCompactRefusalLine(recap);
+  const failure =
+    recap.failures.attempted > 0 ? failureNoun(recap.failures.attempted, compactSocialNumber) : '';
+  const close = 'Run yours: npx tokenenvy · prompts stay private';
+  const candidates = [
+    [lead, metric, activity, refusal, failure, close],
+    [lead, metric, refusal, failure, close],
+    [lead, metric, refusal, close],
+  ];
+  return (
+    candidates
+      .map((lines) => lines.filter(Boolean).join('\n'))
+      .find((caption) => caption.length <= maxLength) ?? `${lead}\n${metric}\n${close}`
+  );
+}
+
+function weeklyRecapBlueskyPost(
+  recap: WeeklyRecapData,
+  tone: ShareTone,
+  sentiment: ShareSentiment,
+  productUrl: string | null,
+): string {
+  const lead = `${weeklyRecapShareLead(recap, tone, sentiment, false)}.`;
+  const metric = `${compactSocialNumber(recap.median ?? 0)} median effective tok/s · ${lowerFirst(weeklyRecapComparisonLine(recap))}`;
+  const activity = `${compactSocialNumber(recap.requestCount)} requests`;
+  const refusal = weeklyRecapSocialRefusalLine(recap, false);
+  const failure = weeklyRecapFailureLine(recap);
+  const close = ['Run yours: npx tokenenvy', 'Local stats. Prompts private.', productUrl].filter(
+    (line): line is string => Boolean(line),
+  );
+  const detailed = [lead, metric, activity, refusal, failure, ...close].filter(Boolean).join('\n');
+  if (detailed.length <= 300) return detailed;
+  const withoutActivity = [lead, metric, refusal, failure, ...close].filter(Boolean).join('\n');
+  if (withoutActivity.length <= 300) return withoutActivity;
+  if (productUrl) {
+    const available = 300 - productUrl.length - 1;
+    if (available > 0) {
+      const linked = `${weeklyRecapMicroPost(recap, tone, sentiment, available)}\n${productUrl}`;
+      if (linked.length <= 300) return linked;
+    }
+  }
+  return weeklyRecapMicroPost(recap, tone, sentiment, 300);
+}
+
+function weeklyRecapCompactRefusalLine(recap: WeeklyRecapData): string {
+  const { refusals } = recap;
+  if (!refusals.recorded) return 'Refusal signals unavailable';
+  if (refusals.attempted === 0) return '0 explicit refusal signals · lower bound';
+  const outcome = refusals.userVisible
+    ? `${compactSocialNumber(refusals.userVisible)} user-visible`
+    : refusals.recovered
+      ? `${compactSocialNumber(refusals.recovered)} recovered`
+      : refusals.unknown
+        ? `${compactSocialNumber(refusals.unknown)} unresolved`
+        : null;
+  const total = `${compactSocialNumber(refusals.attempted)} ${refusals.attempted === 1 ? 'refusal' : 'refusals'}`;
+  return `${total}${outcome ? ` · ${outcome}` : ''} · lower bound`;
+}
+
+function weeklyRecapIsCompleteWeek(recap: WeeklyRecapData): boolean {
+  const start = parseLocalDate(recap.weekStart).getTime();
+  const through = parseLocalDate(recap.throughDate).getTime();
+  return Number.isFinite(start) && Number.isFinite(through) && through - start >= 6 * 86_400_000;
+}
+
+function lowerFirst(value: string): string {
+  return value.charAt(0).toLowerCase() + value.slice(1);
 }
 
 export function weeklyRecapImageFilename(

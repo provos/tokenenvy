@@ -26,7 +26,7 @@
     weeklyRecapFailureStamp,
     weeklyRecapHeadline,
     weeklyRecapImageFilename,
-    weeklyRecapIndexLine,
+    weeklyRecapComparisonLine,
     weeklyRecapObservedWeekdays,
     weeklyRecapPeriod,
     weeklyRecapReady,
@@ -93,7 +93,7 @@
   );
   let theme = $derived(getShareSentimentTheme(sentiment));
   let headline = $derived(weeklyRecapHeadline(snapshotRecap, tone, sentiment));
-  let indexLine = $derived(weeklyRecapIndexLine(snapshotRecap));
+  let indexLine = $derived(weeklyRecapComparisonLine(snapshotRecap));
   let period = $derived(weeklyRecapPeriod(snapshotRecap));
   let topModel = $derived(weeklyRecapTopModel(snapshotRecap));
   let observedWeekdays = $derived(weeklyRecapObservedWeekdays(snapshotRecap));
@@ -246,7 +246,7 @@
     context.font = '500 23px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(weeklyRecapPeriod(currentRecap), 1130, 65);
 
-    // Trails the period: a note about the service this week, held apart from the
+    // Trails the period: a note about failed calls this week, held apart from the
     // refusal line so the two axes never read as one number.
     drawFailureStamp(context, {
       right: 1130,
@@ -268,7 +268,7 @@
 
     context.fillStyle = currentTheme.accent;
     context.font = '650 25px Inter, ui-sans-serif, system-ui, sans-serif';
-    context.fillText(weeklyRecapIndexLine(currentRecap), 600, 370);
+    context.fillText(weeklyRecapComparisonLine(currentRecap), 600, 370);
 
     drawStandout(
       context,
@@ -510,7 +510,9 @@
   async function copyCaption() {
     status = null;
     try {
-      await navigator.clipboard.writeText(caption);
+      await navigator.clipboard.writeText(
+        weeklyRecapCaption(snapshotRecap, tone, sentiment, productLink?.href ?? null, 'linkedin'),
+      );
       status = 'Weekly caption copied.';
     } catch {
       status = 'Caption copy was blocked. Grant clipboard access and try again.';
@@ -713,8 +715,8 @@
       <section class="composer-guide" aria-labelledby="weekly-composer-title">
         <div>
           <p class="eyebrow">Compare weeks</p>
-          <h3 id="weekly-composer-title">How did Claude Code treat everyone else?</h3>
-          <p>Post the recap. Ask a friend to bring theirs.</p>
+          <h3 id="weekly-composer-title">How did your week compare?</h3>
+          <p>Post the recap. Ask a friend to share theirs.</p>
         </div>
         <div class="composer-buttons">
           <button class="secondary-button" type="button" onclick={() => openComposer('x')}
