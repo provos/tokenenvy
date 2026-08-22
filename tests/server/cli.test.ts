@@ -17,6 +17,7 @@ describe('CLI arguments', () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('Token Envy');
       expect(result.stdout).toContain('--no-open');
+      expect(result.stdout).toContain('install-statusline');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
