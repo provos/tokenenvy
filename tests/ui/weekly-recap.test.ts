@@ -10,7 +10,7 @@ import {
   weeklyRecapFailureStamp,
   weeklyRecapHeadline,
   weeklyRecapImageFilename,
-  weeklyRecapIndexLine,
+  weeklyRecapComparisonLine,
   weeklyRecapObservedWeekdays,
   weeklyRecapPeriod,
   weeklyRecapReady,
@@ -66,9 +66,10 @@ const recap: WeeklyRecapData = {
 
 describe('weekly Token Envy recap', () => {
   it('uses the personal 28-day baseline without claiming a weekly percentile', () => {
-    expect(weeklyRecapHeadline(recap)).toBe('Claude Code kept me moving this week');
-    expect(weeklyRecapIndexLine(recap)).toBe('Speed Index 108 · 8% faster than my prior 28 days');
-    expect(weeklyRecapIndexLine(recap)).not.toContain('percentile');
+    expect(weeklyRecapHeadline(recap)).toBe('Claude behaved this week');
+    expect(weeklyRecapComparisonLine(recap)).toBe('8% faster than my prior 28 days');
+    expect(weeklyRecapComparisonLine(recap)).not.toContain('percentile');
+    expect(weeklyRecapComparisonLine(recap)).not.toContain('Speed Index');
     expect(weeklyRecapPeriod(recap)).toMatch(/Aug 10, 2026 to Aug 14, 2026/);
     expect(weeklyRecapReady(recap)).toBe(true);
     expect(suggestedWeeklySentiment(recap)).toBe(1);
@@ -79,12 +80,16 @@ describe('weekly Token Envy recap', () => {
       1,
       'https://www.npmjs.com/package/tokenenvy',
     );
-    expect(caption).toContain('How did Claude Code treat you this week?');
-    expect(caption).toContain(
-      'No explicit refusal signals this week. Explicit signals only · lower bound.',
-    );
-    expect(caption).toContain('#TokenEnvy');
-    expect(caption).toContain('Built by Security Blueprints, LLC: securityblueprints.io');
+    expect(caption).toContain('Claude behaved this week so far:');
+    expect(caption).toContain('- 72 weekly median effective tok/s');
+    expect(caption).toContain('- 8% faster than my prior 28 days');
+    expect(caption).toContain('- 84 measured requests');
+    expect(caption).toContain('- No explicit refusal signals this week · lower bound');
+    expect(caption).toContain('Measure your week: npx tokenenvy');
+    expect(caption).toContain('Runs locally. Prompts stay private.');
+    expect(caption).not.toContain('#TokenEnvy');
+    expect(caption).not.toContain('Security Blueprints');
+    expect(caption).not.toContain('No API failures');
     expect(caption).not.toContain('93');
   });
 
@@ -93,10 +98,10 @@ describe('weekly Token Envy recap', () => {
     expect(
       sentiments.map((sentiment) => weeklyRecapHeadline(recap, 'friendly', sentiment)),
     ).toEqual([
-      'Claude Code made this a long week',
+      'Claude fought me all week',
       'Claude Code kept me waiting this week',
-      'Claude Code kept a steady pace this week',
-      'Claude Code kept me moving this week',
+      'Claude held steady this week',
+      'Claude behaved this week',
       'Claude Code flew all week',
     ]);
     expect(sentiments.map((sentiment) => weeklyRecapHeadline(recap, 'spicy', sentiment))).toEqual([
@@ -135,13 +140,13 @@ describe('weekly Token Envy recap', () => {
     expect(weeklyRecapRefusalLine(withRefusal)).toBe('1 refusal signal · 1 recovered');
     expect(weeklyRecapRefusalNote(withRefusal)).toBe('Explicit signals only · lower bound');
     expect(weeklyRecapCaption(withRefusal, 'spicy', -1, null)).toContain(
-      '1 refusal signal · 1 recovered. Explicit signals only · lower bound.',
+      '- 1 explicit refusal signal: 1 recovered · lower bound',
     );
     const xCaption = weeklyRecapCaption(withRefusal, 'spicy', -1, null, 'x');
-    expect(xCaption.startsWith('Anthropic made me earn every token this week.')).toBe(true);
-    expect(xCaption).toContain('1 refusal signal: 1 recovered; lower bound.');
-    expect(xCaption).toContain('Local stats; prompts private.');
-    expect(xCaption).toContain('#TokenEnvy · securityblueprints.io');
+    expect(xCaption.startsWith('Anthropic made me earn every token this week so far.')).toBe(true);
+    expect(xCaption).toContain('1 refusal · 1 recovered · lower bound');
+    expect(xCaption).toContain('prompts stay private');
+    expect(xCaption).not.toContain('#TokenEnvy');
     expect(xCaption.length).toBeLessThanOrEqual(250);
 
     const blueskyCaption = weeklyRecapCaption(
@@ -151,16 +156,19 @@ describe('weekly Token Envy recap', () => {
       'https://www.npmjs.com/package/tokenenvy',
       'bluesky',
     );
-    expect(blueskyCaption.startsWith('Anthropic made me earn every token this week.')).toBe(true);
-    expect(blueskyCaption).toContain('1 refusal signal: 1 recovered; lower bound.');
-    expect(blueskyCaption).toContain('#TokenEnvy · securityblueprints.io');
+    expect(blueskyCaption.startsWith('Anthropic made me earn every token this week so far.')).toBe(
+      true,
+    );
+    expect(blueskyCaption).toContain('1 explicit refusal signal: 1 recovered · lower bound');
+    expect(blueskyCaption).toContain('https://www.npmjs.com/package/tokenenvy');
+    expect(blueskyCaption).not.toContain('#TokenEnvy');
     expect(blueskyCaption.length).toBeLessThanOrEqual(300);
     expect(weeklyRecapImageFilename(withRefusal, 'spicy', -1)).toBe(
       'token-envy-week-2026-08-14-spicy-rough.png',
     );
-    expect(weeklyRecapTextReceipt(withRefusal, 'spicy', -1)).toContain(
-      'Explicit signals only · lower bound',
-    );
+    const receipt = weeklyRecapTextReceipt(withRefusal, 'spicy', -1);
+    expect(receipt).toContain('- 1 explicit refusal signal: 1 recovered · lower bound');
+    expect(receipt).toContain('- No API failures recorded this week');
   });
 
   it('renders a separate privacy-safe weekly artifact with clear raw standout labels', () => {
@@ -180,7 +188,7 @@ describe('weekly Token Envy recap', () => {
     expect(normalized).toContain('Slowest observed day');
     expect(normalized).toContain('91 effective tok/s');
     expect(normalized).toContain('54 effective tok/s');
-    expect(normalized).toContain('Measure your week · npx tokenenvy');
+    expect(normalized).toContain('Measure your week: npx tokenenvy');
     expect(normalized).toContain('A Security Blueprints, LLC project · securityblueprints.io');
     expect(normalized).toContain(
       'The card freezes this week and compares it with your own history.',
@@ -232,10 +240,8 @@ describe('weekly Token Envy recap', () => {
       },
     };
 
-    expect(weeklyRecapFailureStamp(withFailures)).toBe('2 calls the service could not complete');
-    expect(weeklyRecapFailureLine(withFailures)).toBe(
-      '2 API failures · 2 overloaded · the service could not complete',
-    );
+    expect(weeklyRecapFailureStamp(withFailures)).toBe('2 API failures');
+    expect(weeklyRecapFailureLine(withFailures)).toBe('2 API failures: 2 overloaded');
     expect(suggestedWeeklySentiment(withFailures)).toBe(0);
     expect(weeklyRecapSentimentDescription(withFailures)).toBe(
       'My prior 28 days suggested Good. 2 API failures that never completed moved it to Neutral. Pick the mood; the numbers stay put.',
@@ -244,12 +250,14 @@ describe('weekly Token Envy recap', () => {
     expect(weeklyRecapRefusalLine(withFailures)).toBe('No explicit refusal signals this week');
 
     const caption = weeklyRecapCaption(withFailures, 'friendly', 0, null);
-    expect(caption).toContain('2 API failures · 2 overloaded · the service could not complete.');
+    expect(caption).toContain('Claude held steady this week so far, failed calls and all:');
+    expect(caption).toContain('- 2 API failures: 2 overloaded');
     expect(weeklyRecapTextReceipt(withFailures, 'friendly', 0)).toContain(
-      '2 API failures · 2 overloaded · the service could not complete',
+      '- 2 API failures: 2 overloaded',
     );
     const xCaption = weeklyRecapCaption(withFailures, 'friendly', 0, null, 'x');
-    expect(xCaption).toContain('2 API failures: 2 overloaded; the service could not complete.');
+    expect(xCaption).toContain('2 API failures');
+    expect(xCaption).not.toContain('the service could not complete');
     expect(xCaption.length).toBeLessThanOrEqual(250);
   });
 
@@ -265,7 +273,7 @@ describe('weekly Token Envy recap', () => {
       },
     };
     expect(suggestedWeeklySentiment(sustained)).toBe(0);
-    expect(weeklyRecapFailureStamp(sustained)).toBe('10 calls the service could not complete');
+    expect(weeklyRecapFailureStamp(sustained)).toBe('10 API failures');
 
     const alsoRefused: WeeklyRecapData = {
       ...sustained,
@@ -316,6 +324,132 @@ describe('weekly Token Envy recap', () => {
       },
     });
     expect(stormy.body).toContain('class="share-failure-stamp"');
-    expect(stormy.body.replace(/\s+/g, ' ')).toContain('10 calls the service could not complete');
+    expect(stormy.body.replace(/\s+/g, ' ')).toContain('10 API failures');
+  });
+
+  it('produces a human, scannable full-week receipt', () => {
+    const example: WeeklyRecapData = {
+      ...recap,
+      throughDate: '2026-08-16',
+      median: 68,
+      requestCount: 17_246,
+      speedIndex: { ...recap.speedIndex, value: 110 },
+      failures: {
+        recorded: true,
+        attempted: 13,
+        overloaded: 10,
+        serverError: 3,
+        affectedDates: [],
+      },
+    };
+
+    expect(
+      weeklyRecapTextReceipt(example, 'friendly', 1, 'https://www.npmjs.com/package/tokenenvy'),
+    ).toBe(`Claude behaved this week, failed calls and all:
+
+- 68 weekly median effective tok/s
+- 10% faster than my prior 28 days
+- 17,246 measured requests
+- No explicit refusal signals this week · lower bound
+- 13 API failures: 10 overloaded · 3 server faults
+
+Measure your week: npx tokenenvy
+Runs locally. Prompts stay private.
+
+https://www.npmjs.com/package/tokenenvy`);
+
+    const linkedin = weeklyRecapCaption(
+      example,
+      'friendly',
+      1,
+      'https://www.npmjs.com/package/tokenenvy',
+      'linkedin',
+    );
+    expect(linkedin).toContain('How did your week compare?\nMeasure your week: npx tokenenvy');
+
+    const x = weeklyRecapCaption(example, 'friendly', 1, null, 'x');
+    expect(x).toContain('68 median effective tok/s · 10% faster than my prior 28 days');
+    expect(x).toContain('17.2K requests');
+    expect(x).toContain('0 explicit refusal signals · lower bound');
+    expect(x).toContain('13 API failures');
+    expect(x).toContain('Run yours: npx tokenenvy · prompts stay private');
+    expect(x.length).toBeLessThanOrEqual(250);
+
+    const bluesky = weeklyRecapCaption(
+      example,
+      'friendly',
+      1,
+      'https://www.npmjs.com/package/tokenenvy',
+      'bluesky',
+    );
+    expect(bluesky).toContain('13 API failures: 10 overloaded · 3 server faults');
+    expect(bluesky).toContain('https://www.npmjs.com/package/tokenenvy');
+    expect(bluesky.length).toBeLessThanOrEqual(300);
+  });
+
+  it('uses plain baseline states in shared text', () => {
+    expect(
+      weeklyRecapComparisonLine({
+        ...recap,
+        speedIndex: { ...recap.speedIndex, value: 100 },
+      }),
+    ).toBe('Matched my prior 28 days');
+    expect(
+      weeklyRecapComparisonLine({
+        ...recap,
+        speedIndex: { ...recap.speedIndex, eligible: false, value: null },
+      }),
+    ).toBe('My 28-day baseline is still building');
+  });
+
+  it('keeps every voice and mood within social limits without dropping the core result', () => {
+    const crowded: WeeklyRecapData = {
+      ...recap,
+      requestCount: 987_654_321,
+      median: 123_456,
+      refusals: {
+        recorded: true,
+        attempted: 999,
+        recovered: 333,
+        userVisible: 333,
+        unknown: 333,
+        affectedDates: [],
+      },
+      failures: {
+        recorded: true,
+        attempted: 999,
+        overloaded: 666,
+        serverError: 333,
+        affectedDates: [],
+      },
+    };
+
+    for (const tone of ['friendly', 'spicy'] as const) {
+      for (const sentiment of [-2, -1, 0, 1, 2] as const) {
+        const x = weeklyRecapCaption(crowded, tone, sentiment, null, 'x');
+        expect(x.length).toBeLessThanOrEqual(250);
+        expect(x).toContain('123.5K median effective tok/s');
+        expect(x).toContain('lower bound');
+        expect(x).toContain('npx tokenenvy');
+
+        const bluesky = weeklyRecapCaption(
+          crowded,
+          tone,
+          sentiment,
+          'https://www.npmjs.com/package/tokenenvy',
+          'bluesky',
+        );
+        expect(bluesky.length).toBeLessThanOrEqual(300);
+        expect(bluesky).toContain('123.5K median effective tok/s');
+        expect(bluesky).toContain('lower bound');
+        expect(bluesky).toContain('https://www.npmjs.com/package/tokenenvy');
+      }
+    }
+
+    const longUrl = `https://example.com/${'share/'.repeat(80)}`;
+    const bounded = weeklyRecapCaption(crowded, 'spicy', -2, longUrl, 'bluesky');
+    expect(bounded.length).toBeLessThanOrEqual(300);
+    expect(bounded).not.toContain(longUrl);
+    expect(bounded).toContain('123.5K median effective tok/s');
   });
 });
