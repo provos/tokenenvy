@@ -191,7 +191,7 @@ try {
   }
 
   const help = run(executable, ['--help'], { cwd: packageDirectory });
-  if (!help.includes('--logs PATH') || !help.includes('statusline'))
+  if (!help.includes('--logs PATH') || !help.includes('install-statusline'))
     throw new Error('Installed CLI help is incomplete');
 
   const port = await unusedPort();

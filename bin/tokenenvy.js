@@ -3,10 +3,13 @@
 import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import {
+  chmodSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -20,12 +23,24 @@ const DEFAULT_PORT = 4173;
 const MAX_STDIN_BYTES = 1024 * 1024;
 
 /** @typedef {{ usedPercentage: number, resetsAt: string }} QuotaWindow */
-/** @typedef {{ fiveHour?: QuotaWindow, sevenDay?: QuotaWindow, observedAt: string }} QuotaSample */
-/** @typedef {{ command: string, logs: string[], port: number, timezone: string, open: boolean, rescan: boolean, help: boolean }} CliOptions */
+/** @typedef {{ fiveHour?: QuotaWindow, sevenDay?: QuotaWindow, model?: string, observedAt: string }} QuotaSample */
+/** @typedef {'server' | 'statusline' | 'install-statusline'} CliCommand */
+/** @typedef {{ command: CliCommand, logs: string[], port: number, timezone: string, open: boolean, rescan: boolean, help: boolean }} CliOptions */
+/** @typedef {'installed' | 'missing' | 'foreign' | 'unknown'} StatuslineHookStateName */
+/** @typedef {{ state: StatuslineHookStateName, settingsPath: string }} StatuslineHookState */
+/** @typedef {'installed' | 'updated' | 'already-installed' | 'refused' | 'error'} InstallStatuslineStatus */
+/** @typedef {{ status: InstallStatuslineStatus, settingsPath: string, command: string | null, message: string, npxCache?: boolean }} InstallStatuslineResult */
+/** @typedef {{ env?: NodeJS.ProcessEnv, executablePath?: string }} InstallOptions */
 
 export function stateDirectory(env = process.env) {
   if (env.TOKENENVY_DATA_DIR) return resolve(expandHome(env.TOKENENVY_DATA_DIR));
   return join(homedir(), '.tokenenvy');
+}
+
+/** Resolve the user-level Claude Code settings path, honoring CLAUDE_CONFIG_DIR. */
+export function claudeSettingsPath(env = process.env) {
+  if (env.CLAUDE_CONFIG_DIR) return join(resolve(env.CLAUDE_CONFIG_DIR), 'settings.json');
+  return join(homedir(), '.claude', 'settings.json');
 }
 
 /** @param {string} value */
@@ -58,6 +73,7 @@ function usage() {
 Usage:
   tokenenvy [--logs PATH]... [--port PORT] [--timezone ZONE] [--no-open] [--rescan]
   tokenenvy statusline
+  tokenenvy install-statusline
 
 Options:
   --logs PATH       Claude projects log root; repeat for more roots (default: ~/.claude/projects)
@@ -66,6 +82,10 @@ Options:
   --no-open         Do not open the dashboard in a browser
   --rescan          Re-read live transcripts while preserving archived history
   -h, --help        Show this help
+
+Commands:
+  statusline            Read Claude Code status JSON on stdin (invoked by Claude Code)
+  install-statusline    Install the statusLine hook into ~/.claude/settings.json
 `;
 }
 
@@ -83,9 +103,9 @@ export function parseArgs(argv) {
   };
 
   const args = [...argv];
-  if (args[0] === 'statusline') {
-    options.command = 'statusline';
-    args.shift();
+  const subcommands = ['statusline', 'install-statusline'];
+  if (typeof args[0] === 'string' && subcommands.includes(args[0])) {
+    options.command = /** @type {CliCommand} */ (args.shift());
   }
 
   for (let index = 0; index < args.length; index += 1) {
@@ -102,6 +122,9 @@ export function parseArgs(argv) {
 
   if (options.command === 'statusline' && args.length > 0) {
     throw new Error('The statusline command does not accept server options.');
+  }
+  if (options.command === 'install-statusline' && args.length > 0) {
+    throw new Error('The install-statusline command does not accept options.');
   }
   options.logs = normalizeLogRoots(
     options.logs.length > 0 ? options.logs : [join(homedir(), '.claude', 'projects')],
@@ -134,6 +157,244 @@ function parseTimezone(value) {
   }
 }
 
+/**
+ * Resolve the status-line command string from the entry point that is running right now.
+ * Always an absolute, quoted path so a GUI-launched Claude Code with a minimal PATH still works.
+ * @param {string} [executablePath]
+ * @returns {{ command: string, npxCache: boolean } | null}
+ */
+function resolveStatuslineEntry(executablePath = process.argv[1]) {
+  if (!executablePath) return null;
+  let entryPath;
+  try {
+    if (lstatSync(executablePath).isSymbolicLink()) {
+      // npm global installs invoke through a stable bin symlink; keep it as invoked so the
+      // recorded hook survives in-place package upgrades.
+      entryPath = resolve(executablePath);
+    } else {
+      const real = realpathSync(executablePath);
+      const suffixes = [`${sep}bin${sep}launch.js`, `${sep}bin${sep}tokenenvy.js`];
+      if (!suffixes.some((suffix) => real.endsWith(suffix))) return null;
+      entryPath = real;
+    }
+  } catch {
+    return null;
+  }
+  const npxCache = entryPath.includes('/_npx/') || entryPath.includes(`${sep}_npx${sep}`);
+  const quoted = `"${entryPath}"`;
+  const command =
+    platform() === 'win32' ? `"${process.execPath}" ${quoted} statusline` : `${quoted} statusline`;
+  return { command, npxCache };
+}
+
+/** Return the status-line command to install for the running entry point, or null. @param {string} [executablePath] */
+export function statuslineCommand(executablePath = process.argv[1]) {
+  const entry = resolveStatuslineEntry(executablePath);
+  return entry ? entry.command : null;
+}
+
+/**
+ * Report whether a status-line command string invokes the tokenenvy statusline helper.
+ * Both a tokenenvy executable and a standalone statusline argument must appear.
+ * @param {unknown} value
+ */
+export function isTokenenvyStatuslineCommand(value) {
+  if (typeof value !== 'string') return false;
+  const tokens = value.split(/[\s"'`;&|<>()$]+/).filter(Boolean);
+  const invokesHelper = tokens.some((token) => {
+    // Normalize Windows separators so both slash styles share the checks below.
+    const normalized = token.replace(/\\/g, '/');
+    const basename = normalized.slice(normalized.lastIndexOf('/') + 1);
+    return (
+      ['tokenenvy', 'tokenenvy.js', 'tokenenvy.cmd', 'tokenenvy.exe', 'tokenenvy.ps1'].includes(
+        basename,
+      ) ||
+      normalized.endsWith('/bin/launch.js') ||
+      normalized.endsWith('/bin/tokenenvy.js')
+    );
+  });
+  return invokesHelper && tokens.includes('statusline');
+}
+
+/** Detect the status-line hook without ever throwing on an unreadable settings file. @param {NodeJS.ProcessEnv} [env] @returns {StatuslineHookState} */
+export function readStatuslineHookState(env = process.env) {
+  const settingsPath = claudeSettingsPath(env);
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+      return { state: 'missing', settingsPath };
+    return { state: 'unknown', settingsPath };
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings))
+    return { state: 'unknown', settingsPath };
+  const document = /** @type {Record<string, unknown>} */ (settings);
+  if (document.statusLine === undefined) return { state: 'missing', settingsPath };
+  if (typeof document.statusLine !== 'object' || document.statusLine === null)
+    return { state: 'unknown', settingsPath };
+  const command = /** @type {Record<string, unknown>} */ (document.statusLine).command;
+  if (typeof command !== 'string') return { state: 'unknown', settingsPath };
+  return {
+    state: isTokenenvyStatuslineCommand(command) ? 'installed' : 'foreign',
+    settingsPath,
+  };
+}
+
+/** Install the statusLine hook into the user-level Claude Code settings file. @param {InstallOptions} [options] @returns {InstallStatuslineResult} */
+export function installStatuslineHook({
+  env = process.env,
+  executablePath = process.argv[1],
+} = {}) {
+  const settingsPath = claudeSettingsPath(env);
+  const entry = resolveStatuslineEntry(executablePath);
+  if (!entry) {
+    return {
+      status: 'error',
+      settingsPath,
+      command: null,
+      message:
+        'Could not determine the tokenenvy executable path.\n' +
+        `Add the statusLine entry to ${settingsPath} manually with "command": "tokenenvy statusline".`,
+    };
+  }
+
+  let raw;
+  try {
+    raw = readFileSync(settingsPath, 'utf8');
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) {
+      return {
+        status: 'error',
+        settingsPath,
+        command: entry.command,
+        message:
+          `Could not read ${settingsPath}. Token Envy left the file unchanged.\n` +
+          'Fix or remove the file, then run `tokenenvy install-statusline` again.',
+      };
+    }
+  }
+
+  /** @type {Record<string, unknown>} */
+  const settings = {};
+  if (raw !== undefined) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Parse failure leaves parsed undefined, caught below.
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        status: 'error',
+        settingsPath,
+        command: entry.command,
+        message:
+          `Could not parse ${settingsPath} as JSON. Token Envy left the file unchanged.\n` +
+          'Fix or remove the file, then run `tokenenvy install-statusline` again.',
+      };
+    }
+    Object.assign(settings, parsed);
+  }
+
+  /** @type {'installed' | 'updated'} */
+  let outcome = 'installed';
+  if (settings.statusLine !== undefined) {
+    const statusLine = settings.statusLine;
+    const record =
+      typeof statusLine === 'object' && statusLine !== null && !Array.isArray(statusLine)
+        ? /** @type {Record<string, unknown>} */ (statusLine)
+        : null;
+    if (
+      record !== null &&
+      typeof record.command === 'string' &&
+      isTokenenvyStatuslineCommand(record.command) &&
+      (record.type === undefined || record.type === 'command')
+    ) {
+      if (record.command === entry.command) {
+        return {
+          status: 'already-installed',
+          settingsPath,
+          command: entry.command,
+          message: `The Token Envy status-line hook is already installed in ${settingsPath}.`,
+        };
+      }
+      // A moved checkout or fresh npm link left the hook pointing at a dead path; repoint it.
+      record.command = entry.command;
+      outcome = 'updated';
+    } else {
+      return {
+        status: 'refused',
+        settingsPath,
+        command: entry.command,
+        message:
+          `Refusing to modify ${settingsPath}: it already defines a statusLine command.\n` +
+          'To measure rate limits, call the Token Envy helper from your existing command:\n' +
+          `  ${entry.command}`,
+      };
+    }
+  } else {
+    settings.statusLine = { type: 'command', command: entry.command };
+  }
+
+  const directory = dirname(settingsPath);
+  let mode = 0o600;
+  try {
+    mode = statSync(settingsPath).mode & 0o777;
+  } catch {
+    // Newly created settings files start private; existing modes are preserved.
+  }
+  const pendingPath = join(directory, `.settings-${randomBytes(8).toString('hex')}.tmp`);
+  try {
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      writeFileSync(pendingPath, `${JSON.stringify(settings, null, 2)}\n`, { mode });
+      // writeFileSync masks the mode with the process umask; chmod restores the preserved mode.
+      chmodSync(pendingPath, mode);
+      renameSync(pendingPath, settingsPath);
+    } finally {
+      try {
+        unlinkSync(pendingPath);
+      } catch {
+        // The atomic rename already removed the temporary file.
+      }
+    }
+  } catch (error) {
+    return {
+      status: 'error',
+      settingsPath,
+      command: entry.command,
+      message: `Could not write ${settingsPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }. The file was left unchanged.`,
+    };
+  }
+  const note = entry.npxCache
+    ? '\nNote: installed from an npx cache. Re-run this command after upgrading tokenenvy.'
+    : '';
+  if (outcome === 'updated') {
+    return {
+      status: outcome,
+      settingsPath,
+      command: entry.command,
+      ...(entry.npxCache ? { npxCache: true } : {}),
+      message:
+        `Updated the Token Envy status-line hook in ${settingsPath}.\n` +
+        `Command: ${entry.command}${note}`,
+    };
+  }
+  return {
+    status: 'installed',
+    settingsPath,
+    command: entry.command,
+    ...(entry.npxCache ? { npxCache: true } : {}),
+    message:
+      `Installed the Token Envy status-line hook in ${settingsPath}.\n` +
+      `Command: ${entry.command}\n` +
+      `Restart Claude Code to activate rate-limit measurement.${note}`,
+  };
+}
+
 /** @param {unknown} value @returns {QuotaWindow | null} */
 function normalizeWindow(value) {
   if (!value || typeof value !== 'object') return null;
@@ -152,7 +413,9 @@ function normalizeWindow(value) {
 }
 
 /**
- * Return only the two documented rate-limit windows; all other stdin fields are discarded.
+ * Return only the two documented rate-limit windows plus the model id; all
+ * other stdin fields are discarded. Quota systems differ per model, so the id
+ * keeps samples from interleaving into one bucket.
  * @param {unknown} input
  * @param {Date} now
  * @returns {QuotaSample | null}
@@ -170,9 +433,11 @@ export function extractRateLimits(input, now = new Date()) {
   const fiveHour = normalizeWindow(limits.five_hour ?? limits.fiveHour ?? limits.five_hour_window);
   const sevenDay = normalizeWindow(limits.seven_day ?? limits.sevenDay ?? limits.seven_day_window);
   if (!fiveHour && !sevenDay) return null;
+  const model = typeof document.model?.id === 'string' ? document.model.id : null;
   return {
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
+    ...(model ? { model } : {}),
     observedAt: now.toISOString(),
   };
 }
@@ -247,6 +512,15 @@ export async function runStatusline() {
   if (text) process.stdout.write(text);
 }
 
+/** Install the status-line hook; never starts the server or touches ~/.tokenenvy. @param {InstallOptions} [options] @returns {Promise<number>} */
+export async function runInstallStatusline(options = {}) {
+  const result = installStatuslineHook(options);
+  const success = ['installed', 'updated', 'already-installed'].includes(result.status);
+  const stream = success ? process.stdout : process.stderr;
+  stream.write(`${result.message}\n`);
+  return success ? 0 : 1;
+}
+
 /** @param {number} port */
 async function assertPortAvailable(port) {
   await new Promise((resolvePromise, reject) => {
@@ -263,6 +537,24 @@ function openBrowser(url) {
   const child = spawn(command, args, { detached: true, stdio: 'ignore' });
   child.once('error', () => {});
   child.unref();
+}
+
+/** Map the detected status-line hook state to the server startup notice. @param {NodeJS.ProcessEnv} [env] @returns {string[]} */
+export function startupStatuslineLines(env = process.env) {
+  const { state, settingsPath } = readStatuslineHookState(env);
+  if (state === 'installed')
+    return ['Status-line hook installed: rate-limit measurement is active.'];
+  if (state === 'missing')
+    return [
+      'Rate-limit measurement is unavailable: the Claude Code status-line hook is not installed.',
+      'Run `tokenenvy install-statusline` to install it.',
+    ];
+  if (state === 'foreign')
+    return [
+      `A different status-line command is configured in ${settingsPath}.`,
+      'To measure rate limits, call the Token Envy helper from that command.',
+    ];
+  return [`Could not read ${settingsPath}; the status-line hook status is unknown.`];
 }
 
 /** @param {CliOptions} options */
@@ -300,7 +592,7 @@ export async function runServer(options) {
   const privateUrl = `${url}/?token=${encodeURIComponent(bootstrapToken)}`;
   process.stdout.write(`Token Envy is running at ${url}\n`);
   process.stdout.write(`Private dashboard URL: ${privateUrl}\n`);
-  process.stdout.write(`Status-line setup: ${process.argv[1]} statusline\n`);
+  for (const line of startupStatuslineLines()) process.stdout.write(`${line}\n`);
 
   if (options.open) setTimeout(() => openBrowser(privateUrl), 250);
 
@@ -346,6 +638,10 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (options.help) {
     process.stdout.write(usage());
+    return;
+  }
+  if (options.command === 'install-statusline') {
+    process.exitCode = await runInstallStatusline({});
     return;
   }
   if (options.command === 'statusline') await runStatusline();

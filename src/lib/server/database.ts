@@ -5,7 +5,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { normalizeModelFamily, outputSizeStratum } from '../core/model';
 import type { ParsedEvent } from '../core/parser';
-import type { ModelFamily, QuotaResponse, ScanStatus } from '../types';
+import type { ModelFamily, QuotaModelWindows, QuotaResponse, ScanStatus } from '../types';
 import { PLATFORM_FAILURE_CLASSES } from '../types';
 
 export interface DatabaseOptions {
@@ -77,6 +77,7 @@ export interface StoredFailure {
 export interface QuotaSampleInput {
   fiveHour?: { usedPercentage: number; resetsAt: string | number | Date } | null;
   sevenDay?: { usedPercentage: number; resetsAt: string | number | Date } | null;
+  model?: string | null;
   observedAt?: string | number | Date;
 }
 
@@ -275,7 +276,8 @@ export class Database {
         observed_at INTEGER NOT NULL,
         used_percentage REAL NOT NULL,
         resets_at INTEGER NOT NULL,
-        PRIMARY KEY(window, observed_at)
+        model TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY(window, observed_at, model)
       );
     `);
     const eventColumns = this.db.pragma('table_info(events)') as Array<{ name: string }>;
@@ -285,6 +287,39 @@ export class Database {
     const version = Number(this.db.pragma('user_version', { simple: true })) || 0;
     this.addColumnIfMissing('files', 'root_id', "TEXT NOT NULL DEFAULT ''");
     this.addColumnIfMissing('events', 'failure_class', 'TEXT');
+    // Samples written before per-model tracking carry no model and stay visible
+    // through the overall windows on QuotaResponse alone.
+    this.addColumnIfMissing('quota_samples', 'model', 'TEXT');
+    // `model` joined the primary key when per-model tracking landed: under the
+    // old (window, observed_at) key, INSERT OR REPLACE silently deleted a
+    // different model's sample that landed in the same millisecond. A nullable
+    // key column would not fix that either, because NULLs never conflict in
+    // SQLite, so repeated unattributed samples would duplicate instead of
+    // replace. Unattributed samples are therefore stored as '' and getQuota's
+    // per-model breakdown filters them out; the overall windows keep them.
+    const quotaColumns = this.db.pragma('table_info(quota_samples)') as Array<{
+      name: string;
+      pk: number;
+    }>;
+    if ((quotaColumns.find(({ name }) => name === 'model')?.pk ?? 0) === 0) {
+      this.db.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE quota_samples_widened (
+            window TEXT NOT NULL,
+            observed_at INTEGER NOT NULL,
+            used_percentage REAL NOT NULL,
+            resets_at INTEGER NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(window, observed_at, model)
+          );
+          INSERT INTO quota_samples_widened(window, observed_at, used_percentage, resets_at, model)
+            SELECT window, observed_at, used_percentage, resets_at, COALESCE(model, '')
+            FROM quota_samples;
+          DROP TABLE quota_samples;
+          ALTER TABLE quota_samples_widened RENAME TO quota_samples;
+        `);
+      })();
+    }
     // Defaulting to "the family is real" matches every row written before the
     // column existed: `family` has always been non-null, so an older index has
     // no rows that are known to name no model. The next rebuild decides the
@@ -323,6 +358,12 @@ export class Database {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS events_failure_timestamp_idx
         ON events(timestamp_ms) WHERE failure_class IS NOT NULL;
+      -- Also after the quota_samples rebuild, which drops the old table and
+      -- every index on it. Ordered (model, window, observed_at) so getQuota's
+      -- per-model latest-sample lookup reads it as a covering index instead of
+      -- sorting the whole table per quota request.
+      CREATE INDEX IF NOT EXISTS quota_samples_model_window_idx
+        ON quota_samples(model, window, observed_at);
     `);
     this.db.pragma('optimize');
   }
@@ -336,7 +377,15 @@ export class Database {
   private addColumnIfMissing(table: string, column: string, definition: string): boolean {
     const columns = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
     if (columns.some(({ name }) => name === column)) return false;
-    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    } catch (error) {
+      // Two processes opening the same file can both pass the check above and
+      // race the ALTER. Whoever loses sees the winner's column; report it as
+      // added so the caller still runs its (idempotent) backfill.
+      const after = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+      if (!after.some(({ name }) => name === column)) throw error;
+    }
     return true;
   }
 
@@ -1110,8 +1159,13 @@ export class Database {
   recordQuotaSample(sample: QuotaSampleInput): void {
     const observedAt = toMillis(sample.observedAt ?? Date.now());
     if (!Number.isFinite(observedAt)) throw new TypeError('Invalid quota observation time');
+    // The endpoint already sanitizes; direct database callers get the same
+    // clamping so a stray long id can never land in the index. An absent model
+    // becomes the '' sentinel so inserts never violate the NOT NULL key column.
+    const rawModel = typeof sample.model === 'string' ? sample.model.trim() : '';
+    const model = rawModel ? rawModel.slice(0, 64) : '';
     const insert = this.db.prepare(
-      'INSERT OR REPLACE INTO quota_samples(window, observed_at, used_percentage, resets_at) VALUES (?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO quota_samples(window, observed_at, used_percentage, resets_at, model) VALUES (?, ?, ?, ?, ?)',
     );
     this.db.transaction(() => {
       for (const [window, value] of [
@@ -1121,7 +1175,13 @@ export class Database {
         if (!value) continue;
         const resetsAt = toMillis(value.resetsAt);
         if (!Number.isFinite(resetsAt) || !Number.isFinite(value.usedPercentage)) continue;
-        insert.run(window, observedAt, Math.max(0, Math.min(100, value.usedPercentage)), resetsAt);
+        insert.run(
+          window,
+          observedAt,
+          Math.max(0, Math.min(100, value.usedPercentage)),
+          resetsAt,
+          model,
+        );
       }
       // Retain enough history for reset-boundary diagnostics without unbounded growth.
       this.db
@@ -1132,38 +1192,69 @@ export class Database {
 
   getQuota(now: Date = new Date()): QuotaResponse {
     type Row = {
+      model: string;
       window: 'five_hour' | 'seven_day';
       observed_at: number;
       used_percentage: number;
       resets_at: number;
     };
-    const rows = this.db
+    // The overall windows stay the latest sample per window across all models,
+    // so pre-model rows and status lines without a model id keep surfacing.
+    const overallRows = this.db
       .prepare(
         `
-        SELECT q.window, q.observed_at, q.used_percentage, q.resets_at
+        SELECT q.model, q.window, q.observed_at, q.used_percentage, q.resets_at
         FROM quota_samples q
         JOIN (SELECT window, MAX(observed_at) latest FROM quota_samples GROUP BY window) latest
           ON latest.window = q.window AND latest.latest = q.observed_at
       `,
       )
       .all() as Row[];
-    const map = new Map(rows.map((row) => [row.window, row]));
-    const format = (row: Row | undefined) =>
-      row
-        ? {
-            usedPercentage: row.used_percentage,
-            resetsAt: new Date(row.resets_at).toISOString(),
-            observedAt: new Date(row.observed_at).toISOString(),
-            stale: now.getTime() - row.observed_at > 15 * 60_000 || now.getTime() >= row.resets_at,
-          }
-        : null;
-    const fiveHour = format(map.get('five_hour'));
-    const sevenDay = format(map.get('seven_day'));
+    const modelRows = this.db
+      .prepare(
+        `
+        SELECT q.model, q.window, q.observed_at, q.used_percentage, q.resets_at
+        FROM quota_samples q
+        JOIN (
+          SELECT model, window, MAX(observed_at) latest
+          FROM quota_samples
+          WHERE model <> ''
+          GROUP BY model, window
+        ) latest
+          ON latest.model = q.model AND latest.window = q.window AND latest.latest = q.observed_at
+      `,
+      )
+      .all() as Row[];
+    const format = (row: Row) => ({
+      usedPercentage: row.used_percentage,
+      resetsAt: new Date(row.resets_at).toISOString(),
+      observedAt: new Date(row.observed_at).toISOString(),
+      stale: now.getTime() - row.observed_at > 15 * 60_000 || now.getTime() >= row.resets_at,
+    });
+    const latest = (rows: Row[], window: Row['window']) =>
+      rows.find((row) => row.window === window) ?? null;
+    const overallFiveHour = latest(overallRows, 'five_hour');
+    const overallSevenDay = latest(overallRows, 'seven_day');
+    const fiveHour = overallFiveHour ? format(overallFiveHour) : null;
+    const sevenDay = overallSevenDay ? format(overallSevenDay) : null;
+    // Samples without a model id are stored under the '' sentinel and excluded
+    // above; they belong to the overall windows only, and grouping them under
+    // an invented label would invent a quota system that never sent one.
+    const models = new Map<string, QuotaModelWindows>();
+    for (const row of modelRows) {
+      const entry = models.get(row.model) ?? { model: row.model, fiveHour: null, sevenDay: null };
+      if (row.window === 'five_hour') entry.fiveHour = format(row);
+      else entry.sevenDay = format(row);
+      models.set(row.model, entry);
+    }
     return {
       available: fiveHour != null || sevenDay != null,
       source: fiveHour != null || sevenDay != null ? 'statusline' : null,
       fiveHour,
       sevenDay,
+      models: [...models.values()].sort((a, b) =>
+        a.model < b.model ? -1 : a.model > b.model ? 1 : 0,
+      ),
     };
   }
 }

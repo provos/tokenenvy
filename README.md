@@ -49,14 +49,15 @@ tokenenvy \
 
 ### CLI options
 
-| Option            | Meaning                                                                      |
-| ----------------- | ---------------------------------------------------------------------------- |
-| `--logs PATH`     | Replace the transcript root; repeat for multiple roots                       |
-| `--port PORT`     | Listen on this loopback port; default is `4173`                              |
-| `--timezone ZONE` | Set calendar-day boundaries with an IANA timezone                            |
-| `--no-open`       | Suppress the automatic browser launch                                        |
-| `--rescan`        | Re-read live transcripts while preserving archived history and usage samples |
-| `-h`, `--help`    | Print CLI help                                                               |
+| Option               | Meaning                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `--logs PATH`        | Replace the transcript root; repeat for multiple roots                       |
+| `--port PORT`        | Listen on this loopback port; default is `4173`                              |
+| `--timezone ZONE`    | Set calendar-day boundaries with an IANA timezone                            |
+| `--no-open`          | Suppress the automatic browser launch                                        |
+| `--rescan`           | Re-read live transcripts while preserving archived history and usage samples |
+| `-h`, `--help`       | Print CLI help                                                               |
+| `install-statusline` | Install the Token Envy status-line hook into `~/.claude/settings.json`       |
 
 The watcher updates the index until you stop the server with Ctrl-C. The derived SQLite index, pseudonymization key, and content-free history live in `~/.tokenenvy`. After 24 hours, stable summaries enter the archive and survive upstream transcript cleanup. Set `TOKENENVY_DATA_DIR` to change this location.
 
@@ -66,20 +67,17 @@ A direct launch of the built server requires `TOKENENVY_LOGS`, formatted as a JS
 
 Transcript output measures observed usage. Anthropic sets account quota across Claude web, Desktop, and Code.
 
-Claude Code can send current five-hour and seven-day percentages to a status-line command. Add this command to your Claude settings:
+Claude Code can send current five-hour and seven-day percentages to a status-line command. Install the Token Envy helper with:
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "tokenenvy statusline"
-  }
-}
+```bash
+npx tokenenvy install-statusline
 ```
 
-Token Envy leaves `~/.claude/settings.json` unchanged. If another status-line command already exists, call the helper from that command.
+Use `tokenenvy install-statusline` when the package is installed globally. The installer writes a `statusLine` entry into `~/.claude/settings.json` (honoring `CLAUDE_CONFIG_DIR`), quotes the executable path so the hook keeps working when Claude Code starts without your shell PATH, and preserves every other key.
 
-The helper extracts valid `five_hour` and `seven_day` fields from Claude's JSON and posts them to the loopback server with a per-launch secret. A 150 ms timeout protects the Claude Code process. Samples expire after 15 minutes or at their reset time.
+Token Envy touches `~/.claude/settings.json` only when you run `install-statusline`, and only the `statusLine` key. If a non-Token-Envy status-line command already exists, the installer refuses to replace it and prints the helper invocation to call from that command yourself.
+
+The helper extracts valid `five_hour` and `seven_day` fields from Claude's JSON and posts them to the loopback server with a per-launch secret. A 150 ms timeout protects the Claude Code process. Samples expire after 15 minutes or at their reset time. Each sample also records the model id from the payload, so the dashboard can report rate limits per model instead of blending quota systems.
 
 ## Effective output speed
 
@@ -133,6 +131,8 @@ tokenenvy
 ```
 
 Start the development server with `npm run dev`.
+
+`npm link` exposes the CLI through a bin symlink, and `tokenenvy install-statusline` records that symlink path so the installed hook keeps working across rebuilds. After moving this checkout, run `npm link` again and re-run `tokenenvy install-statusline`; it updates the recorded hook path automatically.
 
 Run the checks before publishing:
 

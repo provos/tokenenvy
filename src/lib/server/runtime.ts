@@ -159,6 +159,7 @@ export class DashboardRuntime {
   recordQuotaSample(sample: {
     fiveHour?: { usedPercentage: number; resetsAt: string };
     sevenDay?: { usedPercentage: number; resetsAt: string };
+    model?: string | null;
     observedAt?: string;
   }): void {
     this.database.recordQuotaSample(sample);
