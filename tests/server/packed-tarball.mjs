@@ -106,8 +106,64 @@ mkdirSync(packageDirectory);
 mkdirSync(firstLogsDirectory);
 mkdirSync(secondLogsDirectory);
 mkdirSync(stateDirectory);
-writeFileSync(join(firstLogsDirectory, 'first.jsonl'), '{}\n');
-writeFileSync(join(secondLogsDirectory, 'second.jsonl'), '{}\n');
+writeFileSync(
+  join(firstLogsDirectory, 'first.jsonl'),
+  [
+    {
+      type: 'user',
+      uuid: 'completed-user',
+      parentUuid: null,
+      sessionId: 'completed-session',
+      timestamp: '2020-08-14T12:00:00.000Z',
+      message: { content: 'PRIVATE_PACKAGED_PROMPT' },
+    },
+    {
+      type: 'assistant',
+      uuid: 'completed-assistant',
+      parentUuid: 'completed-user',
+      requestId: 'completed-request',
+      sessionId: 'completed-session',
+      timestamp: '2020-08-14T12:00:02.000Z',
+      message: {
+        model: 'claude-sonnet-4-20250514',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'PRIVATE_PACKAGED_RESPONSE' }],
+        usage: { input_tokens: 100, output_tokens: 20 },
+      },
+    },
+  ]
+    .map((row) => JSON.stringify(row))
+    .join('\n') + '\n',
+);
+writeFileSync(
+  join(secondLogsDirectory, 'second.jsonl'),
+  [
+    {
+      type: 'user',
+      uuid: 'incomplete-user',
+      parentUuid: null,
+      sessionId: 'incomplete-session',
+      timestamp: '2020-08-14T13:00:00.000Z',
+      message: { content: 'PRIVATE_INCOMPLETE_PROMPT' },
+    },
+    {
+      type: 'assistant',
+      uuid: 'incomplete-assistant',
+      parentUuid: 'incomplete-user',
+      requestId: 'incomplete-request',
+      sessionId: 'incomplete-session',
+      timestamp: '2020-08-14T13:00:02.000Z',
+      message: {
+        model: 'claude-sonnet-4-20250514',
+        stop_reason: null,
+        content: [{ type: 'text', text: 'PRIVATE_INCOMPLETE_RESPONSE' }],
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+    },
+  ]
+    .map((row) => JSON.stringify(row))
+    .join('\n') + '\n',
+);
 
 let server;
 try {
@@ -233,6 +289,23 @@ try {
     throw new Error('Installed server did not accept its production session cookie');
   }
   await waitForScanner(url, cookie, server);
+  const qualityResponse = await fetch(`${url}/api/v1/data-quality`, {
+    headers: { cookie },
+    signal: AbortSignal.timeout(2_000),
+  });
+  if (!qualityResponse.ok) {
+    throw new Error(`Installed server did not serve data quality (${qualityResponse.status})`);
+  }
+  const quality = await qualityResponse.json();
+  if (
+    quality.requests !== 2 ||
+    quality.includedRequests !== 1 ||
+    quality.exclusions?.incomplete_response !== 1
+  ) {
+    throw new Error(
+      `Installed scanner did not quarantine the incomplete response: ${JSON.stringify(quality)}`,
+    );
+  }
 
   const connection = JSON.parse(readFileSync(join(stateDirectory, 'server.json'), 'utf8'));
   if (connection.url !== url || typeof connection.secret !== 'string') {

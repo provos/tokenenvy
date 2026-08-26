@@ -135,6 +135,13 @@ export class Scanner {
       lastError: null,
     });
     try {
+      let replacementSnapshotTaken = false;
+      let replacementSnapshotChanged = false;
+      const archiveBeforeFirstReplacement = () => {
+        if (replacementSnapshotTaken) return;
+        replacementSnapshotTaken = true;
+        replacementSnapshotChanged = this.database.archiveStable(Date.now());
+      };
       const activeRootIds = new Set(this.roots.map((root) => this.database.rootId(root)));
       const sourceRecords = this.database.listSources();
       const successfulRootIds = new Set<string>();
@@ -165,7 +172,9 @@ export class Scanner {
         try {
           for (const file of files) {
             present.add(this.database.sourceId(file));
-            changed = (await this.scanFileInternal(file, false, root)) || changed;
+            changed =
+              (await this.scanFileInternal(file, false, root, archiveBeforeFirstReplacement)) ||
+              changed;
           }
           successfulRootIds.add(rootId);
           openedRootIds.add(rootId);
@@ -183,7 +192,7 @@ export class Scanner {
       });
       const retracted = this.database.retractSources(missingSources);
       const databaseChanged = changed || retracted;
-      let analyticsChanged = false;
+      let analyticsChanged = replacementSnapshotChanged;
       if (databaseChanged || rebuildWhenUnchanged) {
         // One rebuild after discovery is dramatically faster than rebuilding after
         // each historical file and makes clean/chunked ingestion converge.
@@ -221,6 +230,7 @@ export class Scanner {
     filePath: string,
     rebuild: boolean,
     knownRoot?: string,
+    beforeReplace?: () => void,
   ): Promise<boolean> {
     const root = knownRoot ?? this.rootFor(filePath);
     if (!root) return false;
@@ -270,7 +280,13 @@ export class Scanner {
       rowsRead,
       invalidRows,
     };
-    this.database.applyFileScan({ checkpoint, events: result.events, replace });
+    if (replace) beforeReplace?.();
+    this.database.applyFileScan({
+      checkpoint,
+      events: result.events,
+      replace,
+      archiveBeforeReplace: beforeReplace == null,
+    });
     this.publish({
       filesScanned: this.#status.filesScanned + 1,
       bytesRead: progressBase.bytesRead + result.bytesRead,

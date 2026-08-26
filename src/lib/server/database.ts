@@ -181,6 +181,9 @@ export class Database {
         input_tokens INTEGER NOT NULL DEFAULT 0,
         cache_read_tokens INTEGER NOT NULL DEFAULT 0,
         cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        -- NULL means absent/malformed metadata, 0 an explicit null stop reason,
+        -- and 1 a non-empty terminal stop reason.
+        terminal INTEGER,
         synthetic INTEGER NOT NULL DEFAULT 0,
         refusal_outcome TEXT,
         failure_class TEXT,
@@ -345,14 +348,32 @@ export class Database {
     // it is current while every transcript still needs re-reading, and the new
     // column would stay empty forever.
     this.db.transaction(() => {
-      if (version < 3) {
-        // `failure_class` is derived per event, so it can only appear by
-        // reading the transcripts again. Ingest upserts, so that re-read
-        // repairs the rows in place; nothing is deleted and the archived
-        // history self-heals its stale quality reasons on the next rebuild.
+      // Adding the nullable column, quarantining rows derived without it,
+      // invalidating checkpoints and advancing the schema version commit as a
+      // unit. If any step fails, the old index stays current and the migration
+      // is retried on the next open.
+      const terminalColumnAdded = this.addColumnIfMissing('events', 'terminal', 'INTEGER');
+      if (version < 4 || terminalColumnAdded) {
+        // `failure_class` and `terminal` are derived per event, so they can
+        // only appear by reading the transcripts again. Ingest upserts, so
+        // that re-read repairs the rows in place; nothing is deleted and the
+        // archived history self-heals its stale quality reasons on the next
+        // rebuild.
+        //
+        // Until that re-read, old otherwise-eligible rows have no completion
+        // evidence. Quarantine both settled and provisional rows; existing
+        // quality exclusions keep their more specific reason.
+        this.db.exec(`
+          UPDATE requests
+          SET quality_reason = 'completion_unknown', tokens_per_second = NULL
+          WHERE quality_reason IS NULL;
+          UPDATE request_history
+          SET quality_reason = 'completion_unknown', tokens_per_second = NULL
+          WHERE quality_reason IS NULL;
+        `);
         this.invalidateFileCheckpoints();
       }
-      this.db.pragma('user_version = 3');
+      if (version < 4) this.db.pragma('user_version = 4');
     })();
     // Created after the column so an upgraded database can index it too.
     this.db.exec(`
@@ -461,6 +482,7 @@ export class Database {
     checkpoint: FileCheckpoint;
     events: readonly ScannedEvent[];
     replace: boolean;
+    archiveBeforeReplace?: boolean;
   }): void {
     const insertFile = this.db.prepare(`
       INSERT INTO files(source_id, root_id, identity, size, offset, mtime_ms, tail_hash, rows_read, invalid_rows)
@@ -480,11 +502,11 @@ export class Database {
       INSERT INTO events(
         event_id, parent_id, request_id, session_id, timestamp_ms, type, model,
         output_tokens, input_tokens, cache_read_tokens, cache_creation_tokens,
-        synthetic, refusal_outcome, failure_class, quality_flags
+        terminal, synthetic, refusal_outcome, failure_class, quality_flags
       ) VALUES (
         @eventId, @parentId, @requestId, @sessionId, @timestampMs, @type, @model,
         @outputTokens, @inputTokens, @cacheReadTokens, @cacheCreationTokens,
-        @synthetic, @refusalOutcome, @failureClass, @qualityFlags
+        @terminal, @synthetic, @refusalOutcome, @failureClass, @qualityFlags
       )
       ON CONFLICT(event_id) DO UPDATE SET
         parent_id=excluded.parent_id, request_id=excluded.request_id,
@@ -493,7 +515,8 @@ export class Database {
         output_tokens=excluded.output_tokens, input_tokens=excluded.input_tokens,
         cache_read_tokens=excluded.cache_read_tokens,
         cache_creation_tokens=excluded.cache_creation_tokens,
-        synthetic=excluded.synthetic, refusal_outcome=excluded.refusal_outcome,
+        terminal=excluded.terminal, synthetic=excluded.synthetic,
+        refusal_outcome=excluded.refusal_outcome,
         failure_class=excluded.failure_class, quality_flags=excluded.quality_flags
     `);
     const insertOccurrence = this.db.prepare(
@@ -501,17 +524,51 @@ export class Database {
     );
 
     this.db.transaction(() => {
-      if (options.replace) this.archiveStableInternal(Date.now());
+      // Standalone scans and watcher updates retain the truncation safety of
+      // archiving immediately before replacement. scanAll takes one fixed-time
+      // archive snapshot before its whole replacement batch and opts out here,
+      // avoiding a full history pass for every file in a migration replay.
+      if (options.replace && options.archiveBeforeReplace !== false)
+        this.archiveStableInternal(Date.now());
       // The FK requires the file row to exist before occurrences are inserted.
       insertFile.run(options.checkpoint);
       if (options.replace) {
+        // Delete only events owned exclusively by this source. Starting from
+        // the source's occurrence slice avoids the O(files * all-events) global
+        // orphan sweep during a forced migration replay. The correlated lookup
+        // uses occurrences_event_idx to preserve an event also referenced by a
+        // different source; ON DELETE CASCADE removes occurrences for events
+        // that are unique to this source.
+        this.db
+          .prepare(
+            `
+            DELETE FROM events
+            WHERE event_id IN (
+              SELECT candidate.event_id
+              FROM occurrences candidate
+              WHERE candidate.source_id = ?
+                AND NOT EXISTS (
+                  SELECT 1 FROM occurrences other
+                  WHERE other.event_id = candidate.event_id
+                    AND other.source_id <> ?
+                )
+            )
+          `,
+          )
+          .run(options.checkpoint.sourceId, options.checkpoint.sourceId);
+        // Shared events survived the scoped delete and still have this
+        // source's old occurrence rows. Remove those before inserting the new
+        // file contents; occurrences in every other source remain untouched.
         this.db
           .prepare('DELETE FROM occurrences WHERE source_id = ?')
           .run(options.checkpoint.sourceId);
-        this.deleteOrphanEvents();
       }
       for (const scanned of options.events) {
-        insertEvent.run({ ...scanned.event, synthetic: scanned.event.synthetic ? 1 : 0 });
+        insertEvent.run({
+          ...scanned.event,
+          terminal: scanned.event.terminal == null ? null : scanned.event.terminal ? 1 : 0,
+          synthetic: scanned.event.synthetic ? 1 : 0,
+        });
         insertOccurrence.run(
           options.checkpoint.sourceId,
           scanned.lineOffset,
@@ -557,15 +614,18 @@ export class Database {
    *
    * Zeroing `offset` alone re-reads nothing, because `Scanner.scanFile` returns
    * early when the recorded size and mtime still match the file on disk, so
-   * those have to stop matching; -1 cannot collide with a real stat. The tail
-   * hash describes the offset it was taken at and goes with it. The row
-   * counters reset because the append path adds each scan's rows to the stored
-   * totals, which would otherwise count every re-read row a second time.
+   * those have to stop matching; -1 cannot collide with a real stat. Clearing
+   * `identity` also forces replacement rather than append semantics, so a file
+   * changed or truncated around migration cannot leave stale occurrences past
+   * its new end. The tail hash describes the offset it was taken at and goes
+   * with it. The row counters reset because the append path adds each scan's
+   * rows to the stored totals, which would otherwise count every re-read row a
+   * second time.
    */
   invalidateFileCheckpoints(): void {
     this.db
       .prepare(
-        `UPDATE files SET size = -1, offset = 0, mtime_ms = -1, tail_hash = '',
+        `UPDATE files SET identity = '', size = -1, offset = 0, mtime_ms = -1, tail_hash = '',
            rows_read = 0, invalid_rows = 0`,
       )
       .run();
@@ -769,6 +829,7 @@ export class Database {
       input_tokens: number;
       cache_read_tokens: number;
       cache_creation_tokens: number;
+      terminal: number | null;
       synthetic: number;
       failure_class: string | null;
     };
@@ -778,7 +839,7 @@ export class Database {
         SELECT event.event_id, event.parent_id, event.request_id, event.session_id,
           event.timestamp_ms, parent.timestamp_ms parent_timestamp_ms, event.model,
           event.output_tokens, event.input_tokens, event.cache_read_tokens,
-          event.cache_creation_tokens, event.synthetic, event.failure_class
+          event.cache_creation_tokens, event.terminal, event.synthetic, event.failure_class
         FROM events event
         LEFT JOIN events parent ON parent.event_id = event.parent_id
         WHERE event.type = 'assistant' AND event.request_id IS NOT NULL
@@ -840,11 +901,23 @@ export class Database {
         const named = events.find(({ model }) => model)?.model ?? null;
         const family = named === null ? 'other' : normalizeModelFamily(named);
         const familyKnown = named !== null;
+        const terminal = events.some(({ terminal }) => terminal === 1);
+        const explicitlyIncomplete = events.some(({ terminal }) => terminal === 0);
+        const provisional = finishedAt != null && finishedAt >= nowMs - idleMs;
         let qualityReason: string | null = null;
         // A transport failure shares its request id with the partial output that
         // preceded it, so the pair must never be measured as throughput.
         if (events.some(({ failure_class }) => failure_class != null)) qualityReason = 'api_error';
         else if (events.some(({ synthetic }) => synthetic !== 0)) qualityReason = 'synthetic';
+        // A non-terminal fragment is expected while its transcript is still
+        // being appended. Once the settling window passes, idleness must not
+        // be mistaken for completion: abandoned/cancelled streams remain in
+        // quality accounting but are never measured as throughput.
+        else if (!terminal && explicitlyIncomplete && !provisional)
+          qualityReason = 'incomplete_response';
+        // All-NULL groups come from older or malformed transcript metadata. We
+        // cannot infer completion from age, so they get a distinct quarantine.
+        else if (!terminal && !provisional) qualityReason = 'completion_unknown';
         else if (timestamps.length !== events.length) qualityReason = 'invalid_time';
         else if (starts.length === 0) qualityReason = 'missing_parent';
         else if (outputTokens <= 0) qualityReason = 'non_positive_tokens';
@@ -853,8 +926,6 @@ export class Database {
         else if (durationMs >= 3_600_000) qualityReason = 'hour_scale';
         const tokensPerSecond =
           qualityReason == null && durationMs != null ? outputTokens / (durationMs / 1_000) : null;
-        const provisional = finishedAt != null && finishedAt >= nowMs - idleMs;
-
         insert.run(
           requestId,
           events[0].session_id,

@@ -85,7 +85,7 @@ The helper extracts valid `five_hour` and `seven_day` fields from Claude's JSON 
 
 Skewed distributions call for medians and interquartile ranges rather than averages. Analytics exclude very short, hour-scale, missing-parent, invalid-time, synthetic, and non-positive-token observations. The dashboard reports each exclusion count.
 
-Requests remain provisional while their transcripts grow. They enter the analytics after settling. The selected timezone controls calendar boundaries and daily aggregates. Event identity deduplicates copied or forked transcript history.
+Requests remain provisional while their transcripts grow. They enter analytics only after a terminal response record arrives and the settling window passes. Abandoned stream fragments and responses without trustworthy completion metadata are reported as exclusions rather than measured as throughput. The selected timezone controls calendar boundaries and daily aggregates. Event identity deduplicates copied or forked transcript history.
 
 ## Privacy and security
 

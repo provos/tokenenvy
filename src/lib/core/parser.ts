@@ -14,6 +14,7 @@ export interface ParsedEvent {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  terminal: boolean | null;
   synthetic: boolean;
   refusalOutcome: 'recovered' | 'user_visible' | 'unknown' | null;
   failureClass: FailureClass | null;
@@ -61,6 +62,15 @@ export function parseTranscriptEvent(
   // error rows. It names no model, so normalizing it would invent a real-looking
   // `other` family for a request that never reported one.
   const rawModel = typeof message.model === 'string' ? message.model : null;
+  const hasStopReason = Object.prototype.hasOwnProperty.call(message, 'stop_reason');
+  const stopReason = message.stop_reason;
+  const terminal = !hasStopReason
+    ? null
+    : stopReason === null
+      ? false
+      : typeof stopReason === 'string' && stopReason.length > 0
+        ? true
+        : null;
 
   // Transport failures are classified from structured fields only. The error
   // text in message.content is never read so no prompt or response wording can
@@ -99,6 +109,12 @@ export function parseTranscriptEvent(
     inputTokens: safeCount(usage.input_tokens),
     cacheReadTokens: safeCount(usage.cache_read_input_tokens),
     cacheCreationTokens: safeCount(usage.cache_creation_input_tokens),
+    // Keep only whether the API supplied a stop-reason field and, when it did,
+    // whether that reason was terminal. Older transcript formats can omit the
+    // field entirely, and malformed non-string values provide no trustworthy
+    // completion evidence; both are unknown rather than evidence of an
+    // incomplete stream. The reason itself is never persisted.
+    terminal,
     synthetic: raw.isSynthetic === true || (raw.isMeta === true && type === 'assistant'),
     refusalOutcome,
     failureClass,

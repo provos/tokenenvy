@@ -46,6 +46,7 @@ function assistant(options: {
   output: number;
   model?: string;
   sessionId?: string;
+  stopReason?: unknown;
 }) {
   return {
     type: 'assistant',
@@ -56,6 +57,9 @@ function assistant(options: {
     timestamp: options.timestamp,
     message: {
       model: options.model ?? 'claude-sonnet-4-20250514',
+      ...('stopReason' in options
+        ? { stop_reason: options.stopReason }
+        : { stop_reason: 'end_turn' }),
       content: [{ type: 'text', text: 'PRIVATE_RESPONSE' }],
       usage: {
         input_tokens: 100,
@@ -309,6 +313,240 @@ describe('incremental scanner', () => {
     database.close();
   });
 
+  it('keeps a recent non-terminal streaming response provisional', async () => {
+    const { directory, database, scanner } = await setup();
+    const now = Date.now();
+    await writeFile(
+      join(directory, 'streaming.jsonl'),
+      line(user('u1', new Date(now - 2_000).toISOString())) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'streaming-request',
+            timestamp: new Date(now).toISOString(),
+            output: 10,
+            stopReason: null,
+          }),
+        ),
+    );
+
+    await scanner.scanAll();
+    database.rebuildRequests(now + 1_000, 120_000);
+
+    expect(database.getRequests()).toMatchObject([
+      { outputTokens: 10, provisional: true, qualityReason: null },
+    ]);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 0,
+      exclusions: { provisional: 1 },
+    });
+    database.close();
+  });
+
+  it('excludes a stale response that never received a terminal streaming row', async () => {
+    const { directory, database, scanner } = await setup();
+    await writeFile(
+      join(directory, 'cancelled.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'cancelled-request',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 10,
+            stopReason: null,
+          }),
+        ),
+    );
+
+    await scanner.scanAll();
+
+    expect(database.getRequests()).toMatchObject([
+      {
+        outputTokens: 10,
+        provisional: false,
+        qualityReason: 'incomplete_response',
+        tokensPerSecond: null,
+      },
+    ]);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 0,
+      exclusions: { incomplete_response: 1 },
+    });
+    expect(database.getMeasuredRequestCount()).toBe(0);
+    database.close();
+  });
+
+  it('quarantines a stale response whose transcript omitted completion metadata', async () => {
+    const { directory, database, scanner } = await setup();
+    await writeFile(
+      join(directory, 'completion-unknown.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'completion-unknown-request',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 10,
+            stopReason: undefined,
+          }),
+        ),
+    );
+
+    await scanner.scanAll();
+
+    expect(database.getRequests()).toMatchObject([
+      {
+        outputTokens: 10,
+        provisional: false,
+        qualityReason: 'completion_unknown',
+        tokensPerSecond: null,
+      },
+    ]);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 0,
+      exclusions: { completion_unknown: 1 },
+    });
+    expect(database.getMeasuredRequestCount()).toBe(0);
+    database.close();
+  });
+
+  it('treats malformed stop reasons as unknown rather than terminal', async () => {
+    const { directory, database, scanner } = await setup();
+    await writeFile(
+      join(directory, 'malformed-completion.jsonl'),
+      line(user('u1', '2020-08-14T12:00:00.000Z', 'session-one')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'malformed-number',
+            sessionId: 'session-one',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 10,
+            stopReason: 42,
+          }),
+        ) +
+        line(user('u2', '2020-08-14T13:00:00.000Z', 'session-two')) +
+        line(
+          assistant({
+            uuid: 'a2',
+            parentUuid: 'u2',
+            requestId: 'malformed-empty',
+            sessionId: 'session-two',
+            timestamp: '2020-08-14T13:00:02.000Z',
+            output: 20,
+            stopReason: '',
+          }),
+        ),
+    );
+
+    await scanner.scanAll();
+
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'completion_unknown', tokensPerSecond: null },
+      { qualityReason: 'completion_unknown', tokensPerSecond: null },
+    ]);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 0,
+      exclusions: { completion_unknown: 2 },
+    });
+    expect(database.getMeasuredRequestCount()).toBe(0);
+    database.close();
+  });
+
+  it('rebuilds a stale incomplete response when its terminal streaming row arrives late', async () => {
+    const { directory, database, scanner } = await setup();
+    const file = join(directory, 'late-terminal.jsonl');
+    await writeFile(
+      file,
+      line(user('u1', '2020-08-14T12:00:00.000Z')) +
+        line(
+          assistant({
+            uuid: 'a1',
+            parentUuid: 'u1',
+            requestId: 'late-terminal-request',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 10,
+            stopReason: null,
+          }),
+        ),
+    );
+    await scanner.scanAll();
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'incomplete_response', tokensPerSecond: null },
+    ]);
+
+    await appendFile(
+      file,
+      line(
+        assistant({
+          uuid: 'a2',
+          parentUuid: 'a1',
+          requestId: 'late-terminal-request',
+          timestamp: '2020-08-14T12:00:04.000Z',
+          output: 40,
+          stopReason: 'end_turn',
+        }),
+      ),
+    );
+    await scanner.scanFile(file);
+
+    expect(database.getRequests()).toMatchObject([
+      {
+        durationMs: 4_000,
+        outputTokens: 40,
+        provisional: false,
+        qualityReason: null,
+        tokensPerSecond: 10,
+      },
+    ]);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 1,
+      exclusions: {},
+    });
+    expect(database.getMeasuredRequestCount()).toBe(1);
+    database.close();
+  });
+
+  it('measures a completed response in a side-agent transcript', async () => {
+    const { directory, database, scanner } = await setup();
+    const sideAgents = join(directory, 'subagents');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(sideAgents));
+    await writeFile(
+      join(sideAgents, 'agent-worker.jsonl'),
+      line(user('side-u1', '2020-08-14T12:00:00.000Z', 'side-session')) +
+        line(
+          assistant({
+            uuid: 'side-a1',
+            parentUuid: 'side-u1',
+            requestId: 'side-request',
+            sessionId: 'side-session',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 30,
+            stopReason: 'tool_use',
+          }),
+        ),
+    );
+
+    await scanner.scanAll();
+
+    expect(database.getRequests()).toMatchObject([
+      {
+        durationMs: 2_000,
+        outputTokens: 30,
+        provisional: false,
+        qualityReason: null,
+        tokensPerSecond: 15,
+      },
+    ]);
+    expect(database.getMeasuredRequestCount()).toBe(1);
+    database.close();
+  });
+
   it('reads very large rows without losing complete-line byte offsets', async () => {
     const { directory, database, scanner } = await setup(257);
     const file = join(directory, 'large-row.jsonl');
@@ -436,6 +674,110 @@ describe('incremental scanner', () => {
     await scanner.scanFile(file);
     expect(database.getRequests()).toHaveLength(0);
     expect(database.getDataQuality()).toMatchObject({ uniqueEvents: 1, invalidRows: 1 });
+    database.close();
+  });
+
+  it('cleans only one replaced source while preserving events copied by another source', async () => {
+    const { directory, database, scanner } = await setup();
+    const base = Date.now() - 60_000;
+    const timestamp = (offsetMs: number) => new Date(base + offsetMs).toISOString();
+    const first = join(directory, 'first.jsonl');
+    const second = join(directory, 'second.jsonl');
+    const shared =
+      line(user('shared-u', timestamp(0), 'shared-session')) +
+      line(
+        assistant({
+          uuid: 'shared-a',
+          parentUuid: 'shared-u',
+          requestId: 'shared-request',
+          sessionId: 'shared-session',
+          timestamp: timestamp(2_000),
+          output: 10,
+        }),
+      );
+    await writeFile(
+      first,
+      shared +
+        line(
+          assistant({
+            uuid: 'first-a2',
+            parentUuid: 'shared-a',
+            requestId: 'shared-request',
+            sessionId: 'shared-session',
+            timestamp: timestamp(4_000),
+            output: 40,
+          }),
+        ) +
+        line(user('first-u2', timestamp(10_000), 'first-session')) +
+        line(
+          assistant({
+            uuid: 'first-a3',
+            parentUuid: 'first-u2',
+            requestId: 'first-request',
+            sessionId: 'first-session',
+            timestamp: timestamp(12_000),
+            output: 30,
+          }),
+        ),
+    );
+    await writeFile(second, shared);
+    await scanner.scanAll();
+
+    expect(
+      database
+        .getRequests()
+        .map(({ outputTokens }) => outputTokens)
+        .sort((a, b) => a - b),
+    ).toEqual([30, 40]);
+    expect(database.getDataQuality()).toMatchObject({
+      uniqueEvents: 5,
+      duplicateOccurrences: 2,
+      requests: 2,
+    });
+
+    const replacement =
+      line(user('replacement-u', timestamp(20_000), 'replacement-session')) +
+      line(
+        assistant({
+          uuid: 'replacement-a',
+          parentUuid: 'replacement-u',
+          requestId: 'replacement-request',
+          sessionId: 'replacement-session',
+          timestamp: timestamp(22_000),
+          output: 25,
+        }),
+      );
+    await truncate(first, 0);
+    await writeFile(first, replacement);
+    await scanner.scanFile(first);
+
+    // The copied assistant row survives through the second source, while both
+    // assistant rows unique to the replaced source disappear.
+    expect(
+      database.db
+        .prepare(
+          `SELECT event.output_tokens output_tokens, occurrence.source_id source_id
+           FROM events event
+           JOIN occurrences occurrence ON occurrence.event_id = event.event_id
+           WHERE event.type = 'assistant'
+           ORDER BY event.output_tokens`,
+        )
+        .all(),
+    ).toEqual([
+      { output_tokens: 10, source_id: database.sourceId(second) },
+      { output_tokens: 25, source_id: database.sourceId(first) },
+    ]);
+    expect(
+      database
+        .getRequests()
+        .map(({ outputTokens }) => outputTokens)
+        .sort((a, b) => a - b),
+    ).toEqual([10, 25]);
+    expect(database.getDataQuality()).toMatchObject({
+      uniqueEvents: 4,
+      duplicateOccurrences: 0,
+      requests: 2,
+    });
     database.close();
   });
 
@@ -947,6 +1289,169 @@ describe('incremental scanner', () => {
     database.close();
   });
 
+  it('archives stable requests once before a batch of scanAll replacements', async () => {
+    const { directory, database, scanner } = await setup();
+    const first = join(directory, 'batch-first.jsonl');
+    const second = join(directory, 'batch-second.jsonl');
+    await writeFile(
+      first,
+      line(user('old-u1', '2020-08-14T12:00:00.000Z', 'old-s1')) +
+        line(
+          assistant({
+            uuid: 'old-a1',
+            parentUuid: 'old-u1',
+            requestId: 'old-r1',
+            sessionId: 'old-s1',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 10,
+          }),
+        ),
+    );
+    await writeFile(
+      second,
+      line(user('old-u2', '2020-08-14T13:00:00.000Z', 'old-s2')) +
+        line(
+          assistant({
+            uuid: 'old-a2',
+            parentUuid: 'old-u2',
+            requestId: 'old-r2',
+            sessionId: 'old-s2',
+            timestamp: '2020-08-14T13:00:02.000Z',
+            output: 20,
+          }),
+        ),
+    );
+    await scanner.scanAll();
+
+    // Simulate stable live rows that have not yet reached the durable archive.
+    // The batch must archive them before replacing either source.
+    database.db.prepare('DELETE FROM request_history').run();
+    expect(database.db.prepare('SELECT COUNT(*) count FROM request_history').get()).toEqual({
+      count: 0,
+    });
+    database.invalidateFileCheckpoints();
+    const now = Date.now() - 60_000;
+    await writeFile(
+      first,
+      line(user('new-u1', new Date(now).toISOString(), 'new-s1')) +
+        line(
+          assistant({
+            uuid: 'new-a1',
+            parentUuid: 'new-u1',
+            requestId: 'new-r1',
+            sessionId: 'new-s1',
+            timestamp: new Date(now + 2_000).toISOString(),
+            output: 30,
+          }),
+        ),
+    );
+    await writeFile(
+      second,
+      line(user('new-u2', new Date(now + 10_000).toISOString(), 'new-s2')) +
+        line(
+          assistant({
+            uuid: 'new-a2',
+            parentUuid: 'new-u2',
+            requestId: 'new-r2',
+            sessionId: 'new-s2',
+            timestamp: new Date(now + 12_000).toISOString(),
+            output: 40,
+          }),
+        ),
+    );
+    const archive = vi.spyOn(database, 'archiveStable');
+
+    await scanner.scanAll();
+
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(
+      database.db.prepare('SELECT output_tokens FROM request_history ORDER BY output_tokens').all(),
+    ).toEqual([{ output_tokens: 10 }, { output_tokens: 20 }]);
+    expect(
+      database
+        .getRequests()
+        .map(({ outputTokens }) => outputTokens)
+        .sort((a, b) => a - b),
+    ).toEqual([10, 20, 30, 40]);
+    database.close();
+  });
+
+  it('skips the replacement snapshot for an append-only scanAll', async () => {
+    const { directory, database, scanner } = await setup();
+    const file = join(directory, 'append-only.jsonl');
+    await writeFile(file, line(user('u1', '2020-08-14T12:00:00.000Z')));
+    await scanner.scanAll();
+    await appendFile(
+      file,
+      line(
+        assistant({
+          uuid: 'a1',
+          parentUuid: 'u1',
+          timestamp: '2020-08-14T12:00:02.000Z',
+          output: 20,
+        }),
+      ),
+    );
+    const archive = vi.spyOn(database, 'archiveStable');
+
+    await scanner.scanAll();
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(database.getRequests()).toMatchObject([{ outputTokens: 20, qualityReason: null }]);
+    database.close();
+  });
+
+  it('archives a stable request before a standalone scanFile replacement', async () => {
+    const { directory, database, scanner } = await setup();
+    const file = join(directory, 'standalone-replacement.jsonl');
+    await writeFile(
+      file,
+      line(user('old-u', '2020-08-14T12:00:00.000Z', 'old-session')) +
+        line(
+          assistant({
+            uuid: 'old-a',
+            parentUuid: 'old-u',
+            requestId: 'old-request',
+            sessionId: 'old-session',
+            timestamp: '2020-08-14T12:00:02.000Z',
+            output: 20,
+          }),
+        ),
+    );
+    await scanner.scanAll();
+    database.db.prepare('DELETE FROM request_history').run();
+
+    const now = Date.now() - 60_000;
+    await truncate(file, 0);
+    await writeFile(
+      file,
+      line(user('new-u', new Date(now).toISOString(), 'new-session')) +
+        line(
+          assistant({
+            uuid: 'new-a',
+            parentUuid: 'new-u',
+            requestId: 'new-request',
+            sessionId: 'new-session',
+            timestamp: new Date(now + 2_000).toISOString(),
+            output: 50,
+          }),
+        ),
+    );
+
+    await scanner.scanFile(file);
+
+    expect(database.db.prepare('SELECT output_tokens FROM request_history').all()).toEqual([
+      { output_tokens: 20 },
+    ]);
+    expect(
+      database
+        .getRequests()
+        .map(({ outputTokens }) => outputTokens)
+        .sort((a, b) => a - b),
+    ).toEqual([20, 50]);
+    database.close();
+  });
+
   it('preserves stable refusal outcomes across deletion and restart without private fields', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'speedometer-refusal-history-'));
     temporaryDirectories.push(directory);
@@ -1196,7 +1701,7 @@ describe('incremental scanner', () => {
     legacy.close();
 
     const database = new Database({ path: dbPath, hmacKey: 'migration-key' });
-    expect(database.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(database.db.pragma('user_version', { simple: true })).toBe(4);
     expect(database.db.pragma('table_info(files)')).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'root_id' })]),
     );
@@ -1303,6 +1808,7 @@ describe('incremental scanner', () => {
             requestId: 'req-overload',
             timestamp: '2020-08-14T12:00:02.000Z',
             output: 2,
+            stopReason: null,
           }),
         ) +
         line(
@@ -1431,19 +1937,29 @@ describe('incremental scanner', () => {
     expect(seeded.getFailures()).toHaveLength(1);
     seeded.close();
 
-    // Restore the v2 shape: no failure classification anywhere, and a request
-    // archived while the partial output still looked measurable.
+    // Restore the v2 shape: no failure or terminal classification anywhere,
+    // and a request archived while the partial output still looked measurable.
     const legacy = new BetterSqlite3(dbPath);
     legacy.exec(`
+      INSERT INTO request_history(
+        request_id, session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, family_known,
+        stratum, tokens_per_second, provisional, quality_reason, archived_at, updated_at
+      )
+      SELECT 'history-only', session_id, started_at, finished_at, duration_ms, output_tokens,
+        input_tokens, cache_read_tokens, cache_creation_tokens, family, family_known,
+        stratum, tokens_per_second, provisional, quality_reason, archived_at, updated_at
+      FROM request_history LIMIT 1;
       DROP INDEX events_failure_timestamp_idx;
       ALTER TABLE events DROP COLUMN failure_class;
+      ALTER TABLE events DROP COLUMN terminal;
       DROP TABLE failure_history;
       UPDATE requests SET quality_reason = NULL, tokens_per_second = 0.177;
       UPDATE request_history SET quality_reason = NULL, tokens_per_second = 0.177;
       PRAGMA user_version = 2;
     `);
     expect(legacy.prepare('SELECT COUNT(*) count FROM request_history').get()).toEqual({
-      count: 1,
+      count: 2,
     });
     legacy.close();
 
@@ -1454,7 +1970,7 @@ describe('incremental scanner', () => {
     before.close();
 
     const database = new Database({ path: dbPath, hmacKey: 'v2-key' });
-    expect(database.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(database.db.pragma('user_version', { simple: true })).toBe(4);
     // Nothing is deleted: the upgrade keeps every event queryable and only
     // arranges for the transcripts to be read again.
     expect(database.db.prepare('SELECT event_id FROM events ORDER BY event_id').all()).toEqual(
@@ -1465,6 +1981,7 @@ describe('incremental scanner', () => {
     // The checkpoint no longer matches any real file, so the next scan re-reads
     // from byte zero instead of returning early on an unchanged size and mtime.
     expect(database.db.prepare('SELECT * FROM files').get()).toMatchObject({
+      identity: '',
       size: -1,
       offset: 0,
       mtime_ms: -1,
@@ -1473,8 +1990,24 @@ describe('incremental scanner', () => {
       invalid_rows: 0,
     });
     expect(
-      database.db.prepare('SELECT quality_reason, tokens_per_second FROM request_history').all(),
-    ).toEqual([{ quality_reason: null, tokens_per_second: 0.177 }]);
+      database.db
+        .prepare(
+          'SELECT quality_reason, tokens_per_second FROM request_history ORDER BY request_id',
+        )
+        .all(),
+    ).toEqual([
+      { quality_reason: 'completion_unknown', tokens_per_second: null },
+      { quality_reason: 'completion_unknown', tokens_per_second: null },
+    ]);
+    expect(database.getRequests()).toMatchObject([
+      { qualityReason: 'completion_unknown', tokensPerSecond: null },
+      { qualityReason: 'completion_unknown', tokensPerSecond: null },
+    ]);
+    expect(database.getMeasuredRequestCount()).toBe(0);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 0,
+      exclusions: { completion_unknown: 2 },
+    });
 
     await new Scanner({ roots: [logs], database }).scanAll();
     // The re-read upserted the same rows in place rather than adding copies,
@@ -1491,18 +2024,36 @@ describe('incremental scanner', () => {
     expect(
       database.db.prepare('SELECT failure_class FROM events WHERE failure_class IS NOT NULL').all(),
     ).toEqual([{ failure_class: 'overloaded' }]);
+    expect(
+      database.db
+        .prepare('SELECT terminal FROM events WHERE type = ? ORDER BY terminal DESC')
+        .all('assistant'),
+    ).toEqual([{ terminal: 1 }, { terminal: null }]);
     expect(database.getFailures()).toMatchObject([{ failureClass: 'overloaded' }]);
-    expect(database.getRequests()).toMatchObject([
-      { qualityReason: 'api_error', tokensPerSecond: null },
-    ]);
+    expect(database.getRequests()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ qualityReason: 'api_error', tokensPerSecond: null }),
+        expect.objectContaining({ qualityReason: 'completion_unknown', tokensPerSecond: null }),
+      ]),
+    );
     expect(
       database.db.prepare('SELECT quality_reason, tokens_per_second FROM request_history').all(),
-    ).toEqual([{ quality_reason: 'api_error', tokens_per_second: null }]);
+    ).toEqual(
+      expect.arrayContaining([
+        { quality_reason: 'api_error', tokens_per_second: null },
+        { quality_reason: 'completion_unknown', tokens_per_second: null },
+      ]),
+    );
+    expect(database.getMeasuredRequestCount()).toBe(0);
+    expect(database.getDataQuality()).toMatchObject({
+      includedRequests: 0,
+      exclusions: { api_error: 1, completion_unknown: 1 },
+    });
     database.close();
 
     // A second open is a no-op: the live index survives at the current version.
     const reopened = new Database({ path: dbPath, hmacKey: 'v2-key' });
-    expect(reopened.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(reopened.db.pragma('user_version', { simple: true })).toBe(4);
     expect(reopened.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 3 });
     expect(reopened.getFailures()).toHaveLength(1);
     reopened.close();
@@ -1510,7 +2061,7 @@ describe('incremental scanner', () => {
     expect(bytes).not.toContain('PRIVATE_API_ERROR_TEXT');
   });
 
-  it('rolls back a crashed v3 migration instead of recording the new version', async () => {
+  it('rolls back a crashed v4 migration instead of recording the new version', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'speedometer-v3-rollback-'));
     temporaryDirectories.push(directory);
     const logs = join(directory, 'logs');
@@ -1535,10 +2086,8 @@ describe('incremental scanner', () => {
 
     const legacy = new BetterSqlite3(dbPath);
     legacy.exec(`
-      DROP INDEX events_failure_timestamp_idx;
-      ALTER TABLE events DROP COLUMN failure_class;
-      DROP TABLE failure_history;
-      PRAGMA user_version = 2;
+      ALTER TABLE events DROP COLUMN terminal;
+      PRAGMA user_version = 3;
     `);
     legacy.close();
 
@@ -1557,7 +2106,7 @@ describe('incremental scanner', () => {
     crash.mockRestore();
 
     const inspect = new BetterSqlite3(dbPath);
-    expect(inspect.pragma('user_version', { simple: true })).toBe(2);
+    expect(inspect.pragma('user_version', { simple: true })).toBe(3);
     expect(inspect.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 2 });
     // The half-finished invalidation rolled back with the version bump: the
     // checkpoint still describes the whole file it had already read.
@@ -1571,7 +2120,7 @@ describe('incremental scanner', () => {
 
     // The retry completes, and the re-read repairs the surviving rows in place.
     const recovered = new Database({ path: dbPath, hmacKey: 'rollback-key' });
-    expect(recovered.db.pragma('user_version', { simple: true })).toBe(3);
+    expect(recovered.db.pragma('user_version', { simple: true })).toBe(4);
     expect(recovered.db.prepare('SELECT COUNT(*) count FROM events').get()).toEqual({ count: 2 });
     await new Scanner({ roots: [logs], database: recovered }).scanAll();
     expect(recovered.getRequests()).toMatchObject([{ qualityReason: null, outputTokens: 40 }]);
