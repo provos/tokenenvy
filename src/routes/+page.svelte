@@ -1176,9 +1176,9 @@
           <details>
             <summary>What gets excluded?</summary>
             <p>
-              Synthetic events, non-positive token counts, missing parents, invalid timestamps,
-              sub-100ms intervals, and hour-scale gaps. Confidence intervals require 20 requests
-              across five sessions.
+              Incomplete or completion-unknown responses, synthetic events, non-positive token
+              counts, missing parents, invalid timestamps, sub-100ms intervals, and hour-scale gaps.
+              Confidence intervals require 20 requests across five sessions.
             </p>
           </details>
         </article>

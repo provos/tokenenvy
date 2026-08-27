@@ -102,7 +102,7 @@ describe('analytics', () => {
         requestId: 'r1',
         sessionId: 's1',
         timestamp: '2024-03-10T09:30:00.000Z',
-        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+        message: { model: 'sonnet', stop_reason: 'end_turn', usage: { output_tokens: 10 } },
       },
       { type: 'user', uuid: 'u2', sessionId: 's2', timestamp: '2024-03-10T10:29:59.000Z' },
       {
@@ -112,7 +112,7 @@ describe('analytics', () => {
         requestId: 'r2',
         sessionId: 's2',
         timestamp: '2024-03-10T10:30:00.000Z',
-        message: { model: 'opus', usage: { output_tokens: 20 } },
+        message: { model: 'opus', stop_reason: 'end_turn', usage: { output_tokens: 20 } },
       },
     ]);
     const detail = analytics.day('2024-03-10', 'America/Los_Angeles');
@@ -388,7 +388,7 @@ describe('analytics', () => {
         requestId: 'r1',
         sessionId: 's1',
         timestamp: '2026-08-14T12:00:01Z',
-        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+        message: { model: 'sonnet', stop_reason: 'end_turn', usage: { output_tokens: 10 } },
       },
     ]);
     expect(analytics.dataQuality()).toMatchObject({
@@ -415,7 +415,7 @@ describe('analytics', () => {
         requestId: 'r1',
         sessionId: 's1',
         timestamp: '2026-08-14T12:00:00.000Z',
-        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+        message: { model: 'sonnet', stop_reason: 'end_turn', usage: { output_tokens: 10 } },
       },
     ]);
     const getRequests = vi.spyOn(database, 'getRequests');
@@ -444,7 +444,7 @@ describe('analytics', () => {
         requestId: 'r1',
         sessionId: 's1',
         timestamp: '2026-08-14T12:00:00.000Z',
-        message: { model: 'sonnet', usage: { output_tokens: 10 } },
+        message: { model: 'sonnet', stop_reason: 'end_turn', usage: { output_tokens: 10 } },
       },
     ]);
     const getDataQuality = vi.spyOn(database, 'getDataQuality');
@@ -963,7 +963,11 @@ describe('analytics', () => {
         requestId: 'r1',
         sessionId: 's1',
         timestamp: '2026-08-14T12:00:02.000Z',
-        message: { model: 'claude-sonnet-4-20250514', usage: { output_tokens: 2 } },
+        message: {
+          model: 'claude-sonnet-4-20250514',
+          stop_reason: null,
+          usage: { output_tokens: 2 },
+        },
       },
       apiError('e1', 'r1', '2026-08-14T12:00:13.300Z', {
         error: 'server_error',
@@ -977,7 +981,11 @@ describe('analytics', () => {
         requestId: 'r2',
         sessionId: 's1',
         timestamp: '2026-08-14T13:00:02.000Z',
-        message: { model: 'claude-sonnet-4-20250514', usage: { output_tokens: 100 } },
+        message: {
+          model: 'claude-sonnet-4-20250514',
+          stop_reason: 'end_turn',
+          usage: { output_tokens: 100 },
+        },
       },
       apiError('e3', 'r3', '2026-08-14T14:00:00.000Z', {
         error: 'server_error',
@@ -1180,7 +1188,11 @@ describe('analytics', () => {
         requestId: 'r-opus',
         sessionId: 's1',
         timestamp: '2026-08-14T12:00:02.000Z',
-        message: { model: 'claude-opus-4-20250514', usage: { output_tokens: 100 } },
+        message: {
+          model: 'claude-opus-4-20250514',
+          stop_reason: 'end_turn',
+          usage: { output_tokens: 100 },
+        },
       },
       // A request that produced real output *and* an error row keeps its family.
       { type: 'user', uuid: 'u2', sessionId: 's1', timestamp: '2026-08-14T13:00:00.000Z' },
@@ -1191,7 +1203,11 @@ describe('analytics', () => {
         requestId: 'r-fable',
         sessionId: 's1',
         timestamp: '2026-08-14T13:00:02.000Z',
-        message: { model: 'claude-fable-1-20260101', usage: { output_tokens: 40 } },
+        message: {
+          model: 'claude-fable-1-20260101',
+          stop_reason: null,
+          usage: { output_tokens: 40 },
+        },
       },
       apiErrorEvent('e-fable', 'r-fable', '2026-08-14T13:00:05.000Z'),
       // A request whose only assistant row is an error names no model at all.

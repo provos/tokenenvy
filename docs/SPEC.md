@@ -83,12 +83,16 @@ directory, and makes no automatic network requests.
 - Replaced, truncated, and deleted files retract their event occurrences. A
   logical event disappears only when its final occurrence disappears, after
   which affected requests and daily aggregates are recomputed.
-- A request may be shown as provisional after two idle minutes, but any later
-  content reopens and recomputes it. Idle time is never proof of completion.
+- A recent request is provisional. After the settling window, an explicit
+  non-terminal fragment is excluded as an incomplete response and a record
+  without trustworthy completion metadata is excluded as completion unknown.
+  Any later terminal content reopens and recomputes it. Idle time is never proof
+  of completion.
 - Requests and refusal outcomes become durable historical summaries only after
   24 hours of stability; no prompt or response content is added to the archive.
-- Synthetic, non-positive-token, missing-parent, invalid-time, sub-100 ms, and
-  hour-scale intervals are excluded with explicit quality reasons.
+- Synthetic, incomplete, completion-unknown, non-positive-token,
+  missing-parent, invalid-time, sub-100 ms, and hour-scale intervals are
+  excluded with explicit quality reasons.
 
 ## Release acceptance
 

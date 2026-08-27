@@ -312,6 +312,10 @@
                   <span
                     >{reason.replaceAll('_', ' ')}{#if reason === 'api_error'}<small
                         >requests a failed call left unmeasured</small
+                      >{:else if reason === 'incomplete_response'}<small
+                        >stream ended without a terminal stop</small
+                      >{:else if reason === 'completion_unknown'}<small
+                        >response has no trustworthy completion signal</small
                       >{/if}</span
                   ><strong>{count.toLocaleString()}</strong>
                 </li>

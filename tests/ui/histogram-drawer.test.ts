@@ -127,6 +127,19 @@ describe('daily detail failures', () => {
     expect(body).toContain('a row carrying no request id never became one');
   });
 
+  it('explains incomplete and completion-unknown request exclusions', () => {
+    const body = drawer({
+      detail: {
+        ...detail,
+        exclusions: { incomplete_response: 7, completion_unknown: 2 },
+      },
+    });
+
+    expect(body).toContain('9 requests excluded');
+    expect(body).toContain('stream ended without a terminal stop');
+    expect(body).toContain('response has no trustworthy completion signal');
+  });
+
   it('says so plainly when failures were recorded but none happened', () => {
     const body = drawer();
 
