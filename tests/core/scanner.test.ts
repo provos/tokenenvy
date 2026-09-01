@@ -14,11 +14,11 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 
-async function setup(chunkSize = 32) {
+async function setup(chunkSize = 32, idleMs = 10) {
   const directory = await mkdtemp(join(tmpdir(), 'speedometer-core-'));
   temporaryDirectories.push(directory);
   const database = new Database({ path: ':memory:', hmacKey: 'test-key' });
-  const scanner = new Scanner({ roots: [directory], database, chunkSize, idleMs: 10 });
+  const scanner = new Scanner({ roots: [directory], database, chunkSize, idleMs });
   const analytics = new Analytics(database);
   return { directory, database, scanner, analytics };
 }
@@ -1216,7 +1216,7 @@ describe('incremental scanner', () => {
   });
 
   it('keeps a recent correction live-only until it crosses the history cutoff', async () => {
-    const { directory, database, scanner } = await setup();
+    const { directory, database, scanner } = await setup(32, 60_000);
     const file = join(directory, 'late-correction.jsonl');
     await writeFile(
       file,
