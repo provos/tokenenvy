@@ -120,11 +120,9 @@ const overviewPayload: OverviewResponse = {
   models: [],
   weekly: {
     outputTokens: 0,
-    projectedOutputTokens: null,
-    elapsedFraction: 0.5,
     previousFourWeekMedian: null,
     recap: {
-      weekStart: '2026-08-10',
+      startDate: '2026-08-08',
       throughDate: '2026-08-14',
       daysObserved: 0,
       observedDates: [],
@@ -410,6 +408,35 @@ describe('live dashboard refresh scheduling', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     FakeEventSource.instances = [];
+  });
+
+  it('labels the recap as a rolling seven-day window without a projection', async () => {
+    const { component, target } = mountDashboard((url) => {
+      if (url.startsWith('/api/v1/overview')) return jsonResponse(measuredOverview(7, ['opus']));
+      if (url.startsWith('/api/v1/series')) return jsonResponse(measuredSeries(['opus']));
+      if (url.startsWith('/api/v1/days/')) return jsonResponse(measuredDay(['opus']));
+      if (url.startsWith('/api/v1/quota')) return statusResponse(404);
+      if (url.startsWith('/api/v1/data-quality')) return jsonResponse({ rows: 10, invalidRows: 0 });
+      return statusResponse(404);
+    });
+
+    try {
+      await settle();
+      const panel = target.querySelector('.weekly-panel');
+      expect(panel?.textContent).toContain('My last 7 days');
+      expect(panel?.textContent).toMatch(/Aug 8, 2026 to Aug 14, 2026/);
+      expect(panel?.textContent).toContain('Median of prior 4 weeks');
+      expect(panel?.textContent).not.toContain('Projected');
+      expect(panel?.querySelector('.week-progress')).toBeNull();
+      expect(
+        [...target.querySelectorAll<HTMLButtonElement>('button')].some(
+          (button) => button.textContent?.trim() === 'Recap my week',
+        ),
+      ).toBe(true);
+    } finally {
+      unmount(component);
+      target.remove();
+    }
   });
 
   it('starts a scheduled refresh on time even when newer scan events keep arriving', async () => {

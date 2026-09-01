@@ -21,13 +21,14 @@
     WEEKLY_RECAP_INSTALL_CTA,
     WEEKLY_RECAP_PRODUCT_URL,
     weeklyRecapCaption,
+    weeklyRecapDayIndex,
     weeklyRecapDayLabel,
     weeklyRecapFailureLine,
     weeklyRecapFailureStamp,
     weeklyRecapHeadline,
     weeklyRecapImageFilename,
     weeklyRecapComparisonLine,
-    weeklyRecapObservedWeekdays,
+    weeklyRecapObservedDayIndices,
     weeklyRecapPeriod,
     weeklyRecapReady,
     weeklyRecapRefusalLine,
@@ -96,8 +97,8 @@
   let indexLine = $derived(weeklyRecapComparisonLine(snapshotRecap));
   let period = $derived(weeklyRecapPeriod(snapshotRecap));
   let topModel = $derived(weeklyRecapTopModel(snapshotRecap));
-  let observedWeekdays = $derived(weeklyRecapObservedWeekdays(snapshotRecap));
-  let refusalWeekdays = $derived(weeklyRefusalWeekdays(snapshotRecap));
+  let observedDayIndices = $derived(weeklyRecapObservedDayIndices(snapshotRecap));
+  let refusalDayIndices = $derived(weeklyRefusalDayIndices(snapshotRecap));
   let refusalLine = $derived(weeklyRecapRefusalLine(snapshotRecap));
   let refusalNote = $derived(weeklyRecapRefusalNote(snapshotRecap));
   let failureStamp = $derived(weeklyRecapFailureStamp(snapshotRecap));
@@ -111,7 +112,7 @@
     `Token Envy weekly recap for ${period}. ${SECURITY_BLUEPRINTS_CARD_LINE}. ${theme.accessibleLabel} mood. ${headline}. ${Math.round(snapshotRecap.median ?? 0)} median effective output tokens per second. ${indexLine}. ${snapshotRecap.requestCount} measured requests across ${snapshotRecap.sessions} sessions.${refusalLine ? ` ${refusalLine}. ${refusalNote}` : ''}${failureLine ? ` ${failureLine}.` : ''} ${WEEKLY_RECAP_INSTALL_CTA}. Personal baseline only.`,
   );
   let canExport = $derived(preparedFile !== null && ready && !preparing);
-  const weekdayIndices = [0, 1, 2, 3, 4, 5, 6] as const;
+  const dayIndices = [0, 1, 2, 3, 4, 5, 6] as const;
 
   onMount(() => {
     clipboardImageAvailable =
@@ -235,7 +236,7 @@
 
     context.fillStyle = currentTheme.secondary;
     context.font = '700 25px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText('TOKEN ENVY · WEEK SO FAR', 70, 65);
+    context.fillText('TOKEN ENVY · LAST 7 DAYS', 70, 65);
 
     context.fillStyle = currentTheme.mutedText;
     context.font = '500 15px ui-monospace, SFMono-Regular, Menlo, monospace';
@@ -246,7 +247,7 @@
     context.font = '500 23px Inter, ui-sans-serif, system-ui, sans-serif';
     context.fillText(weeklyRecapPeriod(currentRecap), 1130, 65);
 
-    // Trails the period: a note about failed calls this week, held apart from the
+    // Trails the period: a note about failed calls in this window, held apart from the
     // refusal line so the two axes never read as one number.
     drawFailureStamp(context, {
       right: 1130,
@@ -285,7 +286,7 @@
       414,
       500,
       currentRecap.daysObserved === 1 ? null : currentRecap.slowestDay,
-      currentRecap.daysObserved === 1 ? 'WEEK SO FAR' : 'SLOWEST OBSERVED DAY',
+      currentRecap.daysObserved === 1 ? 'LAST 7 DAYS' : 'SLOWEST OBSERVED DAY',
       currentTheme,
     );
 
@@ -358,8 +359,8 @@
     currentRecap: WeeklyRecapData,
     currentTheme: ReturnType<typeof getShareSentimentTheme>,
   ) {
-    const observed = weeklyRecapObservedWeekdays(currentRecap);
-    const refusals = weeklyRefusalWeekdays(currentRecap);
+    const observed = weeklyRecapObservedDayIndices(currentRecap);
+    const refusals = weeklyRefusalDayIndices(currentRecap);
     context.save();
     context.globalAlpha = 0.12;
     for (let day = 0; day < 7; day += 1) {
@@ -405,22 +406,18 @@
     context.restore();
   }
 
-  function weeklyRefusalWeekdays(
+  function weeklyRefusalDayIndices(
     currentRecap: WeeklyRecapData,
   ): Map<number, WeeklyRecapData['refusals']['affectedDates'][number]> {
-    const weekdays = new SvelteMap<number, WeeklyRecapData['refusals']['affectedDates'][number]>();
+    const dayIndices = new SvelteMap<
+      number,
+      WeeklyRecapData['refusals']['affectedDates'][number]
+    >();
     for (const day of currentRecap.refusals.affectedDates) {
-      if (
-        day.attempted <= 0 ||
-        day.date < currentRecap.weekStart ||
-        day.date > currentRecap.throughDate
-      )
-        continue;
-      const parsed = new Date(`${day.date}T12:00:00Z`);
-      if (!Number.isFinite(parsed.getTime())) continue;
-      weekdays.set((parsed.getUTCDay() + 6) % 7, day);
+      const index = weeklyRecapDayIndex(currentRecap, day.date);
+      if (day.attempted > 0 && index !== null) dayIndices.set(index, day);
     }
-    return weekdays;
+    return dayIndices;
   }
 
   function drawStandout(
@@ -553,7 +550,7 @@
       <div>
         <p class="eyebrow">Weekly receipt</p>
         <h2 id="weekly-recap-title">Give the week a verdict</h2>
-        <p>The card freezes this week and compares it with your own history.</p>
+        <p>The card freezes your last seven days and compares them with your own history.</p>
       </div>
       <button
         class="icon-button"
@@ -616,21 +613,21 @@
         style={`--weekly-bg-start:${theme.backgroundStart};--weekly-bg-middle:${theme.backgroundMiddle};--weekly-bg-end:${theme.backgroundEnd};--weekly-accent:${theme.accent};--weekly-secondary:${theme.secondary};--weekly-text:${theme.text};--weekly-muted:${theme.mutedText};--weekly-glow:${theme.glow};${failureStampStyle(theme)}`}
       >
         <div class="weekly-recap-signal" aria-hidden="true">
-          {#each weekdayIndices as index (index)}
-            {@const refusal = refusalWeekdays.get(index)}
+          {#each dayIndices as index (index)}
+            {@const refusal = refusalDayIndices.get(index)}
             <i
-              class:observed={observedWeekdays.has(index)}
+              class:observed={observedDayIndices.has(index)}
               class:affected={Boolean(refusal)}
               class:user-visible={(refusal?.userVisible ?? 0) > 0}
-              data-weekday={index + 1}
-              data-observed={observedWeekdays.has(index)}
+              data-day-index={index}
+              data-observed={observedDayIndices.has(index)}
               data-refusal-attempted={refusal?.attempted ?? 0}
             ></i>
           {/each}
         </div>
         <div class="weekly-recap-header">
           <div class="share-brand-lockup">
-            <strong>Token Envy · Week so far</strong>
+            <strong>Token Envy · Last 7 days</strong>
             <small>{SECURITY_BLUEPRINTS_CARD_LINE}</small>
           </div>
           <div class="share-preview-context">
@@ -685,7 +682,7 @@
 
       <p class="weekly-context-note">
         Speed Index adjusts for your model and output-size mix. Fastest and slowest day use raw
-        effective tok/s and belong to this week only.
+        effective tok/s and belong to this seven-day window only.
       </p>
 
       <div class="share-actions" aria-label="Prepare the weekly image">

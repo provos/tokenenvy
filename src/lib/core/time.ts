@@ -66,27 +66,3 @@ export function daysBetween(from: string, to: string): number {
   };
   return Math.round((parse(to) - parse(from)) / 86_400_000);
 }
-
-export function isoWeekday(date: string): number {
-  const [year, month, day] = date.split('-').map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return weekday === 0 ? 7 : weekday;
-}
-
-/** Convert a local midnight to an instant, including DST offset changes. */
-export function zonedMidnight(date: string, timezone: string): number {
-  validateTimezone(timezone);
-  const [year, month, day] = date.split('-').map(Number);
-  const targetAsUtc = Date.UTC(year, month - 1, day);
-  let candidate = targetAsUtc;
-
-  // Offset iteration works for non-hour offsets and historical transitions.
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const local = zonedParts(candidate, timezone);
-    const representedAsUtc = Date.UTC(local.year, local.month - 1, local.day, local.hour);
-    const next = candidate + (targetAsUtc - representedAsUtc);
-    if (next === candidate) return next;
-    candidate = next;
-  }
-  return candidate;
-}

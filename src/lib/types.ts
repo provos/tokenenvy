@@ -45,8 +45,6 @@ export interface OverviewResponse {
   models: ModelSummary[];
   weekly: {
     outputTokens: number;
-    projectedOutputTokens: number | null;
-    elapsedFraction: number;
     previousFourWeekMedian: number | null;
     recap: WeeklyRecap;
   };
@@ -56,7 +54,7 @@ export interface OverviewResponse {
 }
 
 export interface WeeklyRecap {
-  weekStart: string;
+  startDate: string;
   throughDate: string;
   daysObserved: number;
   observedDates: string[];

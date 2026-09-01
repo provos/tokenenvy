@@ -1124,7 +1124,6 @@ td .model-dot {
   font-size: 11px;
 }
 
-.week-progress,
 .quota-reading > div {
   height: 5px;
   overflow: hidden;
@@ -1133,18 +1132,17 @@ td .model-dot {
   background: var(--panel-soft);
 }
 
-.week-progress i,
 .quota-reading > div i {
-  width: var(--week-progress);
+  width: min(100%, var(--quota-progress));
   height: 100%;
   display: block;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--amber));
+  background: var(--mint);
 }
 
 .weekly-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
   margin: 18px 0 15px;
 }
@@ -1195,11 +1193,6 @@ td .model-dot {
 
 .quota-reading > div {
   margin-top: 8px;
-}
-
-.quota-reading > div i {
-  width: min(100%, var(--quota-progress));
-  background: var(--mint);
 }
 
 .quota-models {

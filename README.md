@@ -17,7 +17,7 @@ Token Envy is a [Security Blueprints](https://securityblueprints.io/) project by
 - A 28-day, mix-adjusted Speed Index based on a stable model baseline
 - Daily histograms, hourly medians, exclusions, and data-quality counts
 - Classifier refusals grouped as attempted, recovered, user-visible, or unknown
-- Weekly output, projected usage, and fastest and slowest measured days
+- Rolling seven-day output, prior four-week comparison, and fastest and slowest measured days
 - Optional five-hour and seven-day rate-limit percentages
 - Privacy-safe daily, weekly, and longitudinal share cards
 - Model-filtered refusal warning markers on the longitudinal chart

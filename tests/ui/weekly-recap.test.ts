@@ -6,12 +6,13 @@ import {
   safeWeeklyRecapProductLink,
   suggestedWeeklySentiment,
   weeklyRecapCaption,
+  weeklyRecapDayIndex,
   weeklyRecapFailureLine,
   weeklyRecapFailureStamp,
   weeklyRecapHeadline,
   weeklyRecapImageFilename,
   weeklyRecapComparisonLine,
-  weeklyRecapObservedWeekdays,
+  weeklyRecapObservedDayIndices,
   weeklyRecapPeriod,
   weeklyRecapReady,
   weeklyRecapRefusalLine,
@@ -20,49 +21,9 @@ import {
   weeklyRecapTextReceipt,
   type WeeklyRecapData,
 } from '../../src/lib/components/weekly-recap';
+import { weeklyRecapFixture } from './weekly-recap-fixture';
 
-const recap: WeeklyRecapData = {
-  weekStart: '2026-08-10',
-  throughDate: '2026-08-14',
-  daysObserved: 4,
-  observedDates: ['2026-08-10', '2026-08-11', '2026-08-13', '2026-08-14'],
-  requestCount: 84,
-  sessions: 12,
-  median: 72,
-  speedIndex: {
-    value: 108,
-    ciLow: 102,
-    ciHigh: 114,
-    percentile: 93,
-    eligible: true,
-    reason: null,
-  },
-  models: [
-    {
-      family: 'sonnet',
-      requestCount: 60,
-      outputTokens: 18_000,
-      share: 0.72,
-    },
-  ],
-  fastestDay: { date: '2026-08-13', median: 91 },
-  slowestDay: { date: '2026-08-11', median: 54 },
-  refusals: {
-    recorded: true,
-    attempted: 0,
-    recovered: 0,
-    userVisible: 0,
-    unknown: 0,
-    affectedDates: [],
-  },
-  failures: {
-    recorded: true,
-    attempted: 0,
-    overloaded: 0,
-    serverError: 0,
-    affectedDates: [],
-  },
-};
+const recap = weeklyRecapFixture;
 
 describe('weekly Token Envy recap', () => {
   it('uses the personal 28-day baseline without claiming a weekly percentile', () => {
@@ -70,7 +31,7 @@ describe('weekly Token Envy recap', () => {
     expect(weeklyRecapComparisonLine(recap)).toBe('8% faster than my prior 28 days');
     expect(weeklyRecapComparisonLine(recap)).not.toContain('percentile');
     expect(weeklyRecapComparisonLine(recap)).not.toContain('Speed Index');
-    expect(weeklyRecapPeriod(recap)).toMatch(/Aug 10, 2026 to Aug 14, 2026/);
+    expect(weeklyRecapPeriod(recap)).toMatch(/Aug 8, 2026 to Aug 14, 2026/);
     expect(weeklyRecapReady(recap)).toBe(true);
     expect(suggestedWeeklySentiment(recap)).toBe(1);
 
@@ -80,7 +41,8 @@ describe('weekly Token Envy recap', () => {
       1,
       'https://www.npmjs.com/package/tokenenvy',
     );
-    expect(caption).toContain('Claude behaved this week so far:');
+    expect(caption).toContain('Claude behaved this week:');
+    expect(caption).not.toContain('week so far');
     expect(caption).toContain('- 72 weekly median effective tok/s');
     expect(caption).toContain('- 8% faster than my prior 28 days');
     expect(caption).toContain('- 84 measured requests');
@@ -143,7 +105,7 @@ describe('weekly Token Envy recap', () => {
       '- 1 explicit refusal signal: 1 recovered · lower bound',
     );
     const xCaption = weeklyRecapCaption(withRefusal, 'spicy', -1, null, 'x');
-    expect(xCaption.startsWith('Anthropic made me earn every token this week so far.')).toBe(true);
+    expect(xCaption.startsWith('Anthropic made me earn every token this week.')).toBe(true);
     expect(xCaption).toContain('1 refusal · 1 recovered · lower bound');
     expect(xCaption).toContain('prompts stay private');
     expect(xCaption).not.toContain('#TokenEnvy');
@@ -156,9 +118,7 @@ describe('weekly Token Envy recap', () => {
       'https://www.npmjs.com/package/tokenenvy',
       'bluesky',
     );
-    expect(blueskyCaption.startsWith('Anthropic made me earn every token this week so far.')).toBe(
-      true,
-    );
+    expect(blueskyCaption.startsWith('Anthropic made me earn every token this week.')).toBe(true);
     expect(blueskyCaption).toContain('1 explicit refusal signal: 1 recovered · lower bound');
     expect(blueskyCaption).toContain('https://www.npmjs.com/package/tokenenvy');
     expect(blueskyCaption).not.toContain('#TokenEnvy');
@@ -182,7 +142,7 @@ describe('weekly Token Envy recap', () => {
     });
     const normalized = body.replace(/\s+/g, ' ');
 
-    expect(normalized).toContain('Token Envy · Week so far');
+    expect(normalized).toContain('Token Envy · Last 7 days');
     expect(normalized).toContain('weekly median effective output · tok/s');
     expect(normalized).toContain('Fastest observed day');
     expect(normalized).toContain('Slowest observed day');
@@ -191,7 +151,7 @@ describe('weekly Token Envy recap', () => {
     expect(normalized).toContain('Measure your week: npx tokenenvy');
     expect(normalized).toContain('A Security Blueprints, LLC project · securityblueprints.io');
     expect(normalized).toContain(
-      'The card freezes this week and compares it with your own history.',
+      'The card freezes your last seven days and compares them with your own history.',
     );
     expect(normalized).toContain('Prompts stayed local');
   });
@@ -213,20 +173,26 @@ describe('weekly Token Envy recap', () => {
     expect(safeWeeklyRecapProductLink('https://user:secret@example.com')).toBeNull();
   });
 
-  it('places sparse activity on its actual weekdays', () => {
-    const sparse = {
+  it('places activity chronologically when the rolling window crosses Sunday', () => {
+    const sparse: WeeklyRecapData = {
       ...recap,
+      startDate: '2026-08-13',
+      throughDate: '2026-08-19',
       daysObserved: 2,
-      observedDates: ['2026-08-10', '2026-08-14'],
+      observedDates: ['2026-08-14', '2026-08-17'],
+      fastestDay: { date: '2026-08-17', median: 91 },
+      slowestDay: { date: '2026-08-14', median: 54 },
     };
-    expect([...weeklyRecapObservedWeekdays(sparse)]).toEqual([0, 4]);
+    expect([...weeklyRecapObservedDayIndices(sparse)]).toEqual([1, 4]);
+    expect(weeklyRecapDayIndex(sparse, '2026-08-12')).toBeNull();
+    expect(weeklyRecapDayIndex(sparse, '2026-08-20')).toBeNull();
 
     const { body } = render(WeeklyRecapModal, {
       props: { open: true, recap: sparse, outputTokens: 4_200, onclose: () => undefined },
     });
-    expect(body).toContain('data-weekday="1" data-observed="true"');
-    expect(body).toContain('data-weekday="2" data-observed="false"');
-    expect(body).toContain('data-weekday="5" data-observed="true"');
+    expect(body).toContain('data-day-index="0" data-observed="false"');
+    expect(body).toContain('data-day-index="1" data-observed="true"');
+    expect(body).toContain('data-day-index="4" data-observed="true"');
   });
   it('reports platform failures on their own axis, more gently than refusals', () => {
     const withFailures: WeeklyRecapData = {
@@ -250,7 +216,7 @@ describe('weekly Token Envy recap', () => {
     expect(weeklyRecapRefusalLine(withFailures)).toBe('No explicit refusal signals this week');
 
     const caption = weeklyRecapCaption(withFailures, 'friendly', 0, null);
-    expect(caption).toContain('Claude held steady this week so far, failed calls and all:');
+    expect(caption).toContain('Claude held steady this week, failed calls and all:');
     expect(caption).toContain('- 2 API failures: 2 overloaded');
     expect(weeklyRecapTextReceipt(withFailures, 'friendly', 0)).toContain(
       '- 2 API failures: 2 overloaded',
@@ -330,6 +296,7 @@ describe('weekly Token Envy recap', () => {
   it('produces a human, scannable full-week receipt', () => {
     const example: WeeklyRecapData = {
       ...recap,
+      startDate: '2026-08-10',
       throughDate: '2026-08-16',
       median: 68,
       requestCount: 17_246,
