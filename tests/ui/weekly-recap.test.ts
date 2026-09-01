@@ -186,6 +186,12 @@ describe('weekly Token Envy recap', () => {
     expect([...weeklyRecapObservedDayIndices(sparse)]).toEqual([1, 4]);
     expect(weeklyRecapDayIndex(sparse, '2026-08-12')).toBeNull();
     expect(weeklyRecapDayIndex(sparse, '2026-08-20')).toBeNull();
+    expect(
+      weeklyRecapDayIndex(
+        { ...sparse, startDate: '2026-02-27', throughDate: '2026-03-05' },
+        '2026-02-31',
+      ),
+    ).toBeNull();
 
     const { body } = render(WeeklyRecapModal, {
       props: { open: true, recap: sparse, outputTokens: 4_200, onclose: () => undefined },

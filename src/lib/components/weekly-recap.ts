@@ -1,5 +1,5 @@
 import type { WeeklyModelMix, WeeklyRecap } from '$lib/types';
-import { daysBetween } from '$lib/core/time';
+import { daysBetween, isCalendarDate } from '$lib/core/time';
 import {
   adjustSentimentForInterruptions,
   compactSocialNumber,
@@ -155,7 +155,13 @@ export function weeklyRecapTopModel(recap: WeeklyRecapData): WeeklyModelMix | nu
 }
 
 export function weeklyRecapDayIndex(recap: WeeklyRecapData, date: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < recap.startDate || date > recap.throughDate) {
+  if (
+    !isCalendarDate(recap.startDate) ||
+    !isCalendarDate(recap.throughDate) ||
+    !isCalendarDate(date) ||
+    date < recap.startDate ||
+    date > recap.throughDate
+  ) {
     return null;
   }
   const index = daysBetween(recap.startDate, date);
