@@ -53,6 +53,12 @@ export function localDate(timestampMs: number, timezone: string): string {
   return zonedParts(timestampMs, timezone).date;
 }
 
+export function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export function addCalendarDays(date: string, days: number): string {
   const [year, month, day] = date.split('-').map(Number);
   const result = new Date(Date.UTC(year, month - 1, day + days));
@@ -65,28 +71,4 @@ export function daysBetween(from: string, to: string): number {
     return Date.UTC(year, month - 1, day);
   };
   return Math.round((parse(to) - parse(from)) / 86_400_000);
-}
-
-export function isoWeekday(date: string): number {
-  const [year, month, day] = date.split('-').map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return weekday === 0 ? 7 : weekday;
-}
-
-/** Convert a local midnight to an instant, including DST offset changes. */
-export function zonedMidnight(date: string, timezone: string): number {
-  validateTimezone(timezone);
-  const [year, month, day] = date.split('-').map(Number);
-  const targetAsUtc = Date.UTC(year, month - 1, day);
-  let candidate = targetAsUtc;
-
-  // Offset iteration works for non-hour offsets and historical transitions.
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const local = zonedParts(candidate, timezone);
-    const representedAsUtc = Date.UTC(local.year, local.month - 1, local.day, local.hour);
-    const next = candidate + (targetAsUtc - representedAsUtc);
-    if (next === candidate) return next;
-    candidate = next;
-  }
-  return candidate;
 }

@@ -4,42 +4,17 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 import type { WeeklyRecapData } from '../../src/lib/components/weekly-recap';
 import WeeklyRecapModalHarness from './fixtures/WeeklyRecapModalHarness.svelte';
+import { weeklyRecapFixture } from './weekly-recap-fixture';
 
 vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
 const initialRecap: WeeklyRecapData = {
-  weekStart: '2026-08-10',
-  throughDate: '2026-08-14',
-  daysObserved: 4,
-  observedDates: ['2026-08-10', '2026-08-11', '2026-08-13', '2026-08-14'],
-  requestCount: 84,
-  sessions: 12,
-  median: 72,
+  ...weeklyRecapFixture,
   speedIndex: {
-    value: 108,
+    ...weeklyRecapFixture.speedIndex,
     ciLow: null,
     ciHigh: null,
     percentile: null,
-    eligible: true,
-    reason: null,
-  },
-  models: [{ family: 'sonnet', requestCount: 60, outputTokens: 18_000, share: 0.72 }],
-  fastestDay: { date: '2026-08-13', median: 91 },
-  slowestDay: { date: '2026-08-11', median: 54 },
-  refusals: {
-    recorded: true,
-    attempted: 0,
-    recovered: 0,
-    userVisible: 0,
-    unknown: 0,
-    affectedDates: [],
-  },
-  failures: {
-    recorded: true,
-    attempted: 0,
-    overloaded: 0,
-    serverError: 0,
-    affectedDates: [],
   },
 };
 
@@ -127,7 +102,7 @@ describe('weekly recap client state', () => {
       const refreshedMood = target.querySelector<HTMLInputElement>('#weekly-sentiment');
       expect(refreshedMood?.getAttribute('aria-valuetext')).toBe('Very negative');
       expect(target.textContent).toContain('2 refusal signals · 1 recovered · 1 user-visible');
-      const marker = target.querySelector<HTMLElement>('[data-weekday="5"]');
+      const marker = target.querySelector<HTMLElement>('[data-day-index="6"]');
       expect(marker?.classList.contains('affected')).toBe(true);
       expect(marker?.classList.contains('user-visible')).toBe(true);
       if (!refreshedMood) throw new Error('Missing refreshed weekly mood slider');

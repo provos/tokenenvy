@@ -27,15 +27,7 @@ import {
   type StoredRequest,
 } from '../server/database';
 import { quantile, summarize, type MetricSample } from './statistics';
-import {
-  addCalendarDays,
-  daysBetween,
-  isoWeekday,
-  localDate,
-  validateTimezone,
-  zonedMidnight,
-  zonedParts,
-} from './time';
+import { addCalendarDays, daysBetween, localDate, validateTimezone, zonedParts } from './time';
 
 interface DatedRequest extends StoredRequest {
   date: string;
@@ -481,10 +473,10 @@ export class Analytics {
       (total, request) => total + request.outputTokens,
       0,
     );
-    const weekStart = addCalendarDays(today, 1 - isoWeekday(today));
-    const weekEnd = addCalendarDays(weekStart, 7);
-    const weeklyRefusals = this.periodRefusals(timezone, weekStart, today);
-    const weeklyFailures = this.periodFailures(timezone, weekStart, today, storedFailures);
+    const rollingStart = addCalendarDays(today, -6);
+    const rollingEnd = addCalendarDays(today, 1);
+    const weeklyRefusals = this.periodRefusals(timezone, rollingStart, today);
+    const weeklyFailures = this.periodFailures(timezone, rollingStart, today, storedFailures);
     const usageByDate = new Map<string, number>();
     for (const request of all) {
       if (
@@ -505,13 +497,13 @@ export class Analytics {
       }
       return total;
     };
-    const weeklyTokens = usageBetween(weekStart, weekEnd);
+    const weeklyTokens = usageBetween(rollingStart, rollingEnd);
     const weeklyRequests = valid.filter(
-      (request) => request.date >= weekStart && request.date <= today,
+      (request) => request.date >= rollingStart && request.date <= today,
     );
-    const weeklyBaselineStart = addCalendarDays(weekStart, -28);
+    const weeklyBaselineStart = addCalendarDays(rollingStart, -28);
     const weeklyBaseline = valid.filter(
-      (request) => request.date >= weeklyBaselineStart && request.date < weekStart,
+      (request) => request.date >= weeklyBaselineStart && request.date < rollingStart,
     );
     const weeklyByDate = new Map<string, DatedRequest[]>();
     for (const request of weeklyRequests) {
@@ -537,15 +529,9 @@ export class Analytics {
       confidence: false,
       percentile: false,
     });
-    const weekStartMs = zonedMidnight(weekStart, timezone);
-    const weekEndMs = zonedMidnight(weekEnd, timezone);
-    const elapsedFraction = Math.max(
-      0,
-      Math.min(1, (now.getTime() - weekStartMs) / (weekEndMs - weekStartMs)),
-    );
     const priorWeeks: number[] = [];
     for (let weeksAgo = 1; weeksAgo <= 4; weeksAgo += 1) {
-      const start = addCalendarDays(weekStart, -7 * weeksAgo);
+      const start = addCalendarDays(rollingStart, -7 * weeksAgo);
       const end = addCalendarDays(start, 7);
       priorWeeks.push(usageBetween(start, end));
     }
@@ -562,11 +548,9 @@ export class Analytics {
       models: modelSummaries(todaysRequests),
       weekly: {
         outputTokens: weeklyTokens,
-        projectedOutputTokens: elapsedFraction >= 0.01 ? weeklyTokens / elapsedFraction : null,
-        elapsedFraction,
         previousFourWeekMedian: median(priorWeeks),
         recap: {
-          weekStart,
+          startDate: rollingStart,
           throughDate: today,
           daysObserved: measuredDays.length,
           observedDates: measuredDays.map(({ date }) => date),

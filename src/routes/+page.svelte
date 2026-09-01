@@ -134,7 +134,11 @@
     FAMILY_COLORS,
     filterRefusalTimeline,
   } from '$lib/components/chart';
-  import { DASHBOARD_SHARE_CTA, weeklyRecapReady } from '$lib/components/weekly-recap';
+  import {
+    DASHBOARD_SHARE_CTA,
+    weeklyRecapPeriod,
+    weeklyRecapReady,
+  } from '$lib/components/weekly-recap';
   import type {
     DayDetailResponse,
     LongitudinalSummary,
@@ -980,26 +984,16 @@
           <section class="panel rail-panel weekly-panel">
             <div class="section-heading compact-heading">
               <div>
-                <p class="eyebrow">This calendar week</p>
+                <p class="eyebrow">My last 7 days</p>
                 <h2>Observed usage</h2>
               </div>
             </div>
             <strong class="large-rail-number">{compactNumber(overview.weekly.outputTokens)}</strong>
             <span class="large-rail-label">output tokens recorded</span>
-            <div class="week-progress">
-              <i style={`--week-progress:${Math.min(100, overview.weekly.elapsedFraction * 100)}%`}
-              ></i>
-            </div>
+            <p>{weeklyRecapPeriod(overview.weekly.recap)}</p>
             <div class="weekly-grid">
               <span
-                ><small>Projected</small><strong
-                  >{overview.weekly.projectedOutputTokens === null
-                    ? '—'
-                    : compactNumber(overview.weekly.projectedOutputTokens)}</strong
-                ></span
-              >
-              <span
-                ><small>4-week median</small><strong
+                ><small>Median of prior 4 weeks</small><strong
                   >{overview.weekly.previousFourWeekMedian === null
                     ? '—'
                     : compactNumber(overview.weekly.previousFourWeekMedian)}</strong
@@ -1013,7 +1007,7 @@
               disabled={!recapReady}
               title={recapReady
                 ? 'Open your private weekly recap'
-                : 'A recap appears after the first measured request this week'}
+                : 'A recap appears after the first measured request in your last 7 days'}
               onclick={() => (weeklyRecapOpen = true)}>Open weekly recap</button
             >
             {#if quota?.available && quota.sevenDay}

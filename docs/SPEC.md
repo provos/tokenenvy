@@ -32,7 +32,10 @@ directory, and makes no automatic network requests.
   recovered-by-fallback, user-visible, and unknown outcomes. The longitudinal
   chart and card show selected-model outcomes as warning triangles. Unattributed
   model signals remain separate. All refusal counts are labeled as lower bounds.
-- Transcript-only weekly numbers are labelled observed usage, never quota.
+- Transcript-only rolling seven-day numbers are labelled observed usage, never
+  quota. The window ends today in the selected timezone; its comparison uses
+  the four prior non-overlapping seven-day windows, never a calendar-week
+  projection.
   Exact five-hour and seven-day percentages are available only through an
   explicitly configured local status-line companion, installed by the explicit
   `tokenenvy install-statusline` subcommand. That subcommand writes only the

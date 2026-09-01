@@ -1,4 +1,5 @@
 import type { WeeklyModelMix, WeeklyRecap } from '$lib/types';
+import { daysBetween, isCalendarDate } from '$lib/core/time';
 import {
   adjustSentimentForInterruptions,
   compactSocialNumber,
@@ -135,9 +136,9 @@ export function weeklyRecapFailureStamp(recap: WeeklyRecapData): string {
 }
 
 export function weeklyRecapPeriod(recap: WeeklyRecapData): string {
-  const start = shortDate(recap.weekStart);
+  const start = shortDate(recap.startDate);
   const through = shortDate(recap.throughDate);
-  return recap.weekStart === recap.throughDate ? start : `${start} to ${through}`;
+  return recap.startDate === recap.throughDate ? start : `${start} to ${through}`;
 }
 
 export function weeklyRecapDayLabel(date: string): string {
@@ -153,17 +154,27 @@ export function weeklyRecapTopModel(recap: WeeklyRecapData): WeeklyModelMix | nu
   return [...recap.models].sort((left, right) => right.share - left.share)[0] ?? null;
 }
 
-export function weeklyRecapObservedWeekdays(recap: WeeklyRecapData): Set<number> {
-  const weekdays = new Set<number>();
-  for (const date of recap.observedDates) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < recap.weekStart || date > recap.throughDate) {
-      continue;
-    }
-    const parsed = parseLocalDate(date);
-    if (!Number.isFinite(parsed.getTime())) continue;
-    weekdays.add((parsed.getUTCDay() + 6) % 7);
+export function weeklyRecapDayIndex(recap: WeeklyRecapData, date: string): number | null {
+  if (
+    !isCalendarDate(recap.startDate) ||
+    !isCalendarDate(recap.throughDate) ||
+    !isCalendarDate(date) ||
+    date < recap.startDate ||
+    date > recap.throughDate
+  ) {
+    return null;
   }
-  return weekdays;
+  const index = daysBetween(recap.startDate, date);
+  return Number.isFinite(index) && index >= 0 && index < 7 ? index : null;
+}
+
+export function weeklyRecapObservedDayIndices(recap: WeeklyRecapData): Set<number> {
+  const dayIndices = new Set<number>();
+  for (const date of recap.observedDates) {
+    const index = weeklyRecapDayIndex(recap, date);
+    if (index !== null) dayIndices.add(index);
+  }
+  return dayIndices;
 }
 
 export function weeklyRecapCaption(
@@ -240,12 +251,7 @@ function weeklyRecapShareLead(
   sentiment: ShareSentiment,
   includeFailureClause = true,
 ): string {
-  let headline = weeklyRecapHeadline(recap, tone, sentiment);
-  if (!weeklyRecapIsCompleteWeek(recap)) {
-    headline = headline.includes('all week')
-      ? headline.replace('all week', 'all week so far')
-      : headline.replace('this week', 'this week so far');
-  }
+  const headline = weeklyRecapHeadline(recap, tone, sentiment);
   return includeFailureClause && recap.failures.attempted > 0
     ? `${headline}, failed calls and all`
     : headline;
@@ -334,12 +340,6 @@ function weeklyRecapCompactRefusalLine(recap: WeeklyRecapData): string {
         : null;
   const total = `${compactSocialNumber(refusals.attempted)} ${refusals.attempted === 1 ? 'refusal' : 'refusals'}`;
   return `${total}${outcome ? ` · ${outcome}` : ''} · lower bound`;
-}
-
-function weeklyRecapIsCompleteWeek(recap: WeeklyRecapData): boolean {
-  const start = parseLocalDate(recap.weekStart).getTime();
-  const through = parseLocalDate(recap.throughDate).getTime();
-  return Number.isFinite(start) && Number.isFinite(through) && through - start >= 6 * 86_400_000;
 }
 
 function lowerFirst(value: string): string {

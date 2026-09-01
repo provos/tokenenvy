@@ -36,9 +36,10 @@ function insertRequest(
     stratum: number;
     tokensPerSecond: number;
     provisional?: boolean;
+    finishedAt?: number;
   },
 ) {
-  const finishedAt = Date.parse(`${options.date}T12:00:00Z`);
+  const finishedAt = options.finishedAt ?? Date.parse(`${options.date}T12:00:00Z`);
   database.db
     .prepare(
       `
@@ -618,13 +619,13 @@ describe('analytics', () => {
     database.close();
   });
 
-  it('builds a deterministic calendar-week recap from completed measurements', () => {
+  it('builds a deterministic rolling seven-day recap from completed measurements', () => {
     const database = new Database({ path: ':memory:', hmacKey: 'weekly-recap-key' });
     for (let index = 0; index < 100; index += 1) {
       insertRequest(database, {
         id: `weekly-baseline-${index}`,
         sessionId: `weekly-baseline-session-${index % 8}`,
-        date: `2026-08-${String(1 + (index % 7)).padStart(2, '0')}`,
+        date: `2026-07-${String(11 + (index % 7)).padStart(2, '0')}`,
         outputTokens: 32,
         family: 'sonnet',
         stratum: 0,
@@ -632,6 +633,8 @@ describe('analytics', () => {
       });
     }
     const days = [
+      { date: '2026-08-08', tokensPerSecond: 45 },
+      { date: '2026-08-09', tokensPerSecond: 10 },
       { date: '2026-08-10', tokensPerSecond: 20 },
       { date: '2026-08-11', tokensPerSecond: 25 },
       { date: '2026-08-12', tokensPerSecond: 30 },
@@ -657,14 +660,14 @@ describe('analytics', () => {
     `);
     refusalInsert.run(
       'weekly-recovered',
-      'weekly-current-1-0',
+      'weekly-current-3-0',
       'weekly-current-session-0',
       Date.parse('2026-08-11T12:00:00Z'),
       'recovered',
     );
     refusalInsert.run(
       'weekly-visible',
-      'weekly-current-3-0',
+      'weekly-current-5-0',
       'weekly-current-session-0',
       Date.parse('2026-08-13T12:00:00Z'),
       'user_visible',
@@ -680,18 +683,26 @@ describe('analytics', () => {
       'prior-week-visible',
       null,
       'prior-week-session',
-      Date.parse('2026-08-09T12:00:00Z'),
+      Date.parse('2026-08-07T12:00:00Z'),
       'user_visible',
     );
 
     const recap = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).weekly
       .recap;
     expect(recap).toMatchObject({
-      weekStart: '2026-08-10',
+      startDate: '2026-08-08',
       throughDate: '2026-08-14',
-      daysObserved: 5,
-      observedDates: ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'],
-      requestCount: 25,
+      daysObserved: 7,
+      observedDates: [
+        '2026-08-08',
+        '2026-08-09',
+        '2026-08-10',
+        '2026-08-11',
+        '2026-08-12',
+        '2026-08-13',
+        '2026-08-14',
+      ],
+      requestCount: 35,
       sessions: 5,
       median: 25,
       speedIndex: {
@@ -701,8 +712,8 @@ describe('analytics', () => {
         ciHigh: null,
         percentile: null,
       },
-      fastestDay: { date: '2026-08-14', median: 35 },
-      slowestDay: { date: '2026-08-13', median: 15 },
+      fastestDay: { date: '2026-08-08', median: 45 },
+      slowestDay: { date: '2026-08-09', median: 10 },
       refusals: {
         recorded: true,
         attempted: 3,
@@ -728,15 +739,90 @@ describe('analytics', () => {
       },
     });
     expect(recap.models).toMatchObject([
-      { family: 'sonnet', requestCount: 25, outputTokens: 800, share: 1 },
+      { family: 'sonnet', requestCount: 35, outputTokens: 1_120, share: 1 },
     ]);
     database.close();
   });
 
-  it('uses local week boundaries while deduplicating archived refusal attribution', () => {
+  it('compares rolling usage with four adjacent non-overlapping seven-day windows', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'rolling-usage-key' });
+    const samples = [
+      { id: 'current-start', date: '2026-08-08', outputTokens: 80 },
+      { id: 'current-end', date: '2026-08-14', outputTokens: 140 },
+      { id: 'prior-one-start', date: '2026-08-01', outputTokens: 40 },
+      { id: 'prior-one-end', date: '2026-08-07', outputTokens: 60 },
+      { id: 'prior-two', date: '2026-07-25', outputTokens: 200 },
+      { id: 'prior-three', date: '2026-07-18', outputTokens: 300 },
+      { id: 'prior-four', date: '2026-07-11', outputTokens: 400 },
+      { id: 'outside', date: '2026-07-10', outputTokens: 10_000 },
+    ];
+    for (const sample of samples) {
+      insertRequest(database, {
+        ...sample,
+        sessionId: sample.id,
+        family: 'sonnet',
+        stratum: 0,
+        tokensPerSecond: 10,
+      });
+    }
+
+    const weekly = new Analytics(database).overview('UTC', new Date('2026-08-14T18:00:00Z')).weekly;
+    expect(weekly).toMatchObject({
+      outputTokens: 220,
+      previousFourWeekMedian: 250,
+      recap: { startDate: '2026-08-08', throughDate: '2026-08-14' },
+    });
+    expect(weekly).not.toHaveProperty('elapsedFraction');
+    expect(weekly).not.toHaveProperty('projectedOutputTokens');
+    database.close();
+  });
+
+  it('advances the rolling dates at local midnight across daylight saving time', () => {
+    const database = new Database({ path: ':memory:', hmacKey: 'rolling-dst-key' });
+    insertRequest(database, {
+      id: 'oldest-local-day',
+      sessionId: 'oldest-session',
+      date: '2026-03-02',
+      outputTokens: 20,
+      family: 'sonnet',
+      stratum: 0,
+      tokensPerSecond: 10,
+    });
+    const analytics = new Analytics(database);
+    const beforeMidnight = analytics.overview(
+      'America/Los_Angeles',
+      new Date('2026-03-09T06:59:59Z'),
+    ).weekly;
+    expect(beforeMidnight).toMatchObject({
+      outputTokens: 20,
+      recap: { startDate: '2026-03-02', throughDate: '2026-03-08', requestCount: 1 },
+    });
+
+    insertRequest(database, {
+      id: 'newest-local-day',
+      sessionId: 'newest-session',
+      date: '2026-03-09',
+      finishedAt: Date.parse('2026-03-09T07:00:30Z'),
+      outputTokens: 30,
+      family: 'sonnet',
+      stratum: 0,
+      tokensPerSecond: 15,
+    });
+    const afterMidnight = new Analytics(database).overview(
+      'America/Los_Angeles',
+      new Date('2026-03-09T07:01:00Z'),
+    ).weekly;
+    expect(afterMidnight).toMatchObject({
+      outputTokens: 30,
+      recap: { startDate: '2026-03-03', throughDate: '2026-03-09', requestCount: 1 },
+    });
+    database.close();
+  });
+
+  it('uses local rolling-window boundaries while deduplicating archived refusal attribution', () => {
     const database = new Database({ path: ':memory:', hmacKey: 'weekly-refusal-timezone-key' });
-    const sundayRefusalAt = Date.parse('2026-08-10T06:30:00Z'); // Sunday 23:30 PDT.
-    const mondayRefusalAt = Date.parse('2026-08-10T07:10:00Z'); // Monday 00:10 PDT.
+    const beforeWindowRefusalAt = Date.parse('2026-08-04T06:30:00Z'); // August 3, 23:30 PDT.
+    const windowStartRefusalAt = Date.parse('2026-08-04T07:10:00Z'); // August 4, 00:10 PDT.
     const archivedAt = Date.parse('2026-08-11T12:00:00Z');
 
     database.db
@@ -752,8 +838,8 @@ describe('analytics', () => {
       .run(
         'archived-sonnet-request',
         'archived-sonnet-session',
-        mondayRefusalAt - 1_000,
-        mondayRefusalAt,
+        windowStartRefusalAt - 1_000,
+        windowStartRefusalAt,
         1_000,
         32,
         'sonnet',
@@ -767,23 +853,23 @@ describe('analytics', () => {
         `
         INSERT INTO events(event_id, request_id, session_id, timestamp_ms, type, refusal_outcome)
         VALUES
-          ('sunday-refusal', NULL, 'sunday-session', ?, 'system', 'user_visible'),
-          ('monday-refusal', 'archived-sonnet-request', 'archived-sonnet-session', ?, 'system', 'recovered')
+          ('before-window-refusal', NULL, 'before-window-session', ?, 'system', 'user_visible'),
+          ('window-start-refusal', 'archived-sonnet-request', 'archived-sonnet-session', ?, 'system', 'recovered')
       `,
       )
-      .run(sundayRefusalAt, mondayRefusalAt);
+      .run(beforeWindowRefusalAt, windowStartRefusalAt);
     database.db
       .prepare(
         `
         INSERT INTO refusal_history(
           event_id, request_id, session_id, timestamp_ms, refusal_outcome, archived_at, updated_at
         ) VALUES (
-          'monday-refusal', 'archived-sonnet-request', 'archived-sonnet-session', ?,
+          'window-start-refusal', 'archived-sonnet-request', 'archived-sonnet-session', ?,
           'recovered', ?, ?
         )
       `,
       )
-      .run(mondayRefusalAt, archivedAt, archivedAt);
+      .run(windowStartRefusalAt, archivedAt, archivedAt);
 
     const analytics = new Analytics(database);
     const now = new Date('2026-08-10T18:00:00Z');
@@ -796,7 +882,7 @@ describe('analytics', () => {
       unknown: 0,
       affectedDates: [
         {
-          date: '2026-08-10',
+          date: '2026-08-04',
           attempted: 1,
           recovered: 1,
           userVisible: 0,
@@ -807,14 +893,14 @@ describe('analytics', () => {
     expect(overview.refusals).toMatchObject({
       attempted: 2,
       byDay: [
-        { date: '2026-08-09', attempted: 1 },
-        { date: '2026-08-10', attempted: 1 },
+        { date: '2026-08-03', attempted: 1 },
+        { date: '2026-08-04', attempted: 1 },
       ],
     });
-    expect(analytics.series(2, 'America/Los_Angeles', now).refusals.days).toMatchObject([
-      { date: '2026-08-09', unattributed: { attempted: 1 } },
+    expect(analytics.series(8, 'America/Los_Angeles', now).refusals.days).toMatchObject([
+      { date: '2026-08-03', unattributed: { attempted: 1 } },
       {
-        date: '2026-08-10',
+        date: '2026-08-04',
         families: [{ family: 'sonnet', attempted: 1, recovered: 1 }],
       },
     ]);
